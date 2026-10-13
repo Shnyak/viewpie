@@ -26,3 +26,8 @@ bindgen = "0.71"
 
 [profile.release]
 opt-level = 2
+# A panic takes the whole process down, for systemd or Docker to restart.
+# Unwinding kills only the thread that panicked, and nothing would notice it
+# had gone: a feed thread leaves its last frame frozen on screen and never
+# reconnects, and the CEC thread leaves a paused wall paused for good.
+panic = "abort"
