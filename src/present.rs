@@ -569,6 +569,17 @@ impl Card {
         }
     }
 
+    /// Release each distinct handle in `handles` once. Importing the same
+    /// buffer twice hands back the same handle rather than a second
+    /// reference, so closing it twice would fail the second time.
+    pub fn drop_buffers(&self, handles: &[Handle]) {
+        for (i, &handle) in handles.iter().enumerate() {
+            if !handles[..i].contains(&handle) {
+                self.drop_buffer(handle);
+            }
+        }
+    }
+
     /// Put every viewport's newest framebuffer on screen in one commit.
     ///
     /// Submits and returns: the flip it asks for arrives later on the card's
@@ -701,17 +712,23 @@ impl Card {
 pub struct Fb {
     card: Arc<Card>,
     pub fb: framebuffer::Handle,
-    /// The GEM handle the framebuffer was made from, closed after it: the
-    /// other order lets the kernel hand the id back out while the
-    /// framebuffer still refers to it. Leaving it open leaks CMA, one buffer
-    /// per reconnect, until viewports start failing to commit.
-    handle: Handle,
+    /// The GEM handles the framebuffer was made from, closed after it: the
+    /// other order lets the kernel hand an id back out while the framebuffer
+    /// still refers to it. Leaving one open leaks its buffer, one per
+    /// reconnect, until viewports start failing to commit.
+    ///
+    /// Every one of them, not just the first plane's. A Pi 5's HEVC decoder
+    /// puts luma and chroma in separate buffers, and closing only the luma
+    /// left the chroma attached to the display after every resume, reconnect
+    /// and fullscreen switch, until the display could map no more and feeds
+    /// stopped coming back.
+    handles: Vec<Handle>,
 }
 
 impl Fb {
-    /// Take ownership of a framebuffer and the handle it was made from.
-    pub fn new(card: Arc<Card>, fb: framebuffer::Handle, handle: Handle) -> Self {
-        Fb { card, fb, handle }
+    /// Take ownership of a framebuffer and the handles it was made from.
+    pub fn new(card: Arc<Card>, fb: framebuffer::Handle, handles: Vec<Handle>) -> Self {
+        Fb { card, fb, handles }
     }
 }
 
@@ -723,7 +740,7 @@ impl Drop for Fb {
         if let Err(e) = self.card.destroy_framebuffer(self.fb) {
             eprintln!("could not release a framebuffer: {e}");
         }
-        self.card.drop_buffer(self.handle);
+        self.card.drop_buffers(&self.handles);
     }
 }
 

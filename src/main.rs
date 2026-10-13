@@ -1836,15 +1836,18 @@ fn feed_session(
                     continue;
                 }
                 let fd = BorrowedFd::borrow_raw((*desc).objects[0].fd);
-                let Ok(key) = card.import_dmabuf(fd) else {
-                    gripe.say(format_args!("{name}: could not import a dmabuf"));
-                    continue;
+                let key = match card.import_dmabuf(fd) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        gripe.say(format_args!("{name}: {e}"));
+                        continue;
+                    }
                 };
                 let fb = match fbs.iter().find(|(h, _)| *h == key) {
                     Some((_, fb)) => fb.clone(),
                     None => match import_drm_frame(card, &*desc, w, h) {
-                        Ok(fb) => {
-                            let fb = Arc::new(Fb::new(card.clone(), fb, key));
+                        Ok((fb, handles)) => {
+                            let fb = Arc::new(Fb::new(card.clone(), fb, handles));
                             fbs.push((key, fb.clone()));
                             fb
                         }
@@ -1922,12 +1925,28 @@ fn feed_session(
 }
 
 /// Import a hardware-decoded frame's dmabuf planes as one framebuffer.
+///
+/// Returns the GEM handles behind it too, one per object, which the caller
+/// owns from then on: the first is the one the feed's cache is keyed on. On
+/// failure they are closed here, so nothing is left open for the next frame
+/// to fail on in the same way.
 unsafe fn import_drm_frame(
     card: &Card,
     desc: &AVDRMFrameDescriptor,
     w: u32,
     h: u32,
-) -> Result<framebuffer::Handle, String> {
+) -> Result<(framebuffer::Handle, Vec<Handle>), String> {
+    let mut objects = Vec::with_capacity(desc.nb_objects as usize);
+    for obj in &desc.objects[..desc.nb_objects as usize] {
+        match card.import_dmabuf(BorrowedFd::borrow_raw(obj.fd)) {
+            Ok(handle) => objects.push(handle),
+            Err(e) => {
+                card.drop_buffers(&objects);
+                return Err(e);
+            }
+        }
+    }
+
     let layer = &desc.layers[0];
     let mut handles = [None; 4];
     let mut pitches = [0u32; 4];
@@ -1936,26 +1955,32 @@ unsafe fn import_drm_frame(
 
     for i in 0..layer.nb_planes as usize {
         let pl = &layer.planes[i];
-        let obj = &desc.objects[pl.object_index as usize];
-        let fd = BorrowedFd::borrow_raw(obj.fd);
-        handles[i] = Some(card.import_dmabuf(fd)?);
+        handles[i] = Some(objects[pl.object_index as usize]);
         pitches[i] = pl.pitch as u32;
         offsets[i] = pl.offset as u32;
-        modifier = DrmModifier::from(obj.format_modifier);
+        modifier = DrmModifier::from(desc.objects[pl.object_index as usize].format_modifier);
     }
 
-    let format = DrmFourcc::try_from(layer.format)
-        .map_err(|_| format!("the decoder produced an unknown fourcc {:#x}", layer.format))?;
-
-    card.import(&ImportedFrame {
-        width: w,
-        height: h,
-        format,
-        modifier,
-        handles,
-        pitches,
-        offsets,
-    })
+    let imported = DrmFourcc::try_from(layer.format)
+        .map_err(|_| format!("the decoder produced an unknown fourcc {:#x}", layer.format))
+        .and_then(|format| {
+            card.import(&ImportedFrame {
+                width: w,
+                height: h,
+                format,
+                modifier,
+                handles,
+                pitches,
+                offsets,
+            })
+        });
+    match imported {
+        Ok(fb) => Ok((fb, objects)),
+        Err(e) => {
+            card.drop_buffers(&objects);
+            Err(e)
+        }
+    }
 }
 
 /// The buffers a software-decoded feed is scanned out from.
@@ -2061,7 +2086,7 @@ fn new_dumb(
     // framebuffer, as this once did, leaked two buffers' worth of CMA every
     // time a software-decoded feed reconnected.
     let handle = buf.handle();
-    Ok((buf, Arc::new(Fb::new(card.clone(), fb, handle))))
+    Ok((buf, Arc::new(Fb::new(card.clone(), fb, vec![handle]))))
 }
 
 /// Describes a dumb buffer's single allocation as the three I420 planes KMS
