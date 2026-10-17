@@ -1,3 +1,14 @@
+viewpie (0.1.1-1) unstable; urgency=medium
+
+  * Close every buffer handle behind a hardware-decoded frame. On a Pi 5 the
+    HEVC decoder hands out luma and chroma separately, and the chroma leaked
+    on every reconnect, resume and fullscreen switch until feeds no longer
+    came back.
+  * A panic in any thread restarts the wall, rather than leaving a camera
+    frozen or a paused wall paused for good.
+
+ -- Sebastian Noack <sebastian.noack@gmail.com>  Sat, 17 Oct 2026 00:00:00 +0000
+
 viewpie (0.1.0-1) unstable; urgency=medium
 
   * Initial release. A camera wall for a Raspberry Pi: RTSP cameras decoded
