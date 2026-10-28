@@ -1,0 +1,83 @@
+# ============================================================================
+# viewpie example configuration (fork with HTTP API)
+# ----------------------------------------------------------------------------
+# Copy to /etc/viewpie/viewpie.yaml and adjust. All settings can also be
+# changed at runtime via the REST API (port 8080) without restarting viewpie:
+#
+#   curl -X PUT localhost:8080/api/settings -d '{"spacing": 3}'
+#   curl -X POST localhost:8080/api/panels/outside/activate
+#   curl localhost:8080/api/status
+#
+# Validate this file without a display:  cargo run --bin headless -- <this file>
+# ============================================================================
+
+display:
+  # Divider thickness between cells, in pixels (0-20). Runtime-changeable.
+  spacing: 1
+  # Background color, hex string. Runtime-changeable.
+  background: "#000000"
+  # Auto-pause decoding when the screen DPMS state is "off". Runtime-toggleable.
+  pause_off_screen: true
+  # Seconds after which fullscreen auto-returns to grid (10-3600).
+  fullscreen_timeout: 600
+
+# RTSP feed pool. Cameras are shared between panels via reference counting:
+# a decoder starts on first use and stops only when ref_count drops to zero,
+# so switching panels never reconnects common cameras.
+feeds:
+  corridor:
+    url: rtsp://10.0.0.5/corridor_sub
+    fullscreen_url: rtsp://10.0.0.5/corridor_main
+  yard:
+    url: rtsp://10.0.0.5/yard_sub
+    fullscreen_url: rtsp://10.0.0.5/yard_main
+  gate:
+    url: rtsp://10.0.0.5/gate_sub
+    fullscreen_url: rtsp://10.0.0.5/gate_main
+  pool:
+    url: rtsp://10.0.0.5/pool_sub
+    fullscreen_url: rtsp://10.0.0.5/pool_main
+  street:
+    url: rtsp://10.0.0.5/street_sub
+    fullscreen_url: rtsp://10.0.0.5/street_main
+
+# Panels = named scenes/layouts. The layout grid must be square (3x3 .. 8x8).
+# Each cell references a slot name; "." marks an empty cell. Adjacent equal
+# tokens merge into one larger viewport.
+panels:
+  outside:
+    name: "Улица"
+    spacing: 2                      # optional per-panel override of display.spacing
+    layout: |
+      yard yard gate pool
+      yard yard street .
+      . . . .
+      . . . .
+    viewports:
+      - slot: yard                  # merged 2x2 area
+        feeds: [yard]
+      - slot: gate
+        feeds: [gate]
+      - slot: pool
+        feeds: [pool]
+      - slot: street
+        feeds: [street]
+
+  home:
+    name: "Внутри дома"
+    layout: |
+      corridor corridor corridor gate
+      corridor corridor gate     gate
+      pool     pool     pool     .
+      .        .        .        .
+    viewports:
+      - slot: corridor              # merged region, two cams rotate here
+        feeds: [corridor, street]
+      - slot: gate
+        feeds: [gate]
+      - slot: pool
+        feeds: [pool]
+
+defaults:
+  panel: outside                    # panel activated at startup
+  rotation_interval: 20             # seconds between panel rotations (5-3600)
