@@ -4,9 +4,9 @@
 
 //! Panel CRUD + activation endpoints.
 
+use axum::extract::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::extract::Json;
 use tracing::info;
 
 use crate::http_api::errors::ApiError;

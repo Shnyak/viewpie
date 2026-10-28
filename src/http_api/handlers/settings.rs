@@ -14,8 +14,8 @@
 //!   poll (≤ 5 s),
 //! * `rotation_interval`, `fullscreen_timeout` → applied to future timers.
 
-use axum::extract::State;
 use axum::extract::Json;
+use axum::extract::State;
 use tracing::info;
 
 use crate::http_api::errors::ApiError;

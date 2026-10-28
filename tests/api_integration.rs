@@ -46,6 +46,7 @@ feeds:
     fullscreen_url: rtsp://127.0.0.1:{port}/pool_main
   street:
     url: rtsp://127.0.0.1:{port}/street_sub
+    fullscreen_url: rtsp://127.0.0.1:{port}/street_main
 
 panels:
   outside:

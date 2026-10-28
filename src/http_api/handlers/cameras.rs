@@ -6,9 +6,9 @@
 
 use std::time::Instant;
 
+use axum::extract::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::extract::Json;
 use tracing::{info, warn};
 
 use crate::http_api::errors::ApiError;

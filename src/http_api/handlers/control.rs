@@ -6,9 +6,9 @@
 
 use std::time::Duration;
 
+use axum::extract::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::extract::Json;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
