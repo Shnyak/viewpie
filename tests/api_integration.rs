@@ -373,6 +373,12 @@ fn t04_pause_resume_grid() {
         "/api/fullscreen",
         Some(r#"{"camera":"yard","duration_seconds":600}"#),
     );
+    let r = request("GET", "/api/status", None);
+    assert_eq!(
+        r.field("fullscreen_camera"),
+        "yard",
+        "fullscreen did not engage (flaky RTSP connect?)"
+    );
     let r = request("POST", "/api/grid", None);
     assert_eq!(r.status, 200);
     let r = request("GET", "/api/status", None);
