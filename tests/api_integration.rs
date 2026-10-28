@@ -348,7 +348,7 @@ fn t03_fullscreen_with_duration_timer() {
     // Camera missing from active panel → error.
     request("POST", "/api/panels/closeup/activate", None);
     let r = request("POST", "/api/fullscreen", Some(r#"{"camera":"street"}"#));
-    assert_eq!(r.status, 400, "expected rejection, got {}", r.body);
+    assert_eq!(r.status, 422, "expected rejection, got {}", r.body);
     request("POST", "/api/panels/outside/activate", None);
 }
 
