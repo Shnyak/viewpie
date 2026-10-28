@@ -15,7 +15,7 @@
 //! * `rotation_interval`, `fullscreen_timeout` → applied to future timers.
 
 use axum::extract::State;
-use axum::Json;
+use axum::extract::Json;
 use tracing::info;
 
 use crate::http_api::errors::ApiError;

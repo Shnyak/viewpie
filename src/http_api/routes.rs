@@ -30,22 +30,22 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/panels/active", get(panels::active_panel))
         .route(
-            "/api/panels/{id}",
+            "/api/panels/:id",
             get(panels::get_panel)
                 .put(panels::update_panel)
                 .delete(panels::delete_panel),
         )
-        .route("/api/panels/{id}/activate", post(panels::activate_panel))
+        .route("/api/panels/:id/activate", post(panels::activate_panel))
         // Cameras
         .route(
             "/api/cameras",
             get(cameras::list_cameras).post(cameras::create_camera),
         )
         .route(
-            "/api/cameras/{name}",
+            "/api/cameras/:name",
             put(cameras::update_camera).delete(cameras::delete_camera),
         )
-        .route("/api/cameras/{name}/test", post(cameras::test_camera))
+        .route("/api/cameras/:name/test", post(cameras::test_camera))
         // Status
         .route("/api/status", get(status::status))
         .with_state(state)
