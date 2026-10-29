@@ -89,10 +89,13 @@ fn main() -> anyhow::Result<()> {
     rt.block_on(async move {
         if let Some(renderer) = &native_renderer {
             let initial_panel = cfg.initial_panel();
-            renderer
-                .select_panel(&initial_panel)
-                .await
-                .context("starting native FFmpeg/DRM renderer")?;
+            if let Err(e) = renderer.select_panel(&initial_panel).await {
+                error!(
+                    panel = %initial_panel,
+                    error = %e,
+                    "native renderer failed to start; keeping HTTP API available"
+                );
+            }
         }
 
         let state = http_api::run(
