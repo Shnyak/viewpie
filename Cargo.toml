@@ -14,6 +14,11 @@ path = "src/main.rs"
 # Headless test binary: same application logic, but without KMS/DRM and
 # FFmpeg hardware decoding. Used by the integration tests in tests/.
 [[bin]]
+name = "viewpie-native"
+path = "src/bin/viewpie-native.rs"
+required-features = ["native-pipeline"]
+
+[[bin]]
 name = "viewpie-headless"
 path = "src/bin/headless.rs"
 
@@ -43,7 +48,8 @@ uuid = { version = "1", features = ["v4"] }
 # only pulls in `drm`.
 [features]
 default = []
-hw = ["dep:drm"]
+hw = ["dep:drm", "native-pipeline"]
+native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix", "dep:libc"]
 
 [dependencies.drm]
 # Примечание: в ТЗ была указана версия "1.5", однако в crates.io у крейта
@@ -52,6 +58,13 @@ hw = ["dep:drm"]
 # framebuffer/plane/crtc handles) соответствует требованиям ТЗ.
 version = "0.15"
 optional = true
+
+yaml-rust2 = { version = "0.13", optional = true }
+rustix = { version = "1", features = ["event"], optional = true }
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+bindgen = "0.71"
 
 [dev-dependencies]
 tempfile = "3"
