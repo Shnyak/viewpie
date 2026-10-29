@@ -783,13 +783,11 @@ fn run(config: &Config) -> Result<(), String> {
             &mut spare,
             &mut claimed,
         )?;
-        wall.tv = match cec::watch(card_no, wall.out.connector.into(), &wall.out.name) {
-            Ok(tv) => Some(tv),
-            Err(e) => {
-                eprintln!(
-                    "{}: {e}; its remote will do nothing{}",
-                    wall.out.name,
-                    if config.pause_off_screen {
+        // HDMI-CEC is owned by the parent API process in this fork. Opening a
+        // second CEC listener here would make both processes consume the same
+        // remote events and issue duplicate commands.
+        wall.tv = None;
+        if config.pause_off_screen {
                         ", and only unplugging it will pause the wall"
                     } else {
                         ""
