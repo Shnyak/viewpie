@@ -40,12 +40,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
-# Hardware backends (DRM/KMS, libcec) are enabled only for the ARM release
-# build produced by Dockerfile.build — see scripts/build-deb.sh which passes
-# `--features hw`. Desktop checkouts therefore build without C libraries.
-# Note: `libcec-rs` is not published on crates.io; the CEC bridge in src/cec.rs
-# talks to /dev/cec0 directly and needs no extra crate, so the `hw` feature
-# only pulls in `drm`.
+# The native FFmpeg/libav + DRM/KMS pipeline is enabled for ARM release builds
+# with `--features hw`. The optional feature keeps default desktop/headless
+# builds independent of FFmpeg headers and native DRM bindings. The API-side
+# CEC bridge talks to /dev/cec0 directly and does not need libcec-rs.
 [features]
 default = []
 hw = ["dep:drm", "native-pipeline"]
