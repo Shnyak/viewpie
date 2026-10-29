@@ -97,6 +97,8 @@ pub async fn fullscreen(
                 info!(camera = %cam, secs = seconds, "fullscreen timeout — returning to grid");
                 if let Err(e) = st.manager.leave_fullscreen().await {
                     error!("auto grid failed: {e}");
+                } else {
+                    let _ = st.command_tx.send(WallCommand::ReturnToGrid).await;
                 }
             }
         });
