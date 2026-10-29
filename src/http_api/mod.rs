@@ -62,7 +62,7 @@ pub async fn run(
                         Err(e) => warn!("cmd switch {id}: {e}"),
                     }
                 }
-                WallCommand::SetFullscreen(cam, dur) => {
+                WallCommand::SetFullscreen(cam, _dur) => {
                     match st.manager.enter_fullscreen(&cam).await {
                         Ok(()) => {
                             if let Some(renderer) = &command_renderer {
@@ -73,27 +73,6 @@ pub async fn run(
                             }
                         }
                         Err(e) => warn!("cmd fullscreen {cam}: {e}"),
-                    }
-                    if let Some(sec) = dur {
-                        let s2 = st.clone();
-                        let timeout_renderer = command_renderer.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_secs(sec)).await;
-                            if crate::http_api::state::current_fullscreen()
-                                .await
-                                .as_deref()
-                                .is_none()
-                            {
-                                return;
-                            }
-                            let _ = s2.manager.leave_fullscreen().await;
-                            if let Some(renderer) = &timeout_renderer {
-                                let panel = s2.manager.active_id().await;
-                                if let Err(e) = renderer.select_panel(&panel).await {
-                                    warn!("native renderer failed to exit fullscreen: {e}");
-                                }
-                            }
-                        });
                     }
                 }
                 WallCommand::ReturnToGrid => {
@@ -108,19 +87,19 @@ pub async fn run(
                 WallCommand::Pause => {
                     if !crate::http_api::state::is_paused_now().await {
                         let _ = st.manager.pause().await;
-                        if let Some(renderer) = &command_renderer {
-                            renderer.stop().await;
-                        }
+                    }
+                    if let Some(renderer) = &command_renderer {
+                        renderer.stop().await;
                     }
                 }
                 WallCommand::Resume => {
                     if crate::http_api::state::is_paused_now().await {
                         let _ = st.manager.resume().await;
-                        if let Some(renderer) = &command_renderer {
-                            let panel = st.manager.active_id().await;
-                            if let Err(e) = renderer.select_panel(&panel).await {
-                                warn!("native renderer failed to resume panel {panel}: {e}");
-                            }
+                    }
+                    if let Some(renderer) = &command_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_panel(&panel).await {
+                            warn!("native renderer failed to resume panel {panel}: {e}");
                         }
                     }
                 }
