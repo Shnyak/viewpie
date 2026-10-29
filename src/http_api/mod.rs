@@ -46,13 +46,14 @@ pub async fn run(
 
     // Command pump.
     let st = state.clone();
+    let command_renderer = native_renderer.clone();
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 WallCommand::SwitchPanel(id) => {
                     match st.manager.switch_to(&id).await {
                         Ok(()) => {
-                            if let Some(renderer) = &native_renderer {
+                            if let Some(renderer) = &command_renderer {
                                 if let Err(e) = renderer.select_panel(&id).await {
                                     warn!("native renderer failed to switch to panel {id}: {e}");
                                 }
@@ -64,7 +65,7 @@ pub async fn run(
                 WallCommand::SetFullscreen(cam, dur) => {
                     match st.manager.enter_fullscreen(&cam).await {
                         Ok(()) => {
-                            if let Some(renderer) = &native_renderer {
+                            if let Some(renderer) = &command_renderer {
                                 let panel = st.manager.active_id().await;
                                 if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
                                     warn!("native renderer failed to enter fullscreen for {cam}: {e}");
@@ -75,6 +76,7 @@ pub async fn run(
                     }
                     if let Some(sec) = dur {
                         let s2 = st.clone();
+                        let timeout_renderer = command_renderer.clone();
                         tokio::spawn(async move {
                             tokio::time::sleep(Duration::from_secs(sec)).await;
                             if crate::http_api::state::current_fullscreen()
@@ -85,12 +87,18 @@ pub async fn run(
                                 return;
                             }
                             let _ = s2.manager.leave_fullscreen().await;
+                            if let Some(renderer) = &timeout_renderer {
+                                let panel = s2.manager.active_id().await;
+                                if let Err(e) = renderer.select_panel(&panel).await {
+                                    warn!("native renderer failed to exit fullscreen: {e}");
+                                }
+                            }
                         });
                     }
                 }
                 WallCommand::ReturnToGrid => {
                     let _ = st.manager.leave_fullscreen().await;
-                    if let Some(renderer) = &native_renderer {
+                    if let Some(renderer) = &command_renderer {
                         let panel = st.manager.active_id().await;
                         if let Err(e) = renderer.select_panel(&panel).await {
                             warn!("native renderer failed to return to panel {panel}: {e}");
@@ -100,7 +108,7 @@ pub async fn run(
                 WallCommand::Pause => {
                     if !crate::http_api::state::is_paused_now().await {
                         let _ = st.manager.pause().await;
-                        if let Some(renderer) = &native_renderer {
+                        if let Some(renderer) = &command_renderer {
                             renderer.stop().await;
                         }
                     }
@@ -108,7 +116,7 @@ pub async fn run(
                 WallCommand::Resume => {
                     if crate::http_api::state::is_paused_now().await {
                         let _ = st.manager.resume().await;
-                        if let Some(renderer) = &native_renderer {
+                        if let Some(renderer) = &command_renderer {
                             let panel = st.manager.active_id().await;
                             if let Err(e) = renderer.select_panel(&panel).await {
                                 warn!("native renderer failed to resume panel {panel}: {e}");
@@ -118,7 +126,7 @@ pub async fn run(
                 }
                 WallCommand::UpdateSettings(_) | WallCommand::ReloadConfig => {
                     // Already applied synchronously by the originating handler.
-                    if let Some(renderer) = &native_renderer {
+                    if let Some(renderer) = &command_renderer {
                         let panel = st.manager.active_id().await;
                         if let Err(e) = renderer.select_panel(&panel).await {
                             warn!("native renderer failed to apply updated settings: {e}");
