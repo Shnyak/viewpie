@@ -40,6 +40,7 @@ pub async fn run(
     resolution: Resolution,
     config_path: &str,
     bind: SocketAddr,
+    native_renderer: Option<Arc<crate::native_controller::NativeRendererController>>,
 ) -> anyhow::Result<AppState> {
     let (state, mut rx) = AppState::bootstrap(cfg, backend.clone(), resolution, config_path).await;
 
@@ -49,13 +50,28 @@ pub async fn run(
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 WallCommand::SwitchPanel(id) => {
-                    if let Err(e) = st.manager.switch_to(&id).await {
-                        warn!("cmd switch {id}: {e}");
+                    match st.manager.switch_to(&id).await {
+                        Ok(()) => {
+                            if let Some(renderer) = &native_renderer {
+                                if let Err(e) = renderer.select_panel(&id).await {
+                                    warn!("native renderer failed to switch to panel {id}: {e}");
+                                }
+                            }
+                        }
+                        Err(e) => warn!("cmd switch {id}: {e}"),
                     }
                 }
                 WallCommand::SetFullscreen(cam, dur) => {
-                    if let Err(e) = st.manager.enter_fullscreen(&cam).await {
-                        warn!("cmd fullscreen {cam}: {e}");
+                    match st.manager.enter_fullscreen(&cam).await {
+                        Ok(()) => {
+                            if let Some(renderer) = &native_renderer {
+                                let panel = st.manager.active_id().await;
+                                if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
+                                    warn!("native renderer failed to enter fullscreen for {cam}: {e}");
+                                }
+                            }
+                        }
+                        Err(e) => warn!("cmd fullscreen {cam}: {e}"),
                     }
                     if let Some(sec) = dur {
                         let s2 = st.clone();
@@ -74,19 +90,40 @@ pub async fn run(
                 }
                 WallCommand::ReturnToGrid => {
                     let _ = st.manager.leave_fullscreen().await;
+                    if let Some(renderer) = &native_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_panel(&panel).await {
+                            warn!("native renderer failed to return to panel {panel}: {e}");
+                        }
+                    }
                 }
                 WallCommand::Pause => {
                     if !crate::http_api::state::is_paused_now().await {
                         let _ = st.manager.pause().await;
+                        if let Some(renderer) = &native_renderer {
+                            renderer.stop().await;
+                        }
                     }
                 }
                 WallCommand::Resume => {
                     if crate::http_api::state::is_paused_now().await {
                         let _ = st.manager.resume().await;
+                        if let Some(renderer) = &native_renderer {
+                            let panel = st.manager.active_id().await;
+                            if let Err(e) = renderer.select_panel(&panel).await {
+                                warn!("native renderer failed to resume panel {panel}: {e}");
+                            }
+                        }
                     }
                 }
                 WallCommand::UpdateSettings(_) | WallCommand::ReloadConfig => {
                     // Already applied synchronously by the originating handler.
+                    if let Some(renderer) = &native_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_panel(&panel).await {
+                            warn!("native renderer failed to apply updated settings: {e}");
+                        }
+                    }
                 }
             }
         }
