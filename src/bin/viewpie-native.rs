@@ -1,8 +1,5 @@
-//! Standalone hardware renderer using the upstream FFmpeg + DRM/KMS pipeline.
-//! The selected fork panel is adapted to the upstream display schema.
-
-#[path = "../native/mod.rs"]
-mod native;
+//! Hardware renderer using the upstream FFmpeg + DRM/KMS pipeline.
+//! Adapts the fork's panels schema and optionally displays one camera fullscreen.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -36,14 +33,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .panels
         .get(&panel_id)
         .ok_or_else(|| format!("panel {panel_id:?} does not exist"))?;
-    let layout = square_layout(panel)?;
-    // The upstream parser rejects feeds that are not shown by this display,
-    // so include only feeds referenced by the selected panel.
-    let feeds: HashMap<String, FeedConfig> = panel
-        .feed_names()
-        .into_iter()
-        .filter_map(|name| cfg.feeds.get(&name).cloned().map(|feed| (name, feed)))
-        .collect();
+
+    let (layout, viewports, feeds, spacing) =
+        if let Ok(camera) = std::env::var("VIEWPIE_FULLSCREEN") {
+            let source = cfg
+                .feeds
+                .get(&camera)
+                .ok_or_else(|| format!("fullscreen camera {camera:?} does not exist"))?;
+            let url = source
+                .fullscreen_url
+                .clone()
+                .ok_or_else(|| format!("camera {camera:?} has no fullscreen_url"))?;
+            let feeds = HashMap::from([(
+                camera.clone(),
+                FeedConfig {
+                    url,
+                    fullscreen_url: None,
+                },
+            )]);
+            let viewports = vec![ViewportConfig {
+                slot: "fullscreen".to_string(),
+                feeds: vec![camera],
+            }];
+            ("fullscreen".to_string(), viewports, feeds, 0)
+        } else {
+            let feeds: HashMap<String, FeedConfig> = panel
+                .feed_names()
+                .into_iter()
+                .filter_map(|name| cfg.feeds.get(&name).cloned().map(|feed| (name, feed)))
+                .collect();
+            (
+                square_layout(panel)?,
+                panel.viewports.clone(),
+                feeds,
+                panel.spacing.unwrap_or(cfg.display.spacing),
+            )
+        };
+
     let native_cfg = NativeConfig {
         rotation_interval: cfg.display.rotation_interval,
         spacing: cfg.display.spacing,
@@ -51,17 +77,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pause_off_screen: cfg.display.pause_off_screen,
         feeds: &feeds,
         displays: vec![NativeDisplay {
-            spacing: panel.spacing.unwrap_or(cfg.display.spacing),
+            spacing,
             background: &cfg.display.background,
             layout,
-            viewports: &panel.viewports,
+            viewports: &viewports,
         }],
     };
     let yaml = serde_yaml::to_string(&native_cfg)?;
     eprintln!(
-        "viewpie-native: using panel {panel_id:?} from {path}; starting upstream FFmpeg/DRM renderer"
+        "viewpie-native: panel={panel_id:?}, fullscreen={:?}; starting upstream FFmpeg/DRM renderer",
+        std::env::var("VIEWPIE_FULLSCREEN").ok()
     );
-    native::run_from_config_text(&yaml)
+    viewpie::native::run_from_config_text(&yaml)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     Ok(())
 }
