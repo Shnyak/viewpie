@@ -20,6 +20,8 @@ jobs:
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
             libclang-dev clang
       - run: cargo test --locked
+      - name: Compile the native FFmpeg/DRM renderer
+        run: cargo check --locked --features native-pipeline --bin viewpie-native
       - run: cargo fmt --check
       # Not -D warnings: the generated libav bindings carry a pile of them
       # that no amount of care here would remove, and a lint that cannot be
