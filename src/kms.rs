@@ -206,23 +206,21 @@ impl KmsBackend {
 #[async_trait]
 impl DisplayBackend for KmsBackend {
     async fn commit(&self, frame: &FrameLayout) -> Result<(), DisplayError> {
-        // Program the modeset atomic request: primary plane shows the
-        // composed wall framebuffer produced by `wall.rs`; feed planes are
-        // imported dmabufs. COMMIT_ALLOW_MODESET | TEST_ONLY-then-COMMIT.
-        let mut spacing = self.last_spacing.write().await;
-        *spacing = frame.spacing;
-        info!(
+        // Do not report success here: this fork currently has no DRM atomic
+        // request, framebuffer import, or page-flip implementation. Returning
+        // Ok(()) made the rest of the application believe the monitor updated
+        // even though no pixels were submitted to KMS.
+        warn!(
             device = %self.device.display(),
-            planes = frame.planes.len(),
-            "drmModeAtomicCommit"
+            planes = ?frame.planes,
+            spacing = frame.spacing,
+            fullscreen = frame.fullscreen,
+            "hardware display commit requested, but DRM/KMS rendering is not implemented"
         );
-        // The actual ioctl sequence uses the `drm` crate object IDs kept
-        // by the wall renderer; a failure here means the GPU rejected the
-        // request and the previous frame stays latched.
-        if frame.planes.is_empty() && frame.background == "" {
-            return Err(DisplayError::Commit("invalid frame".into()));
-        }
-        Ok(())
+        Err(DisplayError::Commit(
+            "DRM/KMS rendering pipeline is not implemented in this fork; no frame was displayed"
+                .into(),
+        ))
     }
 
     async fn screen_on(&self) -> bool {
