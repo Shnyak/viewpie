@@ -129,7 +129,7 @@ pub async fn run(
         }
     });
 
-    spawn_background_tasks(state.clone());
+    spawn_background_tasks(state.clone(), native_renderer.clone());
 
     let app = routes::router(state.clone()).layer(cors_layer());
     let listener = tokio::net::TcpListener::bind(bind).await?;
@@ -157,9 +157,13 @@ pub async fn build_app(
 
 /// Background loops: auto-pause on screen off, viewport rotation,
 /// fullscreen watchdog.
-fn spawn_background_tasks(state: AppState) {
+fn spawn_background_tasks(
+    state: AppState,
+    native_renderer: Option<Arc<crate::native_controller::NativeRendererController>>,
+) {
     // ── Screen state monitor (pause_off_screen) ──
     let st = state.clone();
+    let screen_renderer = native_renderer.clone();
     tokio::spawn(async move {
         loop {
             let (pause_off, paused, auto_paused) = {
@@ -174,12 +178,21 @@ fn spawn_background_tasks(state: AppState) {
                     if let Err(e) = st.manager.pause().await {
                         error!("auto-pause failed: {e}");
                     }
+                    if let Some(renderer) = &screen_renderer {
+                        renderer.stop().await;
+                    }
                     crate::http_api::state::set_auto_paused(true).await;
                 } else if screen_on && auto_paused {
                     if paused {
                         info!("screen back on — auto-resuming wall");
                         if let Err(e) = st.manager.resume().await {
                             error!("auto-resume failed: {e}");
+                        }
+                        if let Some(renderer) = &screen_renderer {
+                            let panel = st.manager.active_id().await;
+                            if let Err(e) = renderer.select_panel(&panel).await {
+                                error!("native renderer auto-resume failed: {e}");
+                            }
                         }
                     }
                     crate::http_api::state::set_auto_paused(false).await;
@@ -209,6 +222,7 @@ fn spawn_background_tasks(state: AppState) {
 
     // ── Fullscreen watchdog (enforces fullscreen_timeout robustly) ──
     let st = state.clone();
+    let fullscreen_renderer = native_renderer.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -228,6 +242,12 @@ fn spawn_background_tasks(state: AppState) {
                 if age > timeout {
                     info!("fullscreen watchdog: returning to grid after {age}s");
                     let _ = st.manager.leave_fullscreen().await;
+                    if let Some(renderer) = &fullscreen_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_panel(&panel).await {
+                            warn!("native renderer failed to exit fullscreen: {e}");
+                        }
+                    }
                 }
             }
         }
