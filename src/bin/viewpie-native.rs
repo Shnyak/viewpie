@@ -47,7 +47,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let yaml = serde_yaml::to_string(&native_cfg)?;
     eprintln!("viewpie-native: using panel {panel_id:?} from {path}; starting upstream FFmpeg/DRM renderer");
-    native::run_from_config_text(&yaml).map_err(|e| e.into())
+    native::run_from_config_text(&yaml)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    Ok(())
 }
 
 fn square_layout(panel: &PanelConfig) -> Result<String, Box<dyn std::error::Error>> {
