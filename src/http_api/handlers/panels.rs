@@ -106,10 +106,6 @@ pub async fn update_panel(
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
     }
-    drop(g);
-    if state.manager.active_id().await == id {
-        let _ = state.command_tx.send(WallCommand::SwitchPanel(id.clone())).await;
-    }
     Ok(Json(OkResponse::ok()))
 }
 
