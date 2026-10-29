@@ -45,6 +45,31 @@ fn main() -> anyhow::Result<()> {
     let cfg = Config::load(&config_path)
         .with_context(|| format!("loading configuration from {config_path}"))?;
 
+    info!(
+        feeds = cfg.feeds.len(),
+        panels = cfg.panels.len(),
+        initial_panel = %cfg.initial_panel(),
+        "configuration loaded and validated"
+    );
+    for (name, panel) in &cfg.panels {
+        info!(
+            panel = %name,
+            label = %panel.name,
+            viewports = panel.viewports.len(),
+            cameras = panel.camera_count(),
+            rows = panel.grid().len(),
+            "configured panel"
+        );
+        for viewport in &panel.viewports {
+            tracing::debug!(
+                panel = %name,
+                slot = %viewport.slot,
+                feeds = ?viewport.feeds,
+                "configured viewport"
+            );
+        }
+    }
+
     // Resolution: from env override or default HDMI 1080p; the hardware
     // backend replaces it with the detected connector mode.
     let resolution = Resolution {
@@ -103,6 +128,6 @@ fn create_backend() -> anyhow::Result<Arc<dyn DisplayBackend>> {
             }
         }
     }
-    info!("using headless display backend");
+    tracing::warn!("using headless display backend: no video will be shown on a physical monitor");
     Ok(Arc::new(HeadlessBackend::new()))
 }
