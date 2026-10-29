@@ -37,12 +37,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get(&panel_id)
         .ok_or_else(|| format!("panel {panel_id:?} does not exist"))?;
     let layout = square_layout(panel)?;
+    // The upstream parser rejects feeds that are not shown by this display,
+    // so include only feeds referenced by the selected panel.
+    let feeds: HashMap<String, FeedConfig> = panel
+        .feed_names()
+        .into_iter()
+        .filter_map(|name| cfg.feeds.get(&name).cloned().map(|feed| (name, feed)))
+        .collect();
     let native_cfg = NativeConfig {
         rotation_interval: cfg.display.rotation_interval,
         spacing: cfg.display.spacing,
         background: &cfg.display.background,
         pause_off_screen: cfg.display.pause_off_screen,
-        feeds: &cfg.feeds,
+        feeds: &feeds,
         displays: vec![NativeDisplay {
             spacing: panel.spacing.unwrap_or(cfg.display.spacing),
             background: &cfg.display.background,
