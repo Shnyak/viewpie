@@ -22,6 +22,9 @@ pub mod feed;
 pub mod http_api;
 pub mod kms;
 pub mod panel_manager;
+pub mod native_controller;
+#[cfg(feature = "native-pipeline")]
+pub mod native;
 pub mod wall;
 
 pub use config::{Config, DisplaySettings};
