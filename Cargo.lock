@@ -1644,18 +1644,17 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 name = "viewpie"
 version = "0.2.0-fork"
 dependencies = [
- "bindgen",
- "libc",
- "rustix",
- "yaml-rust2",
  "anyhow",
  "async-trait",
  "axum",
+ "bindgen",
  "chrono",
  "dashmap",
  "drm",
  "futures",
+ "libc",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1666,6 +1665,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "yaml-rust2",
 ]
 
 [[package]]
