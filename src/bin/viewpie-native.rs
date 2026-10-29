@@ -88,8 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "viewpie-native: panel={panel_id:?}, fullscreen={:?}; starting upstream FFmpeg/DRM renderer",
         std::env::var("VIEWPIE_FULLSCREEN").ok()
     );
-    viewpie::native::run_from_config_text(&yaml)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    viewpie::native::run_from_config_text(&yaml).map_err(anyhow::Error::msg)?;
     Ok(())
 }
 
