@@ -9,6 +9,7 @@ pub struct NativeRendererController {
     config_path: String,
     binary_path: PathBuf,
     child: Mutex<Option<Child>>,
+    operation: Mutex<()>,
 }
 
 impl NativeRendererController {
@@ -25,6 +26,7 @@ impl NativeRendererController {
             config_path: config_path.into(),
             binary_path,
             child: Mutex::new(None),
+            operation: Mutex::new(()),
         }
     }
 
@@ -37,7 +39,8 @@ impl NativeRendererController {
     }
 
     async fn restart(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
-        self.stop().await;
+        let _operation = self.operation.lock().await;
+        self.stop_inner().await;
         let mut command = Command::new(&self.binary_path);
         command
             .arg(&self.config_path)
@@ -68,6 +71,11 @@ impl NativeRendererController {
     }
 
     pub async fn stop(&self) {
+        let _operation = self.operation.lock().await;
+        self.stop_inner().await;
+    }
+
+    async fn stop_inner(&self) {
         if let Some(mut child) = self.child.lock().await.take() {
             let _ = child.kill().await;
             let _ = child.wait().await;
