@@ -106,6 +106,10 @@ pub async fn update_panel(
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
     }
+    drop(g);
+    if state.manager.active_id().await == id {
+        let _ = state.command_tx.send(WallCommand::SwitchPanel(id.clone())).await;
+    }
     Ok(Json(OkResponse::ok()))
 }
 
@@ -117,7 +121,9 @@ pub async fn delete_panel(
     state.manager.delete_panel(&id).await?;
     let mut g = state.panels.write().await;
     g.remove(&id);
-    *state.active_panel.write().await = state.manager.active_id().await;
+    let active = state.manager.active_id().await;
+    *state.active_panel.write().await = active.clone();
+    let _ = state.command_tx.send(WallCommand::SwitchPanel(active)).await;
     info!(panel = id, "panel deleted");
     Ok(Json(OkResponse::ok()))
 }
