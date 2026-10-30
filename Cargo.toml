@@ -39,6 +39,9 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+yaml-rust2 = { version = "0.13", optional = true }
+rustix = { version = "1", features = ["event"], optional = true }
+libc = { version = "0.2", optional = true }
 
 # The native FFmpeg/libav + DRM/KMS pipeline is enabled for ARM release builds
 # with `--features hw`. The optional feature keeps default desktop/headless
@@ -50,16 +53,9 @@ hw = ["dep:drm", "native-pipeline"]
 native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix", "dep:libc"]
 
 [dependencies.drm]
-# Примечание: в ТЗ была указана версия "1.5", однако в crates.io у крейта
-# `drm` нет релизов 1.x/2.x — актуальная линейка 0.x (0.15.0). Оригинальный
-# viewpie использует именно drm 0.15, API (drm::control, AtomicModeSet,
-# framebuffer/plane/crtc handles) соответствует требованиям ТЗ.
+# Версия drm 0.15 соответствует используемому API.
 version = "0.15"
 optional = true
-
-yaml-rust2 = { version = "0.13", optional = true }
-rustix = { version = "1", features = ["event"], optional = true }
-libc = { version = "0.2", optional = true }
 
 [build-dependencies]
 bindgen = "0.71"

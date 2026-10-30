@@ -185,7 +185,7 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: grid 3x3..8x8, all slots defined,
+    /// Validate the panel: grid 1x1..8x8, all slots defined,
     /// every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
@@ -195,9 +195,9 @@ impl PanelConfig {
     pub fn validate(&self, known_feeds: &[String]) -> Result<(), ConfigError> {
         let grid = self.grid();
         let rows = grid.len();
-        if !(3..=8).contains(&rows) {
+        if !(1..=8).contains(&rows) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 rows, got {rows}"
+                "panel layout must have 1-8 rows, got {rows}"
             )));
         }
         let cols = grid[0].len();
@@ -208,9 +208,9 @@ impl PanelConfig {
                 ));
             }
         }
-        if !(3..=8).contains(&cols) {
+        if !(1..=8).contains(&cols) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 columns, got {cols}"
+                "panel layout must have 1-8 columns, got {cols}"
             )));
         }
         let mut slots: HashMap<&str, &ViewportConfig> = HashMap::new();
@@ -418,20 +418,60 @@ defaults:
     }
 
     #[test]
-    fn rejects_too_small_grid() {
-        let bad = r#"
+    fn accepts_single_cell_grid() {
+        let yaml = r#"
 feeds:
   a: { url: "rtsp://x/a" }
 panels:
   p:
     layout: |
-      a a
-      a a
+      a
     viewports:
       - { slot: a, feeds: [a] }
 "#;
-        let err = Config::from_yaml(bad).unwrap_err();
-        assert!(format!("{err}").contains("3-8 rows"));
+        assert!(Config::from_yaml(yaml).is_ok());
+    }
+
+    #[test]
+    fn accepts_two_by_two_grid() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a b
+      c d
+    viewports:
+      - { slot: a, feeds: [a] }
+      - { slot: b, feeds: [a] }
+      - { slot: c, feeds: [a] }
+      - { slot: d, feeds: [a] }
+"#;
+        assert!(Config::from_yaml(yaml).is_ok());
+    }
+
+    #[test]
+    fn rejects_grid_larger_than_eight() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+    viewports:
+      - { slot: a, feeds: [a] }
+"#;
+        assert!(Config::from_yaml(yaml).is_err());
     }
 
     #[test]

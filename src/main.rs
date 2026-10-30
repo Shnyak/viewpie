@@ -134,7 +134,9 @@ fn create_backend() -> anyhow::Result<Arc<dyn DisplayBackend>> {
     if cfg!(feature = "native-pipeline") {
         info!("using headless layout backend; native renderer owns physical DRM/KMS output");
     } else {
-        tracing::warn!("using headless display backend: no video will be shown on a physical monitor");
+        tracing::warn!(
+            "using headless display backend: no video will be shown on a physical monitor"
+        );
     }
     Ok(Arc::new(HeadlessBackend::new()))
 }

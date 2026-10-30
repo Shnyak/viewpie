@@ -50,25 +50,25 @@ pub async fn run(
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                WallCommand::SwitchPanel(id) => {
-                    match st.manager.switch_to(&id).await {
-                        Ok(()) => {
-                            if let Some(renderer) = &command_renderer {
-                                if let Err(e) = renderer.select_panel(&id).await {
-                                    warn!("native renderer failed to switch to panel {id}: {e}");
-                                }
+                WallCommand::SwitchPanel(id) => match st.manager.switch_to(&id).await {
+                    Ok(()) => {
+                        if let Some(renderer) = &command_renderer {
+                            if let Err(e) = renderer.select_panel(&id).await {
+                                warn!("native renderer failed to switch to panel {id}: {e}");
                             }
                         }
-                        Err(e) => warn!("cmd switch {id}: {e}"),
                     }
-                }
+                    Err(e) => warn!("cmd switch {id}: {e}"),
+                },
                 WallCommand::SetFullscreen(cam, _dur) => {
                     match st.manager.enter_fullscreen(&cam).await {
                         Ok(()) => {
                             if let Some(renderer) = &command_renderer {
                                 let panel = st.manager.active_id().await;
                                 if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
-                                    warn!("native renderer failed to enter fullscreen for {cam}: {e}");
+                                    warn!(
+                                        "native renderer failed to enter fullscreen for {cam}: {e}"
+                                    );
                                 }
                             }
                         }
@@ -85,21 +85,16 @@ pub async fn run(
                     }
                 }
                 WallCommand::Pause => {
-                    if !crate::http_api::state::is_paused_now().await {
-                        let _ = st.manager.pause().await;
-                    }
                     if let Some(renderer) = &command_renderer {
-                        renderer.stop().await;
+                        if let Err(e) = renderer.set_display_power(false).await {
+                            warn!("native renderer failed to turn display off: {e}");
+                        }
                     }
                 }
                 WallCommand::Resume => {
-                    if crate::http_api::state::is_paused_now().await {
-                        let _ = st.manager.resume().await;
-                    }
                     if let Some(renderer) = &command_renderer {
-                        let panel = st.manager.active_id().await;
-                        if let Err(e) = renderer.select_panel(&panel).await {
-                            warn!("native renderer failed to resume panel {panel}: {e}");
+                        if let Err(e) = renderer.set_display_power(true).await {
+                            warn!("native renderer failed to turn display on: {e}");
                         }
                     }
                 }
@@ -160,25 +155,20 @@ fn spawn_background_tasks(
             };
             if pause_off {
                 let screen_on = check_screen_via_kms().await;
-                if !screen_on && !paused {
-                    info!("screen switched off — auto-pausing wall");
-                    if let Err(e) = st.manager.pause().await {
-                        error!("auto-pause failed: {e}");
-                    }
+                if !screen_on && !paused && !auto_paused {
+                    info!("screen switched off — turning HDMI DPMS off");
                     if let Some(renderer) = &screen_renderer {
-                        renderer.stop().await;
+                        if let Err(e) = renderer.set_display_power(false).await {
+                            error!("auto DPMS off failed: {e}");
+                        }
                     }
                     crate::http_api::state::set_auto_paused(true).await;
                 } else if screen_on && auto_paused {
-                    if paused {
-                        info!("screen back on — auto-resuming wall");
-                        if let Err(e) = st.manager.resume().await {
-                            error!("auto-resume failed: {e}");
-                        }
-                        if let Some(renderer) = &screen_renderer {
-                            let panel = st.manager.active_id().await;
-                            if let Err(e) = renderer.select_panel(&panel).await {
-                                error!("native renderer auto-resume failed: {e}");
+                    info!("screen back on — turning HDMI DPMS on");
+                    if let Some(renderer) = &screen_renderer {
+                        if !paused {
+                            if let Err(e) = renderer.set_display_power(true).await {
+                                error!("auto DPMS on failed: {e}");
                             }
                         }
                     }

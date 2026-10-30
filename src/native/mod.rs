@@ -26,12 +26,13 @@ mod present;
 
 use self::config::Config;
 use self::decode::{Decoder, FeedStats, Refused};
+use self::ffi::*;
+use self::present::{Card, Fb, ImportedFrame, Viewport};
 use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle};
 use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
 };
-use self::ffi::*;
-use self::present::{Card, Fb, ImportedFrame, Viewport};
+use std::io::BufRead;
 use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -788,15 +789,6 @@ fn run(config: &Config) -> Result<(), String> {
         // remote events and issue duplicate commands.
         wall.tv = None;
         if config.pause_off_screen {
-                        ", and only unplugging it will pause the wall"
-                    } else {
-                        ""
-                    }
-                );
-                None
-            }
-        };
-        if config.pause_off_screen {
             wall.watch = Some(Watch {
                 connected: true,
                 looked: Instant::now(),
@@ -835,7 +827,27 @@ fn run(config: &Config) -> Result<(), String> {
         .into_iter()
         .chain(fullscreen.into_iter().flatten())
         .collect();
-    run_walls(&card, &sources, &mut walls)
+    // Read display power commands from the parent API process.
+    let (display_tx, display_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            match line.trim() {
+                "OFF" => {
+                    let _ = display_tx.send(false);
+                }
+                "ON" => {
+                    let _ = display_tx.send(true);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    run_walls(&card, &sources, &mut walls, display_rx)
 }
 
 /// Exit when told to stop, handing back any CEC address first.
@@ -965,6 +977,43 @@ fn build(
         if mode.is_some() { "set" } else { "already set" },
         out.crtc_index
     );
+    // Read-only DRM property diagnostics.
+    let connector_properties = card
+        .get_properties(out.connector)
+        .map_err(|e| format!("could not read connector properties: {e}"))?;
+    for (id, value) in connector_properties {
+        let info = card
+            .get_property(id)
+            .map_err(|e| format!("could not inspect connector property: {e}"))?;
+        if info.name().to_bytes() == b"DPMS" {
+            println!(
+                "DRM property DPMS: current={}, type={:?}, mutable={}, atomic={}",
+                value,
+                info.value_type(),
+                info.mutable(),
+                info.atomic()
+            );
+        }
+    }
+
+    let crtc_properties = card
+        .get_properties(out.crtc)
+        .map_err(|e| format!("could not read CRTC properties: {e}"))?;
+    for (id, value) in crtc_properties {
+        let info = card
+            .get_property(id)
+            .map_err(|e| format!("could not inspect CRTC property: {e}"))?;
+        if info.name().to_bytes() == b"ACTIVE" {
+            println!(
+                "DRM property ACTIVE: current={}, type={:?}, mutable={}, atomic={}",
+                value,
+                info.value_type(),
+                info.mutable(),
+                info.atomic()
+            );
+        }
+    }
+
     // Painted behind the viewports so a gap, or a feed that has gone away,
     // shows the wall's own background rather than whatever the console left on
     // the screen.
@@ -1101,7 +1150,12 @@ fn build(
 /// something. It also means never committing while a flip is outstanding,
 /// which the kernel refuses with EBUSY. A loop that retried instead spun at
 /// thousands of rejections a second.
-fn run_walls(card: &Arc<Card>, sources: &[Arc<Source>], walls: &mut [Wall]) -> Result<(), String> {
+fn run_walls(
+    card: &Arc<Card>,
+    sources: &[Arc<Source>],
+    walls: &mut [Wall],
+    display_commands: std::sync::mpsc::Receiver<bool>,
+) -> Result<(), String> {
     // What every rotation is timed from. One for the whole process, so
     // viewports on different displays switch together too.
     let started = Instant::now();
@@ -1117,95 +1171,124 @@ fn run_walls(card: &Arc<Card>, sources: &[Arc<Source>], walls: &mut [Wall]) -> R
             .collect(),
     };
     let mut commit_gripe = Throttle::new();
+    let mut display_requested_on = true;
+    let mut display_on = true;
 
     loop {
-        // A feed is wanted while any display showing it is watched, so one
-        // shown on two screens keeps decoding for whichever is still on.
-        //
-        // Keys first, since what a display shows fullscreen is wanted too.
-        // On a clock read before any commit this pass, which a step is in
-        // effect for: the next turn is at least a second away.
-        let mut changed = false;
-        let clock = started.elapsed();
-        for wall in walls.iter_mut() {
-            let mode = wall.mode;
-            changed |= wall.look(card);
-            wall.take_keys(clock);
-            wall.expire();
-            changed |= wall.mode != mode;
+        // Keep the latest requested state. OFF waits for outstanding flips
+        // before changing DPMS, but prevents any further commits immediately.
+        while let Ok(on) = display_commands.try_recv() {
+            display_requested_on = on;
         }
-        if changed {
-            for source in sources {
-                let wanted = walls.iter().any(|w| w.watched && w.shows(source));
-                source.wanted.store(wanted, Ordering::Relaxed);
+
+        if !display_requested_on && display_on && walls.iter().all(|wall| wall.in_flight.is_none())
+        {
+            for wall in walls.iter() {
+                card.set_dpms(wall.out.connector, false)
+                    .map_err(|e| format!("could not turn off {}: {e}", wall.out.name))?;
+            }
+            display_on = false;
+            println!("HDMI DPMS: Off");
+        } else if display_requested_on && !display_on {
+            for wall in walls.iter() {
+                card.set_dpms(wall.out.connector, true)
+                    .map_err(|e| format!("could not turn on {}: {e}", wall.out.name))?;
+            }
+            display_on = true;
+            println!("HDMI DPMS: On");
+        }
+
+        // Keep the current scene and decoder set unchanged while the
+        // physical display is off. DRM flip events are still processed below.
+        if display_on && display_requested_on {
+            // A feed is wanted while any display showing it is watched.
+            // Keys first, since what a display shows fullscreen is wanted too.
+            let mut changed = false;
+            let clock = started.elapsed();
+
+            for wall in walls.iter_mut() {
+                let mode = wall.mode;
+                changed |= wall.look(card);
+                wall.take_keys(clock);
+                wall.expire();
+                changed |= wall.mode != mode;
+            }
+
+            if changed {
+                for source in sources {
+                    let wanted = walls.iter().any(|w| w.watched && w.shows(source));
+                    source.wanted.store(wanted, Ordering::Relaxed);
+                }
             }
         }
 
-        for wall in walls.iter_mut() {
-            if wall.in_flight.is_some() {
-                continue;
-            }
-            let clock = started.elapsed();
-            // A display is only due once its last commit has flipped, so
-            // on_screen is what its planes show now.
-            let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
-            let target = wall.watched.then_some(wall.mode);
-            let mut ready = Vec::new();
-            if wall.laid_out != target {
-                // Every plane let go of, once, and whatever comes next laid
-                // out afresh once that has flipped. Paused, that is all until
-                // someone is watching again: the planes would otherwise hold
-                // the last frames, and with them the decoders' buffers, for
-                // as long as the pause lasted.
-                ready = let_go(&wall.viewports, showing, 0);
-                if ready.is_empty() {
-                    wall.laid_out = target;
-                    wall.fullscreen_tap = None;
+        if display_on && display_requested_on {
+            for wall in walls.iter_mut() {
+                if wall.in_flight.is_some() {
+                    continue;
                 }
-            }
-            if wall.laid_out == target {
-                ready = match target {
-                    None => continue,
-                    Some(Mode::Grid) => {
-                        collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
+                let clock = started.elapsed();
+                // A display is only due once its last commit has flipped, so
+                // on_screen is what its planes show now.
+                let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
+                let target = wall.watched.then_some(wall.mode);
+                let mut ready = Vec::new();
+                if wall.laid_out != target {
+                    // Every plane let go of, once, and whatever comes next laid
+                    // out afresh once that has flipped. Paused, that is all until
+                    // someone is watching again: the planes would otherwise hold
+                    // the last frames, and with them the decoders' buffers, for
+                    // as long as the pause lasted.
+                    ready = let_go(&wall.viewports, showing, 0);
+                    if ready.is_empty() {
+                        wall.laid_out = target;
+                        wall.fullscreen_tap = None;
                     }
-                    Some(Mode::Fullscreen(at)) => collect_fullscreen(
-                        &wall.viewports,
-                        showing,
-                        &wall.cameras[at],
-                        wall.size,
-                        &mut wall.fullscreen_tap,
-                        clock,
-                    ),
-                };
-            }
-            // Committed even when nothing changed, and then it names no plane
-            // at all: the flip it asks for is what paces this display, and
-            // without one a new frame would wait out the poll below. Such a
-            // commit is legal because Card::commit names the crtc whatever
-            // else a request says.
-            let request = ready
-                .iter()
-                .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb)));
-            match card.commit(wall.out.crtc, wall.crtc_active, request) {
-                Ok(()) => {
-                    wall.commits += 1;
-                    // Held until the flip: from here on the display may be
-                    // reading these, whatever their feeds do next. Recorded
-                    // only now, because a refused commit leaves every plane
-                    // exactly as it was.
-                    let named = ready.into_iter().map(|(i, _, s)| (i, s)).collect();
-                    wall.in_flight = Some(InFlight {
-                        at: Instant::now(),
-                        overdue_said: false,
-                        named,
-                    });
                 }
-                Err(e) => {
-                    // No flip will arrive for a commit that was refused, so
-                    // this display stays due and tries again after the wait
-                    // below.
-                    commit_gripe.say(format_args!("commit on {}: {e}", wall.out.name));
+                if wall.laid_out == target {
+                    ready = match target {
+                        None => continue,
+                        Some(Mode::Grid) => {
+                            collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
+                        }
+                        Some(Mode::Fullscreen(at)) => collect_fullscreen(
+                            &wall.viewports,
+                            showing,
+                            &wall.cameras[at],
+                            wall.size,
+                            &mut wall.fullscreen_tap,
+                            clock,
+                        ),
+                    };
+                }
+                // Committed even when nothing changed, and then it names no plane
+                // at all: the flip it asks for is what paces this display, and
+                // without one a new frame would wait out the poll below. Such a
+                // commit is legal because Card::commit names the crtc whatever
+                // else a request says.
+                let request = ready
+                    .iter()
+                    .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb)));
+                match card.commit(wall.out.crtc, wall.crtc_active, request) {
+                    Ok(()) => {
+                        wall.commits += 1;
+                        // Held until the flip: from here on the display may be
+                        // reading these, whatever their feeds do next. Recorded
+                        // only now, because a refused commit leaves every plane
+                        // exactly as it was.
+                        let named = ready.into_iter().map(|(i, _, s)| (i, s)).collect();
+                        wall.in_flight = Some(InFlight {
+                            at: Instant::now(),
+                            overdue_said: false,
+                            named,
+                        });
+                    }
+                    Err(e) => {
+                        // No flip will arrive for a commit that was refused, so
+                        // this display stays due and tries again after the wait
+                        // below.
+                        commit_gripe.say(format_args!("commit on {}: {e}", wall.out.name));
+                    }
                 }
             }
         }

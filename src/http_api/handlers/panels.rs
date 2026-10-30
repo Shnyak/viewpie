@@ -119,7 +119,10 @@ pub async fn delete_panel(
     g.remove(&id);
     let active = state.manager.active_id().await;
     *state.active_panel.write().await = active.clone();
-    let _ = state.command_tx.send(WallCommand::SwitchPanel(active)).await;
+    let _ = state
+        .command_tx
+        .send(WallCommand::SwitchPanel(active))
+        .await;
     info!(panel = id, "panel deleted");
     Ok(Json(OkResponse::ok()))
 }

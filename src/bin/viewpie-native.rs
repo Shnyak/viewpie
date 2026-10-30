@@ -97,14 +97,9 @@ fn square_layout(panel: &PanelConfig) -> Result<String, Box<dyn std::error::Erro
     if rows.is_empty() || rows.iter().any(Vec::is_empty) {
         return Err("panel layout is empty".into());
     }
-    let side = rows
-        .len()
-        .max(rows.iter().map(Vec::len).max().unwrap_or(0));
+    let side = rows.len().max(rows.iter().map(Vec::len).max().unwrap_or(0));
     if side > 8 {
-        return Err(format!(
-            "panel grid is {side} cells wide/high; maximum supported is 8"
-        )
-        .into());
+        return Err(format!("panel grid is {side} cells wide/high; maximum supported is 8").into());
     }
     for row in &mut rows {
         row.resize(side, ".".to_string());
@@ -117,4 +112,43 @@ fn square_layout(panel: &PanelConfig) -> Result<String, Box<dyn std::error::Erro
         .map(|r| r.join(" "))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use viewpie::config::ViewportConfig;
+
+    fn panel(layout: &str) -> PanelConfig {
+        PanelConfig {
+            name: "test".into(),
+            spacing: None,
+            layout: layout.into(),
+            viewports: Vec::<ViewportConfig>::new(),
+        }
+    }
+
+    #[test]
+    fn square_layout_keeps_single_cell() {
+        assert_eq!(square_layout(&panel("a")).unwrap(), "a");
+    }
+
+    #[test]
+    fn square_layout_keeps_two_by_two() {
+        assert_eq!(square_layout(&panel("a b\nc d")).unwrap(), "a b\nc d");
+    }
+
+    #[test]
+    fn square_layout_pads_two_by_four_to_four_by_four() {
+        assert_eq!(
+            square_layout(&panel("a b c d\ne f g h")).unwrap(),
+            "a b c d\ne f g h\n. . . .\n. . . ."
+        );
+    }
+
+    #[test]
+    fn square_layout_rejects_more_than_eight_cells() {
+        let layout = "a b c d e f g h i";
+        assert!(square_layout(&panel(layout)).is_err());
+    }
 }

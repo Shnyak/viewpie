@@ -221,6 +221,52 @@ impl Card {
         Ok(card)
     }
 
+    /// Set the physical connector DPMS state without stopping the renderer.
+    pub fn set_dpms(&self, connector: connector::Handle, on: bool) -> Result<(), String> {
+        let props = self
+            .get_properties(connector)
+            .map_err(|e| format!("could not read connector properties: {e}"))?;
+
+        for (id, _) in props {
+            let info = self
+                .get_property(id)
+                .map_err(|e| format!("could not inspect connector property: {e}"))?;
+
+            if info.name().to_bytes() != b"DPMS" {
+                continue;
+            }
+            if !info.mutable() || info.atomic() {
+                return Err("connector DPMS property is not mutable non-atomic".into());
+            }
+
+            let value = match info.value_type() {
+                property::ValueType::Enum(values) => {
+                    let wanted = if on {
+                        b"On".as_slice()
+                    } else {
+                        b"Off".as_slice()
+                    };
+                    values
+                        .values()
+                        .1
+                        .iter()
+                        .find(|entry| entry.name().to_bytes() == wanted)
+                        .map(|entry| entry.value())
+                        .ok_or_else(|| {
+                            format!("DPMS enum has no {}", if on { "On" } else { "Off" })
+                        })?
+                }
+                other => return Err(format!("DPMS property is not an enum: {other:?}")),
+            };
+
+            self.set_property(connector, id, value)
+                .map_err(|e| format!("failed to set DPMS: {e}"))?;
+            return Ok(());
+        }
+
+        Err("connector has no DPMS property".into())
+    }
+
     /// Every property of an object, by name, so the names in PlaneProps can be
     /// turned into handles once at startup.
     pub fn props_of<H: control::ResourceHandle>(

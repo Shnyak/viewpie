@@ -16,16 +16,16 @@ use crate::http_api::errors::ApiError;
 use crate::http_api::models::{FullscreenRequest, OkResponse};
 use crate::http_api::state::{AppState, WallCommand};
 
-/// `POST /api/pause` — stop all decoders, black screen, keep the pool.
+/// `POST /api/pause` — switch off the physical display without stopping decoders.
 pub async fn pause(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
-    state.manager.pause().await?;
+    crate::http_api::state::set_paused(true).await;
     let _ = state.command_tx.send(WallCommand::Pause).await;
     Ok(Json(OkResponse::ok()))
 }
 
-/// `POST /api/resume` — restart active panel decoders, restore mode.
+/// `POST /api/resume` — switch the physical display back on.
 pub async fn resume(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
-    state.manager.resume().await?;
+    crate::http_api::state::set_paused(false).await;
     let _ = state.command_tx.send(WallCommand::Resume).await;
     Ok(Json(OkResponse::ok()))
 }
