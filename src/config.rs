@@ -185,7 +185,7 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: grid 3x3..8x8, all slots defined,
+    /// Validate the panel: grid 1x1..8x8, all slots defined,
     /// every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
@@ -195,12 +195,17 @@ impl PanelConfig {
     pub fn validate(&self, known_feeds: &[String]) -> Result<(), ConfigError> {
         let grid = self.grid();
         let rows = grid.len();
-        if !(3..=8).contains(&rows) {
+        if !(1..=8).contains(&rows) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 rows, got {rows}"
+                "panel layout must have 1-8 rows, got {rows}"
             )));
         }
-        let cols = grid[0].len();
+        let Some(first_row) = grid.first() else {
+            return Err(ConfigError::Validation(
+                "panel layout must contain at least one cell".into(),
+            ));
+        };
+        let cols = first_row.len();
         for row in &grid {
             if row.len() != cols {
                 return Err(ConfigError::Validation(
@@ -208,9 +213,9 @@ impl PanelConfig {
                 ));
             }
         }
-        if !(3..=8).contains(&cols) {
+        if !(1..=8).contains(&cols) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 columns, got {cols}"
+                "panel layout must have 1-8 columns, got {cols}"
             )));
         }
         let mut slots: HashMap<&str, &ViewportConfig> = HashMap::new();
