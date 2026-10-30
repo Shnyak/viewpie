@@ -27,6 +27,18 @@
 - Автостоп декодеров при выключенном мониторе (DPMS через sysfs — работает без CEC)
 - Полная совместимость с оригинальным управлением по HDMI-CEC
 
+## Нативный видеоконвейер
+
+На ARM-сборках `viewpie` запускает отдельный `viewpie-native`, использующий FFmpeg/libav для декодирования RTSP и настоящий DRM/KMS atomic commit для вывода кадров. API управляет дочерним рендерером: при смене панели, fullscreen, паузе/возобновлении и изменении настроек рендерер перезапускается с нужной сценой. Это освобождает DRM-ресурсы при смене сцены, но может давать короткое затемнение экрана на время перезапуска.
+
+Для отладки рендерер можно запускать отдельно:
+
+```bash
+cargo run --release --features native-pipeline --bin viewpie-native -- /etc/viewpie/viewpie.yaml
+```
+
+По умолчанию используется `defaults.panel`; для выбора другой панели задайте `VIEWPIE_PANEL=<id>`. Переменная `VIEWPIE_NATIVE_RENDERER` позволяет указать путь к бинарнику, если он установлен не рядом с `viewpie`.
+
 ## HTTP API
 
 Базовый URL: `http://<rpi-ip>:8080`. Все ответы — JSON.
@@ -108,8 +120,8 @@ rest_command:
 ```bash
 sudo apt install libavformat-dev libavcodec-dev libswscale-dev \
     libavutil-dev libdrm-dev pkg-config libcec-dev
-cargo build --release --all-features
-sudo cp target/release/viewpie /usr/bin/
+cargo build --release --features hw
+sudo cp target/release/viewpie target/release/viewpie-native /usr/bin/
 ```
 
 Без аппаратного вывода (только API, для разработки):

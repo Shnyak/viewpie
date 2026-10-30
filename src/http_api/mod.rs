@@ -40,59 +40,78 @@ pub async fn run(
     resolution: Resolution,
     config_path: &str,
     bind: SocketAddr,
+    native_renderer: Option<Arc<crate::native_controller::NativeRendererController>>,
 ) -> anyhow::Result<AppState> {
     let (state, mut rx) = AppState::bootstrap(cfg, backend.clone(), resolution, config_path).await;
 
     // Command pump.
     let st = state.clone();
+    let command_renderer = native_renderer.clone();
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                WallCommand::SwitchPanel(id) => {
-                    if let Err(e) = st.manager.switch_to(&id).await {
-                        warn!("cmd switch {id}: {e}");
-                    }
-                }
-                WallCommand::SetFullscreen(cam, dur) => {
-                    if let Err(e) = st.manager.enter_fullscreen(&cam).await {
-                        warn!("cmd fullscreen {cam}: {e}");
-                    }
-                    if let Some(sec) = dur {
-                        let s2 = st.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_secs(sec)).await;
-                            if crate::http_api::state::current_fullscreen()
-                                .await
-                                .as_deref()
-                                .is_none()
-                            {
-                                return;
+                WallCommand::SwitchPanel(id) => match st.manager.switch_to(&id).await {
+                    Ok(()) => {
+                        if let Some(renderer) = &command_renderer {
+                            if let Err(e) = renderer.select_panel(&id).await {
+                                warn!("native renderer failed to switch to panel {id}: {e}");
                             }
-                            let _ = s2.manager.leave_fullscreen().await;
-                        });
+                        }
+                    }
+                    Err(e) => warn!("cmd switch {id}: {e}"),
+                },
+                WallCommand::SetFullscreen(cam, _dur) => {
+                    match st.manager.enter_fullscreen(&cam).await {
+                        Ok(()) => {
+                            if let Some(renderer) = &command_renderer {
+                                let panel = st.manager.active_id().await;
+                                if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
+                                    warn!(
+                                        "native renderer failed to enter fullscreen for {cam}: {e}"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => warn!("cmd fullscreen {cam}: {e}"),
                     }
                 }
                 WallCommand::ReturnToGrid => {
                     let _ = st.manager.leave_fullscreen().await;
+                    if let Some(renderer) = &command_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_panel(&panel).await {
+                            warn!("native renderer failed to return to panel {panel}: {e}");
+                        }
+                    }
                 }
                 WallCommand::Pause => {
-                    if !crate::http_api::state::is_paused_now().await {
-                        let _ = st.manager.pause().await;
+                    if let Some(renderer) = &command_renderer {
+                        if let Err(e) = renderer.set_display_power(false).await {
+                            warn!("native renderer failed to turn display off: {e}");
+                        }
                     }
                 }
                 WallCommand::Resume => {
-                    if crate::http_api::state::is_paused_now().await {
-                        let _ = st.manager.resume().await;
+                    if let Some(renderer) = &command_renderer {
+                        if let Err(e) = renderer.set_display_power(true).await {
+                            warn!("native renderer failed to turn display on: {e}");
+                        }
                     }
                 }
                 WallCommand::UpdateSettings(_) | WallCommand::ReloadConfig => {
                     // Already applied synchronously by the originating handler.
+                    if let Some(renderer) = &command_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_panel(&panel).await {
+                            warn!("native renderer failed to apply updated settings: {e}");
+                        }
+                    }
                 }
             }
         }
     });
 
-    spawn_background_tasks(state.clone());
+    spawn_background_tasks(state.clone(), native_renderer.clone());
 
     let app = routes::router(state.clone()).layer(cors_layer());
     let listener = tokio::net::TcpListener::bind(bind).await?;
@@ -120,9 +139,13 @@ pub async fn build_app(
 
 /// Background loops: auto-pause on screen off, viewport rotation,
 /// fullscreen watchdog.
-fn spawn_background_tasks(state: AppState) {
+fn spawn_background_tasks(
+    state: AppState,
+    native_renderer: Option<Arc<crate::native_controller::NativeRendererController>>,
+) {
     // ── Screen state monitor (pause_off_screen) ──
     let st = state.clone();
+    let screen_renderer = native_renderer.clone();
     tokio::spawn(async move {
         loop {
             let (pause_off, paused, auto_paused) = {
@@ -132,17 +155,21 @@ fn spawn_background_tasks(state: AppState) {
             };
             if pause_off {
                 let screen_on = check_screen_via_kms().await;
-                if !screen_on && !paused {
-                    info!("screen switched off — auto-pausing wall");
-                    if let Err(e) = st.manager.pause().await {
-                        error!("auto-pause failed: {e}");
+                if !screen_on && !paused && !auto_paused {
+                    info!("screen switched off — turning HDMI DPMS off");
+                    if let Some(renderer) = &screen_renderer {
+                        if let Err(e) = renderer.set_display_power(false).await {
+                            error!("auto DPMS off failed: {e}");
+                        }
                     }
                     crate::http_api::state::set_auto_paused(true).await;
                 } else if screen_on && auto_paused {
-                    if paused {
-                        info!("screen back on — auto-resuming wall");
-                        if let Err(e) = st.manager.resume().await {
-                            error!("auto-resume failed: {e}");
+                    info!("screen back on — turning HDMI DPMS on");
+                    if let Some(renderer) = &screen_renderer {
+                        if !paused {
+                            if let Err(e) = renderer.set_display_power(true).await {
+                                error!("auto DPMS on failed: {e}");
+                            }
                         }
                     }
                     crate::http_api::state::set_auto_paused(false).await;
@@ -172,6 +199,7 @@ fn spawn_background_tasks(state: AppState) {
 
     // ── Fullscreen watchdog (enforces fullscreen_timeout robustly) ──
     let st = state.clone();
+    let fullscreen_renderer = native_renderer.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -191,6 +219,12 @@ fn spawn_background_tasks(state: AppState) {
                 if age > timeout {
                     info!("fullscreen watchdog: returning to grid after {age}s");
                     let _ = st.manager.leave_fullscreen().await;
+                    if let Some(renderer) = &fullscreen_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_panel(&panel).await {
+                            warn!("native renderer failed to exit fullscreen: {e}");
+                        }
+                    }
                 }
             }
         }

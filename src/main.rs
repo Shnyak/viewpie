@@ -17,13 +17,8 @@ use tracing_subscriber::EnvFilter;
 
 use viewpie::config::Config;
 use viewpie::http_api;
-#[cfg(all(
-    target_os = "linux",
-    any(target_arch = "arm", target_arch = "aarch64"),
-    feature = "hw"
-))]
-use viewpie::kms::KmsBackend;
 use viewpie::kms::{DisplayBackend, HeadlessBackend};
+use viewpie::native_controller::NativeRendererController;
 use viewpie::wall::Resolution;
 use viewpie::{cec, DEFAULT_API_BIND, DEFAULT_CONFIG_PATH};
 
@@ -45,6 +40,31 @@ fn main() -> anyhow::Result<()> {
     let cfg = Config::load(&config_path)
         .with_context(|| format!("loading configuration from {config_path}"))?;
 
+    info!(
+        feeds = cfg.feeds.len(),
+        panels = cfg.panels.len(),
+        initial_panel = %cfg.initial_panel(),
+        "configuration loaded and validated"
+    );
+    for (name, panel) in &cfg.panels {
+        info!(
+            panel = %name,
+            label = %panel.name,
+            viewports = panel.viewports.len(),
+            cameras = panel.camera_count(),
+            rows = panel.grid().len(),
+            "configured panel"
+        );
+        for viewport in &panel.viewports {
+            tracing::debug!(
+                panel = %name,
+                slot = %viewport.slot,
+                feeds = ?viewport.feeds,
+                "configured viewport"
+            );
+        }
+    }
+
     // Resolution: from env override or default HDMI 1080p; the hardware
     // backend replaces it with the detected connector mode.
     let resolution = Resolution {
@@ -59,12 +79,35 @@ fn main() -> anyhow::Result<()> {
     };
 
     let backend: Arc<dyn DisplayBackend> = create_backend()?;
+    let native_renderer = if cfg!(feature = "native-pipeline") {
+        Some(Arc::new(NativeRendererController::new(config_path.clone())))
+    } else {
+        None
+    };
 
     let rt = tokio::runtime::Runtime::new().context("initialising tokio runtime")?;
     rt.block_on(async move {
-        let state = http_api::run(cfg, backend.clone(), resolution, &config_path, bind)
-            .await
-            .context("starting HTTP API")?;
+        if let Some(renderer) = &native_renderer {
+            let initial_panel = cfg.initial_panel();
+            if let Err(e) = renderer.select_panel(&initial_panel).await {
+                error!(
+                    panel = %initial_panel,
+                    error = %e,
+                    "native renderer failed to start; keeping HTTP API available"
+                );
+            }
+        }
+
+        let state = http_api::run(
+            cfg,
+            backend.clone(),
+            resolution,
+            &config_path,
+            bind,
+            native_renderer.clone(),
+        )
+        .await
+        .context("starting HTTP API")?;
 
         // CEC keeps working exactly like the original project when a TV
         // is attached; harmless no-op otherwise.
@@ -75,7 +118,10 @@ fn main() -> anyhow::Result<()> {
         tokio::signal::ctrl_c()
             .await
             .context("waiting for ctrl-c")?;
-        info!("shutting down: pausing decoders cleanly");
+        info!("shutting down: stopping renderer and pausing decoders cleanly");
+        if let Some(renderer) = &native_renderer {
+            renderer.stop().await;
+        }
         if let Err(e) = state.manager.pause().await {
             error!("shutdown pause failed: {e}");
         }
@@ -83,26 +129,14 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
-/// Pick the best display backend for the current platform.
+/// The API manager tracks layout state; the native renderer child owns the DRM card.
 fn create_backend() -> anyhow::Result<Arc<dyn DisplayBackend>> {
-    #[cfg(all(
-        target_os = "linux",
-        any(target_arch = "arm", target_arch = "aarch64"),
-        feature = "hw"
-    ))]
-    {
-        if viewpie::kms::find_drm_device().is_some() {
-            match KmsBackend::open() {
-                Ok(k) => {
-                    info!("using hardware KMS backend");
-                    return Ok(Arc::new(k));
-                }
-                Err(e) => {
-                    tracing::warn!("KMS open failed ({e}), using headless backend");
-                }
-            }
-        }
+    if cfg!(feature = "native-pipeline") {
+        info!("using headless layout backend; native renderer owns physical DRM/KMS output");
+    } else {
+        tracing::warn!(
+            "using headless display backend: no video will be shown on a physical monitor"
+        );
     }
-    info!("using headless display backend");
     Ok(Arc::new(HeadlessBackend::new()))
 }

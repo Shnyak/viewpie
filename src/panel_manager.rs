@@ -265,9 +265,22 @@ impl PanelManager {
             *self.slot_feed.write().await = m;
         }
 
-        // 7 — atomic KMS commit of the new layout.
+        // 7 — submit the new layout to the display backend.
         let frame = self.build_grid_frame(new_id).await?;
-        self.backend.commit(&frame).await?;
+        info!(
+            panel = %new_id,
+            resolution_width = self.resolution.width,
+            resolution_height = self.resolution.height,
+            spacing = frame.spacing,
+            background = %frame.background,
+            fullscreen = frame.fullscreen,
+            feeds = ?frame.planes,
+            "submitting panel frame to display backend"
+        );
+        if let Err(err) = self.backend.commit(&frame).await {
+            warn!(panel = %new_id, error = %err, "display backend rejected panel frame");
+            return Err(err.into());
+        }
 
         {
             let mut d = self.displayed.write().await;

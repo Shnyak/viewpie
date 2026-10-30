@@ -361,7 +361,11 @@ impl Clone for FeedState {
 /// V4L2M2M / FFmpeg zero-copy pipeline; here we create the bookkeeping
 /// handle which the wall renderer attaches a KMS plane to.
 async fn start_decoder(name: &str, url: &str) -> DecoderHandle {
-    info!(feed = name, url, "starting decoder");
+    warn!(
+        feed = name,
+        url,
+        "RTSP decoder is not implemented in this fork; creating lifecycle-only placeholder (no video frames will be decoded)"
+    );
     DecoderHandle {
         inner: Arc::new(DecoderInner {
             url: url.to_string(),
