@@ -240,12 +240,39 @@ impl PanelConfig {
                 }
             }
         }
-        // Every defined slot should appear in the layout.
+        // Every defined slot should appear as one solid rectangular region.
+        // Repeating a token across adjacent cells makes one enlarged viewport;
+        // "." remains an unassigned placeholder and is intentionally unrestricted.
         for vp in &self.viewports {
-            let present = grid.iter().flatten().any(|t| *t == vp.slot);
-            if !present {
+            let mut min_row = usize::MAX;
+            let mut min_col = usize::MAX;
+            let mut max_row = 0usize;
+            let mut max_col = 0usize;
+            let mut count = 0usize;
+
+            for (row_idx, row) in grid.iter().enumerate() {
+                for (col_idx, token) in row.iter().enumerate() {
+                    if token == &vp.slot {
+                        min_row = min_row.min(row_idx);
+                        min_col = min_col.min(col_idx);
+                        max_row = max_row.max(row_idx);
+                        max_col = max_col.max(col_idx);
+                        count += 1;
+                    }
+                }
+            }
+
+            if count == 0 {
                 return Err(ConfigError::Validation(format!(
                     "viewport slot {:?} does not appear in layout",
+                    vp.slot
+                )));
+            }
+
+            let rectangle_area = (max_row - min_row + 1) * (max_col - min_col + 1);
+            if count != rectangle_area {
+                return Err(ConfigError::Validation(format!(
+                    "viewport slot {:?} must occupy one contiguous rectangle",
                     vp.slot
                 )));
             }
@@ -437,6 +464,47 @@ panels:
         let cfg = Config::from_yaml(valid).expect("1x1 layout is valid");
         assert_eq!(cfg.panels["p"].grid().len(), 1);
         assert_eq!(cfg.panels["p"].grid()[0].len(), 1);
+    }
+
+    #[test]
+    fn accepts_multiple_rectangular_viewports_and_empty_cells() {
+        let valid = r#"
+feeds:
+  c1: { url: "rtsp://x/c1" }
+  c2: { url: "rtsp://x/c2" }
+  c3: { url: "rtsp://x/c3" }
+panels:
+  p:
+    layout: |
+      c1 c1 c2 .
+      c1 c1 c3 .
+      .  .  .  .
+      .  .  .  .
+    viewports:
+      - { slot: c1, feeds: [c1] }
+      - { slot: c2, feeds: [c2] }
+      - { slot: c3, feeds: [c3] }
+"#;
+        let cfg = Config::from_yaml(valid).expect("rectangular regions and dot placeholders are valid");
+        assert_eq!(cfg.panels["p"].camera_count(), 3);
+    }
+
+    #[test]
+    fn rejects_non_rectangular_repeated_slot() {
+        let invalid = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a a .
+      a . .
+      . . .
+    viewports:
+      - { slot: a, feeds: [a] }
+"#;
+        let err = Config::from_yaml(invalid).unwrap_err();
+        assert!(matches!(err, ConfigError::Validation(_)));
     }
 
     #[test]
