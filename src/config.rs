@@ -423,20 +423,20 @@ defaults:
     }
 
     #[test]
-    fn rejects_too_small_grid() {
-        let bad = r#"
+    fn accepts_single_cell_grid() {
+        let valid = r#"
 feeds:
   a: { url: "rtsp://x/a" }
 panels:
   p:
     layout: |
-      a a
-      a a
+      a
     viewports:
       - { slot: a, feeds: [a] }
 "#;
-        let err = Config::from_yaml(bad).unwrap_err();
-        assert!(format!("{err}").contains("3-8 rows"));
+        let cfg = Config::from_yaml(valid).expect("1x1 layout is valid");
+        assert_eq!(cfg.panels["p"].grid().len(), 1);
+        assert_eq!(cfg.panels["p"].grid()[0].len(), 1);
     }
 
     #[test]
