@@ -71,6 +71,8 @@ pub async fn put_settings(
         info!("timer settings updated — effective for upcoming ticks");
     }
 
+    state.persist_runtime_config().await?;
+
     let _ = state
         .command_tx
         .send(WallCommand::UpdateSettings(candidate))
