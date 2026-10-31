@@ -483,7 +483,7 @@ fn t07_camera_test_unreachable() {
 fn t08_panels_crud_validation() {
     start_server();
     // Valid new panel → 201
-    let body = r#"{"id":"itpanel","name":"IT Panel","layout":"gate gate gate\ngate . .\n. . .","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    let body = r#"{"id":"itpanel","name":"IT Panel","layout":"gate gate .\ngate gate .\n. . .","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
     let r = request("POST", "/api/panels", Some(body));
     assert_eq!(r.status, 201, "create failed: {}", r.body);
 
@@ -502,7 +502,7 @@ fn t08_panels_crud_validation() {
     assert_eq!(r.status, 400);
 
     // Update existing
-    let upd = r#"{"name":"IT Panel Renamed","layout":"gate gate gate\ngate . .\n. . .","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    let upd = r#"{"name":"IT Panel Renamed","layout":"gate gate .\ngate gate .\n. . .","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
     let r = request("PUT", "/api/panels/itpanel", Some(upd));
     assert_eq!(r.status, 200, "update failed: {}", r.body);
     let r = request("GET", "/api/panels/itpanel", None);
