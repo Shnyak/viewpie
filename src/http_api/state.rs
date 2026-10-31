@@ -229,7 +229,11 @@ impl AppState {
         let mut candidate = self.config.read().await.clone();
         candidate.display = self.settings.read().await.clone();
 
-        candidate.feeds = self.feeds_pool.list().await.into_iter()
+        candidate.feeds = self
+            .feeds_pool
+            .list()
+            .await
+            .into_iter()
             .map(|feed| (feed.name, feed.config))
             .collect();
 
