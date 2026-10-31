@@ -69,8 +69,8 @@ panels:
     name: "Closeup"
     layout: |
       gate gate pool
-      gate gate .
-      pool . .
+      gate gate pool
+      . . .
     viewports:
       - slot: gate
         feeds: [gate]
