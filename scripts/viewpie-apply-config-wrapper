@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Root-owned sudo boundary: accepts only a staged candidate, never target paths.
+set -Eeuo pipefail
+candidate=${1:-}
+staging=/var/lib/viewpie-config-bridge/incoming
+[[ $# -eq 1 && -n "$candidate" ]] || { echo "usage: viewpie-apply-config-wrapper CANDIDATE" >&2; exit 64; }
+[[ "$candidate" == "$staging/"*.yaml ]] || { echo "candidate must be inside the bridge staging directory" >&2; exit 64; }
+[[ -f "$candidate" && ! -L "$candidate" && -r "$candidate" ]] || { echo "candidate must be a regular non-symlink file" >&2; exit 64; }
+resolved=$(realpath -- "$candidate")
+[[ "$resolved" == "$staging/"*.yaml ]] || { echo "candidate path escapes staging directory" >&2; exit 64; }
+exec /usr/local/sbin/viewpie-apply-config "$resolved" /etc/viewpie/viewpie.yaml viewpie.service /usr/bin/viewpie http://127.0.0.1:8080/api/status
