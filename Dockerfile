@@ -50,9 +50,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && curl -fsSL -o /usr/share/keyrings/raspberrypi.gpg.key \
         http://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ trixie main\\n' \
+    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ trixie main\n' \
         > /etc/apt/sources.list.d/raspi.list \
-    && printf '[hash_algorithms]\\nsha1.second_preimage_resistance = "always"\\nsha1.collision_resistance = "always"\\n' \
+    && printf '[hash_algorithms]\nsha1.second_preimage_resistance = "always"\nsha1.collision_resistance = "always"\n' \
         > /etc/apt-sequoia-policy.toml \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml \
