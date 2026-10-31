@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock};
 use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, RwLock};
 
-use crate::config::{DisplaySettings, FeedConfig, PanelConfig};
+use crate::config::{Config, DisplaySettings, FeedConfig, PanelConfig};
 use crate::feed::FeedPool;
 use crate::kms::DisplayBackend;
 use crate::panel_manager::PanelManager;
@@ -67,6 +67,8 @@ pub struct AppState {
     pub command_tx: mpsc::Sender<WallCommand>,
     pub uptime_started: DateTime<Utc>,
     pub config_path: Arc<String>,
+    /// Original config document, retained so runtime changes preserve defaults.
+    pub config: Arc<RwLock<Config>>,
     pub manager: Arc<PanelManager>,
     pub backend: Arc<dyn DisplayBackend>,
 }
@@ -211,10 +213,35 @@ impl AppState {
             command_tx: tx,
             uptime_started: Utc::now(),
             config_path: Arc::new(config_path.to_string()),
+            config: Arc::new(RwLock::new(cfg)),
             manager,
             backend,
         };
         (state, rx)
+    }
+
+    /// Persist the current runtime camera, panel and display settings to YAML.
+    ///
+    /// This is called only after a runtime operation succeeds. The config
+    /// document's defaults are retained, while mutable sections are refreshed
+    /// from the authoritative runtime managers before atomic replacement.
+    pub async fn persist_runtime_config(&self) -> Result<(), crate::config::ConfigError> {
+        let mut candidate = self.config.read().await.clone();
+        candidate.display = self.settings.read().await.clone();
+
+        candidate.feeds = self.feeds_pool.list().await.into_iter()
+            .map(|feed| (feed.name, feed.config))
+            .collect();
+
+        candidate.panels = self.manager.list().await.into_iter().collect();
+        let active = self.manager.active_id().await;
+        if candidate.panels.contains_key(&active) {
+            candidate.defaults.panel = Some(active);
+        }
+        candidate.defaults.rotation_interval = Some(candidate.display.rotation_interval);
+        candidate.save_atomic(self.config_path.as_str())?;
+        *self.config.write().await = candidate;
+        Ok(())
     }
 
     /// Snapshot of cameras known to the pool.
