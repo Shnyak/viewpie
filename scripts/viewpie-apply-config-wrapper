@@ -8,4 +8,4 @@ staging=/var/lib/viewpie-config-bridge/incoming
 [[ -f "$candidate" && ! -L "$candidate" && -r "$candidate" ]] || { echo "candidate must be a regular non-symlink file" >&2; exit 64; }
 resolved=$(realpath -- "$candidate")
 [[ "$resolved" == "$staging/"*.yaml ]] || { echo "candidate path escapes staging directory" >&2; exit 64; }
-exec /usr/local/sbin/viewpie-apply-config "$resolved" /etc/viewpie/viewpie.yaml viewpie.service /usr/bin/viewpie http://127.0.0.1:8080/api/status
+exec /usr/local/sbin/viewpie-apply-config "$resolved" /etc/viewpie/viewpie.yaml viewpie.service /usr/local/bin/viewpie http://127.0.0.1:8080/api/status
