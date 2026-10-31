@@ -385,7 +385,10 @@ impl Config {
         self.validate()?;
 
         let destination = Path::new(path);
-        let parent = destination.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let parent = destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         let file_name = destination
             .file_name()
             .ok_or_else(|| ConfigError::Validation("config path has no filename".into()))?;
@@ -398,7 +401,11 @@ impl Config {
             let mut temp_name = file_name.to_os_string();
             temp_name.push(format!(".{}.{}.tmp", std::process::id(), sequence));
             let candidate = parent.join(temp_name);
-            match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+            {
                 Ok(file) => {
                     temp_path = candidate;
                     temp_file = Some(file);
@@ -414,9 +421,9 @@ impl Config {
             }
         }
 
-        let mut file = temp_file.ok_or_else(|| ConfigError::Validation(
-            "could not allocate a unique temporary config file".into()
-        ))?;
+        let mut file = temp_file.ok_or_else(|| {
+            ConfigError::Validation("could not allocate a unique temporary config file".into())
+        })?;
         let write_result = (|| -> std::io::Result<()> {
             file.write_all(yaml.as_bytes())?;
             file.sync_all()
@@ -544,7 +551,10 @@ defaults:
                     feeds: vec!["a".into()],
                 }],
             };
-            assert!(panel.validate(&known_feeds).is_ok(), "rejected layout: {layout}");
+            assert!(
+                panel.validate(&known_feeds).is_ok(),
+                "rejected layout: {layout}"
+            );
         }
     }
 
@@ -564,7 +574,9 @@ panels:
       - { slot: a, feeds: [a] }
 "#;
         let err = Config::from_yaml(invalid).unwrap_err();
-        assert!(matches!(err, ConfigError::Validation(message) if message.contains("must be square")));
+        assert!(
+            matches!(err, ConfigError::Validation(message) if message.contains("must be square"))
+        );
     }
 
     #[test]
@@ -586,7 +598,8 @@ panels:
       - { slot: c2, feeds: [c2] }
       - { slot: c3, feeds: [c3] }
 "#;
-        let cfg = Config::from_yaml(valid).expect("rectangular regions and dot placeholders are valid");
+        let cfg =
+            Config::from_yaml(valid).expect("rectangular regions and dot placeholders are valid");
         assert_eq!(cfg.panels["p"].camera_count(), 3);
     }
 
@@ -618,7 +631,11 @@ panels:
         let loaded = Config::load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded, cfg);
         assert!(!dir.path().read_dir().unwrap().any(|entry| {
-            entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
         }));
     }
 
@@ -632,7 +649,10 @@ panels:
         let mut invalid = cfg;
         invalid.panels.clear();
         assert!(invalid.save_atomic(path.to_str().unwrap()).is_err());
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "keep existing contents");
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "keep existing contents"
+        );
     }
 
     #[test]
