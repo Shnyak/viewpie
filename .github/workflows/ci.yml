@@ -19,7 +19,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
             libclang-dev clang
-      - run: cargo test --locked
+      - name: Run unit tests serially (they share process-wide singleton state)
+        run: cargo test --locked -- --test-threads=1
       - name: Compile the native FFmpeg/DRM renderer
         run: cargo check --locked --features native-pipeline --bin viewpie-native
       - run: cargo fmt --check
