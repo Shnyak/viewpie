@@ -71,11 +71,10 @@ pub async fn put_settings(
         info!("timer settings updated — effective for upcoming ticks");
     }
 
-    state.persist_runtime_config().await?;
-
-    state.persist_runtime_config().await.map_err(|e| {
-        ApiError::internal(format!("failed to persist display settings: {e}"))
-    })?;
+    state
+        .persist_runtime_config()
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to persist display settings: {e}")))?;
 
     let _ = state
         .command_tx
