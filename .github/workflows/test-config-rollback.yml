@@ -1,0 +1,20 @@
+name: Test config rollback
+
+on:
+  push:
+    branches:
+      - feat/ha-visual-layout-editor
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  rollback-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Run rollback metadata regression test
+        run: bash tests/test-apply-config-rollback.sh
