@@ -12,7 +12,7 @@ fi
 candidate=$1
 config_path=$2
 service=${3:-viewpie.service}
-binary=${4:-/usr/local/bin/viewpie}
+binary=${4:-/usr/bin/viewpie}
 health_url=${5:-http://127.0.0.1:8080/api/status}
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -20,19 +20,24 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 wait_for_health() {
   local url=$1
   for _ in $(seq 1 30); do
-    if curl --fail --silent --show-error --max-time 2 "$url" >/dev/null 2>&1; then
+    if curl --fail --silent --max-time 2 "$url" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
   return 1
 }
+
 [[ -f "$candidate" && -r "$candidate" ]] || die "candidate file is missing or unreadable"
 [[ -x "$binary" ]] || die "Viewpie binary is not executable: $binary"
 [[ -f "$config_path" ]] || die "current config does not exist: $config_path"
 
 config_dir=$(dirname -- "$config_path")
-backup="${config_path}.backup.$(date -u +%Y%m%dT%H%M%SZ)"
+# Serialize applies so two simultaneous Save requests cannot race backups/restarts.
+exec 9>"$config_path.apply.lock"
+flock -n 9 || die "another configuration apply is already running"
+
+backup="${config_path}.backup.$(date -u +%Y%m%dT%H%M%SZ).$$"
 candidate_copy=$(mktemp "$config_dir/.viewpie-candidate.XXXXXX")
 restore_copy=$(mktemp "$config_dir/.viewpie-restore.XXXXXX")
 cleanup() {
@@ -69,4 +74,3 @@ systemctl start "$service" || die "CRITICAL: old config restored but service fai
 wait_for_health "$health_url" || die "CRITICAL: old config restored but health check still fails"
 echo "ROLLED_BACK: previous configuration restored and service is healthy" >&2
 exit 2
-
