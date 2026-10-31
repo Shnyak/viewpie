@@ -88,6 +88,7 @@ pub async fn create_panel(
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
     }
+    state.persist_runtime_config().await?;
     info!(panel = id, "panel created");
     Ok((StatusCode::CREATED, Json(OkResponse::ok())))
 }
@@ -106,6 +107,7 @@ pub async fn update_panel(
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
     }
+    state.persist_runtime_config().await?;
     Ok(Json(OkResponse::ok()))
 }
 
@@ -118,6 +120,7 @@ pub async fn delete_panel(
     let mut g = state.panels.write().await;
     g.remove(&id);
     *state.active_panel.write().await = state.manager.active_id().await;
+    state.persist_runtime_config().await?;
     info!(panel = id, "panel deleted");
     Ok(Json(OkResponse::ok()))
 }
@@ -129,6 +132,10 @@ pub async fn activate_panel(
 ) -> Result<Json<OkResponse>, ApiError> {
     state.manager.switch_to(&id).await?;
     *state.active_panel.write().await = id.clone();
+    state
+        .persist_runtime_config()
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to persist active panel: {e}")))?;
     let _ = state.command_tx.send(WallCommand::SwitchPanel(id)).await;
     Ok(Json(OkResponse::ok()))
 }

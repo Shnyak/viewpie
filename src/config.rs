@@ -35,6 +35,12 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static CONFIG_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -185,7 +191,7 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: grid 3x3..8x8, all slots defined,
+    /// Validate the panel: square grid 1x1..8x8, all slots defined,
     /// every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
@@ -195,12 +201,17 @@ impl PanelConfig {
     pub fn validate(&self, known_feeds: &[String]) -> Result<(), ConfigError> {
         let grid = self.grid();
         let rows = grid.len();
-        if !(3..=8).contains(&rows) {
+        if !(1..=8).contains(&rows) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 rows, got {rows}"
+                "panel layout must have 1-8 rows, got {rows}"
             )));
         }
-        let cols = grid[0].len();
+        let Some(first_row) = grid.first() else {
+            return Err(ConfigError::Validation(
+                "panel layout must contain at least one cell".into(),
+            ));
+        };
+        let cols = first_row.len();
         for row in &grid {
             if row.len() != cols {
                 return Err(ConfigError::Validation(
@@ -208,9 +219,14 @@ impl PanelConfig {
                 ));
             }
         }
-        if !(3..=8).contains(&cols) {
+        if !(1..=8).contains(&cols) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 columns, got {cols}"
+                "panel layout must have 1-8 columns, got {cols}"
+            )));
+        }
+        if rows != cols {
+            return Err(ConfigError::Validation(format!(
+                "panel layout must be square, got {rows}x{cols}"
             )));
         }
         let mut slots: HashMap<&str, &ViewportConfig> = HashMap::new();
@@ -235,12 +251,39 @@ impl PanelConfig {
                 }
             }
         }
-        // Every defined slot should appear in the layout.
+        // Every defined slot should appear as one solid rectangular region.
+        // Repeating a token across adjacent cells makes one enlarged viewport;
+        // "." remains an unassigned placeholder and is intentionally unrestricted.
         for vp in &self.viewports {
-            let present = grid.iter().flatten().any(|t| *t == vp.slot);
-            if !present {
+            let mut min_row = usize::MAX;
+            let mut min_col = usize::MAX;
+            let mut max_row = 0usize;
+            let mut max_col = 0usize;
+            let mut count = 0usize;
+
+            for (row_idx, row) in grid.iter().enumerate() {
+                for (col_idx, token) in row.iter().enumerate() {
+                    if token == &vp.slot {
+                        min_row = min_row.min(row_idx);
+                        min_col = min_col.min(col_idx);
+                        max_row = max_row.max(row_idx);
+                        max_col = max_col.max(col_idx);
+                        count += 1;
+                    }
+                }
+            }
+
+            if count == 0 {
                 return Err(ConfigError::Validation(format!(
                     "viewport slot {:?} does not appear in layout",
+                    vp.slot
+                )));
+            }
+
+            let rectangle_area = (max_row - min_row + 1) * (max_col - min_col + 1);
+            if count != rectangle_area {
+                return Err(ConfigError::Validation(format!(
+                    "viewport slot {:?} must occupy one contiguous rectangle",
                     vp.slot
                 )));
             }
@@ -334,6 +377,83 @@ impl Config {
         Ok(())
     }
 
+    /// Atomically persist this configuration as YAML.
+    ///
+    /// Validation happens before touching the destination. The temporary file is
+    /// created beside the destination so rename stays on the same filesystem.
+    pub fn save_atomic(&self, path: &str) -> Result<(), ConfigError> {
+        self.validate()?;
+
+        let destination = Path::new(path);
+        let parent = destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let file_name = destination
+            .file_name()
+            .ok_or_else(|| ConfigError::Validation("config path has no filename".into()))?;
+        let yaml = serde_yaml::to_string(self)?;
+
+        let mut temp_path = PathBuf::new();
+        let mut temp_file = None;
+        for _ in 0..32 {
+            let sequence = CONFIG_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let mut temp_name = file_name.to_os_string();
+            temp_name.push(format!(".{}.{}.tmp", std::process::id(), sequence));
+            let candidate = parent.join(temp_name);
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+            {
+                Ok(file) => {
+                    temp_path = candidate;
+                    temp_file = Some(file);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(source) => {
+                    return Err(ConfigError::Io {
+                        path: candidate.display().to_string(),
+                        source,
+                    });
+                }
+            }
+        }
+
+        let mut file = temp_file.ok_or_else(|| {
+            ConfigError::Validation("could not allocate a unique temporary config file".into())
+        })?;
+        let write_result = (|| -> std::io::Result<()> {
+            file.write_all(yaml.as_bytes())?;
+            file.sync_all()
+        })();
+        drop(file);
+        if let Err(source) = write_result {
+            let _ = fs::remove_file(&temp_path);
+            return Err(ConfigError::Io {
+                path: temp_path.display().to_string(),
+                source,
+            });
+        }
+
+        if let Err(source) = fs::rename(&temp_path, destination) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(ConfigError::Io {
+                path: destination.display().to_string(),
+                source,
+            });
+        }
+
+        // Persist the directory entry where supported. Some platforms/filesystems
+        // do not allow opening or syncing directories, so the atomic rename remains
+        // the primary guarantee and this best-effort sync is intentionally ignored.
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
     /// Determine the initially active panel.
     pub fn initial_panel(&self) -> String {
         if let Some(p) = &self.defaults.panel {
@@ -374,6 +494,7 @@ panels:
     layout: |
       yard yard gate pool
       yard yard gate pool
+      . . . .
       . . . .
     viewports:
       - slot: yard
@@ -418,20 +539,120 @@ defaults:
     }
 
     #[test]
-    fn rejects_too_small_grid() {
-        let bad = r#"
+    fn accepts_one_by_one_and_two_by_two_grids() {
+        let known_feeds = vec!["a".to_string()];
+        for layout in ["a", "a a\na a"] {
+            let panel = PanelConfig {
+                name: "small".into(),
+                spacing: None,
+                layout: layout.into(),
+                viewports: vec![ViewportConfig {
+                    slot: "a".into(),
+                    feeds: vec!["a".into()],
+                }],
+            };
+            assert!(
+                panel.validate(&known_feeds).is_ok(),
+                "rejected layout: {layout}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_non_square_grid() {
+        let invalid = r#"
 feeds:
   a: { url: "rtsp://x/a" }
 panels:
   p:
     layout: |
-      a a
-      a a
+      a a a
+      a a a
+      a a a
+      a a a
     viewports:
       - { slot: a, feeds: [a] }
 "#;
-        let err = Config::from_yaml(bad).unwrap_err();
-        assert!(format!("{err}").contains("3-8 rows"));
+        let err = Config::from_yaml(invalid).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::Validation(message) if message.contains("must be square"))
+        );
+    }
+
+    #[test]
+    fn accepts_multiple_rectangular_viewports_and_empty_cells() {
+        let valid = r#"
+feeds:
+  c1: { url: "rtsp://x/c1" }
+  c2: { url: "rtsp://x/c2" }
+  c3: { url: "rtsp://x/c3" }
+panels:
+  p:
+    layout: |
+      c1 c1 c2 .
+      c1 c1 c3 .
+      .  .  .  .
+      .  .  .  .
+    viewports:
+      - { slot: c1, feeds: [c1] }
+      - { slot: c2, feeds: [c2] }
+      - { slot: c3, feeds: [c3] }
+"#;
+        let cfg =
+            Config::from_yaml(valid).expect("rectangular regions and dot placeholders are valid");
+        assert_eq!(cfg.panels["p"].camera_count(), 3);
+    }
+
+    #[test]
+    fn rejects_non_rectangular_repeated_slot() {
+        let invalid = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a a .
+      a . .
+      . . .
+    viewports:
+      - { slot: a, feeds: [a] }
+"#;
+        let err = Config::from_yaml(invalid).unwrap_err();
+        assert!(matches!(err, ConfigError::Validation(_)));
+    }
+
+    #[test]
+    fn save_atomic_round_trips_valid_config() {
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        cfg.save_atomic(path.to_str().unwrap()).unwrap();
+
+        let loaded = Config::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded, cfg);
+        assert!(!dir.path().read_dir().unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
+    }
+
+    #[test]
+    fn save_atomic_rejects_invalid_config_without_overwriting_file() {
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        std::fs::write(&path, "keep existing contents").unwrap();
+
+        let mut invalid = cfg;
+        invalid.panels.clear();
+        assert!(invalid.save_atomic(path.to_str().unwrap()).is_err());
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "keep existing contents"
+        );
     }
 
     #[test]

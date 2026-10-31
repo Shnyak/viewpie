@@ -41,7 +41,7 @@ feeds:
     url: rtsp://10.0.0.5/street_sub
     fullscreen_url: rtsp://10.0.0.5/street_main
 
-# Panels = named scenes/layouts. The layout grid must be square (3x3 .. 8x8).
+# Panels = named scenes/layouts. The layout grid must be square (1x1 .. 8x8).
 # Each cell references a slot name; "." marks an empty cell. Adjacent equal
 # tokens merge into one larger viewport.
 panels:

@@ -42,6 +42,7 @@ pub async fn create_camera(
             dto.name
         )));
     }
+    state.persist_runtime_config().await?;
     info!(camera = dto.name, "camera registered");
     Ok((StatusCode::CREATED, Json(OkResponse::ok())))
 }
@@ -60,6 +61,7 @@ pub async fn update_camera(
         .feeds_pool
         .update_feed(&name, dto.to_feed_config())
         .await?;
+    state.persist_runtime_config().await?;
     // If fullscreen was active for this camera, restart main stream too.
     if crate::http_api::state::current_fullscreen()
         .await
@@ -85,6 +87,7 @@ pub async fn delete_camera(
         )));
     }
     state.feeds_pool.remove_feed(&name).await?;
+    state.persist_runtime_config().await?;
     info!(camera = name, "camera removed");
     Ok(Json(OkResponse::ok()))
 }
