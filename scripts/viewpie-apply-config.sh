@@ -68,7 +68,7 @@ fi
 
 echo "ERROR: new configuration did not become healthy; restoring backup=$backup" >&2
 systemctl stop "$service" || true
-install -m 0600 -- "$backup" "$restore_copy" || die "CRITICAL: backup exists but could not be staged for restore"
+cp -p -- "$backup" "$restore_copy" || die "CRITICAL: backup exists but could not be staged for restore"
 mv -f -- "$restore_copy" "$config_path" || die "CRITICAL: backup exists but could not be restored"
 systemctl start "$service" || die "CRITICAL: old config restored but service failed to start"
 wait_for_health "$health_url" || die "CRITICAL: old config restored but health check still fails"
