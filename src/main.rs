@@ -32,9 +32,10 @@ fn main() -> anyhow::Result<()> {
     // services, so a supervisor can validate a candidate config before applying it.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--validate-config") {
-        let path = args.get(2).context("usage: viewpie --validate-config <path>")?;
-        Config::load(path)
-            .with_context(|| format!("validating configuration at {path}"))?;
+        let path = args
+            .get(2)
+            .context("usage: viewpie --validate-config <path>")?;
+        Config::load(path).with_context(|| format!("validating configuration at {path}"))?;
         println!("configuration valid: {path}");
         return Ok(());
     }
