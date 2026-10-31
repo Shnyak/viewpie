@@ -488,6 +488,7 @@ panels:
       yard yard gate pool
       yard yard gate pool
       . . . .
+      . . . .
     viewports:
       - slot: yard
         feeds: [yard]
@@ -533,7 +534,7 @@ defaults:
     #[test]
     fn accepts_one_by_one_and_two_by_two_grids() {
         let known_feeds = vec!["a".to_string()];
-        for layout in ["a", "a a\\na a"] {
+        for layout in ["a", "a a\na a"] {
             let panel = PanelConfig {
                 name: "small".into(),
                 spacing: None,
