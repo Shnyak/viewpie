@@ -18,7 +18,8 @@ from pathlib import Path
 HOST = os.environ.get("VIEWPIE_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VIEWPIE_BRIDGE_PORT", "8765"))
 TOKEN = os.environ.get("VIEWPIE_BRIDGE_TOKEN", "")
-HELPER = os.environ.get("VIEWPIE_APPLY_HELPER", "/usr/local/sbin/viewpie-apply-config")
+WRAPPER = os.environ.get("VIEWPIE_APPLY_WRAPPER", "/usr/local/sbin/viewpie-apply-config-wrapper")
+STAGING = os.environ.get("VIEWPIE_BRIDGE_STAGING", "/var/lib/viewpie-config-bridge/incoming")
 CONFIG = os.environ.get("VIEWPIE_CONFIG", "/etc/viewpie/viewpie.yaml")
 SERVICE = os.environ.get("VIEWPIE_SERVICE", "viewpie.service")
 BINARY = os.environ.get("VIEWPIE_BINARY", "/usr/bin/viewpie")
@@ -71,12 +72,13 @@ class Handler(BaseHTTPRequestHandler):
 
         # Helper itself copies the candidate to the config filesystem, validates,
         # backs up, applies, probes health and rolls back on failure.
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".yaml", delete=False) as candidate:
+        Path(STAGING).mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".yaml", dir=STAGING, delete=False) as candidate:
             candidate.write(candidate_text)
             candidate_path = candidate.name
         try:
             proc = subprocess.run(
-                ["sudo", "-n", HELPER, candidate_path, CONFIG, SERVICE, BINARY, HEALTH_URL],
+                ["sudo", "-n", WRAPPER, candidate_path],
                 capture_output=True, text=True, timeout=150, check=False,
                 env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
             )
