@@ -479,7 +479,7 @@ panels:
     layout: |
       b b c
       b b c
-      c c c
+      . . c
     viewports:
       - { slot: b, feeds: [b] }
       - { slot: c, feeds: [c] }
