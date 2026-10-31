@@ -491,8 +491,13 @@ fn t08_panels_crud_validation() {
     let r = request("POST", "/api/panels", Some(body));
     assert_eq!(r.status, 409);
 
-    // Too-small square grid (2x2) → 400
-    let bad = r#"{"id":"bad","name":"Bad","layout":"gate gate\ngate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    // Small square grid (2x2) → 201
+    let small = r#"{"id":"small","name":"Small","layout":"gate gate\\ngate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    let r = request("POST", "/api/panels", Some(small));
+    assert_eq!(r.status, 201, "2x2 grid should be accepted: {}", r.body);
+
+    // Rectangular grid (2x3) → 400
+    let bad = r#"{"id":"bad","name":"Bad","layout":"gate gate gate\\ngate gate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
     let r = request("POST", "/api/panels", Some(bad));
     assert_eq!(r.status, 400);
 
