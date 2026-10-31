@@ -48,7 +48,7 @@ printf 'new: config\n' >"$candidate"
 chmod 0640 "$config"
 
 set +e
-output=$("$repo_root/scripts/viewpie-apply-config.sh" "$candidate" "$config" test.service "$tmp/viewpie" http://127.0.0.1:8080/api/status 2>&1)
+output=$(bash "$repo_root/scripts/viewpie-apply-config.sh" "$candidate" "$config" test.service "$tmp/viewpie" http://127.0.0.1:8080/api/status 2>&1)
 status=$?
 set -e
 
