@@ -42,6 +42,19 @@ pub async fn put_settings(
         .validate()
         .map_err(|e| ApiError::InvalidSettings(e.to_string()))?;
 
+    // Persist the prospective configuration before publishing it to runtime.
+    // If validation/serialization/disk I/O fails, the live settings remain unchanged.
+    {
+        let mut current_config = state.config.write().await;
+        let mut next_config = current_config.clone();
+        next_config.display = candidate.clone();
+        next_config.defaults.rotation_interval = Some(candidate.rotation_interval);
+        next_config
+            .save_atomic(state.config_path.as_str())
+            .map_err(|e| ApiError::Internal(format!("failed to persist display settings: {e}")))?;
+        *current_config = next_config;
+    }
+
     let old = {
         let mut s = state.settings.write().await;
         std::mem::replace(&mut *s, candidate.clone())
@@ -70,11 +83,6 @@ pub async fn put_settings(
     {
         info!("timer settings updated — effective for upcoming ticks");
     }
-
-    state
-        .persist_runtime_config()
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to persist display settings: {e}")))?;
 
     let _ = state
         .command_tx
