@@ -132,6 +132,10 @@ pub async fn activate_panel(
 ) -> Result<Json<OkResponse>, ApiError> {
     state.manager.switch_to(&id).await?;
     *state.active_panel.write().await = id.clone();
+    state
+        .persist_runtime_config()
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to persist active panel: {e}")))?;
     let _ = state.command_tx.send(WallCommand::SwitchPanel(id)).await;
     Ok(Json(OkResponse::ok()))
 }
