@@ -191,7 +191,7 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: square grid 3x3..8x8, all slots defined,
+    /// Validate the panel: square grid 1x1..8x8, all slots defined,
     /// every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
@@ -201,9 +201,9 @@ impl PanelConfig {
     pub fn validate(&self, known_feeds: &[String]) -> Result<(), ConfigError> {
         let grid = self.grid();
         let rows = grid.len();
-        if !(3..=8).contains(&rows) {
+        if !(1..=8).contains(&rows) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 rows, got {rows}"
+                "panel layout must have 1-8 rows, got {rows}"
             )));
         }
         let Some(first_row) = grid.first() else {
@@ -219,9 +219,9 @@ impl PanelConfig {
                 ));
             }
         }
-        if !(3..=8).contains(&cols) {
+        if !(1..=8).contains(&cols) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 3-8 columns, got {cols}"
+                "panel layout must have 1-8 columns, got {cols}"
             )));
         }
         if rows != cols {
@@ -531,9 +531,9 @@ defaults:
     }
 
     #[test]
-    fn rejects_grids_smaller_than_three_by_three() {
+    fn accepts_one_by_one_and_two_by_two_grids() {
         let known_feeds = vec!["a".to_string()];
-        for layout in ["a a\\na a", "a a a\\na a a"] {
+        for layout in ["a", "a a\\na a"] {
             let panel = PanelConfig {
                 name: "small".into(),
                 spacing: None,
@@ -543,7 +543,7 @@ defaults:
                     feeds: vec!["a".into()],
                 }],
             };
-            assert!(panel.validate(&known_feeds).is_err(), "accepted layout: {layout}");
+            assert!(panel.validate(&known_feeds).is_ok(), "rejected layout: {layout}");
         }
     }
 
