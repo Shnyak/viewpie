@@ -28,12 +28,24 @@ use viewpie::wall::Resolution;
 use viewpie::{cec, DEFAULT_API_BIND, DEFAULT_CONFIG_PATH};
 
 fn main() -> anyhow::Result<()> {
+    // This mode deliberately performs no display initialization and starts no
+    // services, so a supervisor can validate a candidate config before applying it.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--validate-config") {
+        let path = args.get(2).context("usage: viewpie --validate-config <path>")?;
+        Config::load(path)
+            .with_context(|| format!("validating configuration at {path}"))?;
+        println!("configuration valid: {path}");
+        return Ok(());
+    }
+
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,viewpie=debug"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    let config_path = std::env::args()
-        .nth(1)
+    let config_path = args
+        .get(1)
+        .cloned()
         .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
     let bind: SocketAddr = std::env::var("VIEWPIE_API_BIND")
         .ok()
