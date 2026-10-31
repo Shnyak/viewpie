@@ -491,10 +491,15 @@ fn t08_panels_crud_validation() {
     let r = request("POST", "/api/panels", Some(body));
     assert_eq!(r.status, 409);
 
-    // Non-square/too-small grid → 400
+    // Too-small square grid (2x2) → 400
     let bad = r#"{"id":"bad","name":"Bad","layout":"gate gate\ngate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
     let r = request("POST", "/api/panels", Some(bad));
     assert_eq!(r.status, 400);
+
+    // Non-square grid (3x4) → 400
+    let non_square = r#"{"id":"nonsquare","name":"Non-square","layout":"gate gate gate gate\\ngate gate gate gate\\ngate gate gate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    let r = request("POST", "/api/panels", Some(non_square));
+    assert_eq!(r.status, 400, "non-square grid was accepted: {}", r.body);
 
     // Unknown feed reference → 400
     let bad2 = r#"{"id":"bad2","name":"Bad2","layout":"ghost ghost ghost\nghost . .\n. . .","viewports":[{"slot":"ghost","feeds":["ghost"]}]}"#;
