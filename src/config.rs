@@ -191,7 +191,7 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: grid 1x1..8x8, all slots defined,
+    /// Validate the panel: square grid 3x3..8x8, all slots defined,
     /// every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
@@ -201,9 +201,9 @@ impl PanelConfig {
     pub fn validate(&self, known_feeds: &[String]) -> Result<(), ConfigError> {
         let grid = self.grid();
         let rows = grid.len();
-        if !(1..=8).contains(&rows) {
+        if !(3..=8).contains(&rows) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 1-8 rows, got {rows}"
+                "panel layout must have 3-8 rows, got {rows}"
             )));
         }
         let Some(first_row) = grid.first() else {
@@ -219,9 +219,14 @@ impl PanelConfig {
                 ));
             }
         }
-        if !(1..=8).contains(&cols) {
+        if !(3..=8).contains(&cols) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 1-8 columns, got {cols}"
+                "panel layout must have 3-8 columns, got {cols}"
+            )));
+        }
+        if rows != cols {
+            return Err(ConfigError::Validation(format!(
+                "panel layout must be square, got {rows}x{cols}"
             )));
         }
         let mut slots: HashMap<&str, &ViewportConfig> = HashMap::new();
@@ -526,20 +531,33 @@ defaults:
     }
 
     #[test]
-    fn accepts_single_cell_grid() {
-        let valid = r#"
+    fn rejects_grids_smaller_than_three_by_three() {
+        for layout in ["a a\\na a", "a a a\\na a a"] {
+            let invalid = format!(
+                "feeds:\\n  a: {{ url: \\"rtsp://x/a\\" }}\\npanels:\\n  p:\\n    layout: |\\n{}\\n    viewports:\\n      - {{ slot: a, feeds: [a] }}\\n",
+                layout.lines().map(|line| format!("      {line}")).collect::<Vec<_>>().join("\\n")
+            );
+            assert!(Config::from_yaml(&invalid).is_err(), "accepted layout: {layout}");
+        }
+    }
+
+    #[test]
+    fn rejects_non_square_grid() {
+        let invalid = r#"
 feeds:
   a: { url: "rtsp://x/a" }
 panels:
   p:
     layout: |
-      a
+      a a a
+      a a a
+      a a a
+      a a a
     viewports:
       - { slot: a, feeds: [a] }
 "#;
-        let cfg = Config::from_yaml(valid).expect("1x1 layout is valid");
-        assert_eq!(cfg.panels["p"].grid().len(), 1);
-        assert_eq!(cfg.panels["p"].grid()[0].len(), 1);
+        let err = Config::from_yaml(invalid).unwrap_err();
+        assert!(matches!(err, ConfigError::Validation(message) if message.contains("must be square")));
     }
 
     #[test]
