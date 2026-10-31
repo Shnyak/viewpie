@@ -492,17 +492,17 @@ fn t08_panels_crud_validation() {
     assert_eq!(r.status, 409);
 
     // Small square grid (2x2) → 201
-    let small = r#"{"id":"small","name":"Small","layout":"gate gate\\ngate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    let small = r#"{"id":"small","name":"Small","layout":"gate gate\ngate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
     let r = request("POST", "/api/panels", Some(small));
     assert_eq!(r.status, 201, "2x2 grid should be accepted: {}", r.body);
 
     // Rectangular grid (2x3) → 400
-    let bad = r#"{"id":"bad","name":"Bad","layout":"gate gate gate\\ngate gate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    let bad = r#"{"id":"bad","name":"Bad","layout":"gate gate gate\ngate gate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
     let r = request("POST", "/api/panels", Some(bad));
     assert_eq!(r.status, 400);
 
     // Non-square grid (3x4) → 400
-    let non_square = r#"{"id":"nonsquare","name":"Non-square","layout":"gate gate gate gate\\ngate gate gate gate\\ngate gate gate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
+    let non_square = r#"{"id":"nonsquare","name":"Non-square","layout":"gate gate gate gate\ngate gate gate gate\ngate gate gate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
     let r = request("POST", "/api/panels", Some(non_square));
     assert_eq!(r.status, 400, "non-square grid was accepted: {}", r.body);
 
