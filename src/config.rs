@@ -35,6 +35,12 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static CONFIG_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -366,6 +372,76 @@ impl Config {
         Ok(())
     }
 
+    /// Atomically persist this configuration as YAML.
+    ///
+    /// Validation happens before touching the destination. The temporary file is
+    /// created beside the destination so rename stays on the same filesystem.
+    pub fn save_atomic(&self, path: &str) -> Result<(), ConfigError> {
+        self.validate()?;
+
+        let destination = Path::new(path);
+        let parent = destination.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let file_name = destination
+            .file_name()
+            .ok_or_else(|| ConfigError::Validation("config path has no filename".into()))?;
+        let yaml = serde_yaml::to_string(self)?;
+
+        let mut temp_path = PathBuf::new();
+        let mut temp_file = None;
+        for _ in 0..32 {
+            let sequence = CONFIG_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let mut temp_name = file_name.to_os_string();
+            temp_name.push(format!(".{}.{}.tmp", std::process::id(), sequence));
+            let candidate = parent.join(temp_name);
+            match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                Ok(file) => {
+                    temp_path = candidate;
+                    temp_file = Some(file);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(source) => {
+                    return Err(ConfigError::Io {
+                        path: candidate.display().to_string(),
+                        source,
+                    });
+                }
+            }
+        }
+
+        let mut file = temp_file.ok_or_else(|| ConfigError::Validation(
+            "could not allocate a unique temporary config file".into()
+        ))?;
+        let write_result = (|| -> std::io::Result<()> {
+            file.write_all(yaml.as_bytes())?;
+            file.sync_all()
+        })();
+        drop(file);
+        if let Err(source) = write_result {
+            let _ = fs::remove_file(&temp_path);
+            return Err(ConfigError::Io {
+                path: temp_path.display().to_string(),
+                source,
+            });
+        }
+
+        if let Err(source) = fs::rename(&temp_path, destination) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(ConfigError::Io {
+                path: destination.display().to_string(),
+                source,
+            });
+        }
+
+        // Persist the directory entry where supported. Some platforms/filesystems
+        // do not allow opening or syncing directories, so the atomic rename remains
+        // the primary guarantee and this best-effort sync is intentionally ignored.
+        if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
     /// Determine the initially active panel.
     pub fn initial_panel(&self) -> String {
         if let Some(p) = &self.defaults.panel {
@@ -505,6 +581,33 @@ panels:
 "#;
         let err = Config::from_yaml(invalid).unwrap_err();
         assert!(matches!(err, ConfigError::Validation(_)));
+    }
+
+    #[test]
+    fn save_atomic_round_trips_valid_config() {
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        cfg.save_atomic(path.to_str().unwrap()).unwrap();
+
+        let loaded = Config::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded, cfg);
+        assert!(!dir.path().read_dir().unwrap().any(|entry| {
+            entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")
+        }));
+    }
+
+    #[test]
+    fn save_atomic_rejects_invalid_config_without_overwriting_file() {
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        std::fs::write(&path, "keep existing contents").unwrap();
+
+        let mut invalid = cfg;
+        invalid.panels.clear();
+        assert!(invalid.save_atomic(path.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "keep existing contents");
     }
 
     #[test]
