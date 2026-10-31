@@ -73,6 +73,10 @@ pub async fn put_settings(
 
     state.persist_runtime_config().await?;
 
+    state.persist_runtime_config().await.map_err(|e| {
+        ApiError::internal(format!("failed to persist display settings: {e}"))
+    })?;
+
     let _ = state
         .command_tx
         .send(WallCommand::UpdateSettings(candidate))
