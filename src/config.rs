@@ -532,12 +532,18 @@ defaults:
 
     #[test]
     fn rejects_grids_smaller_than_three_by_three() {
+        let known_feeds = vec!["a".to_string()];
         for layout in ["a a\\na a", "a a a\\na a a"] {
-            let invalid = format!(
-                "feeds:\\n  a: {{ url: \\"rtsp://x/a\\" }}\\npanels:\\n  p:\\n    layout: |\\n{}\\n    viewports:\\n      - {{ slot: a, feeds: [a] }}\\n",
-                layout.lines().map(|line| format!("      {line}")).collect::<Vec<_>>().join("\\n")
-            );
-            assert!(Config::from_yaml(&invalid).is_err(), "accepted layout: {layout}");
+            let panel = PanelConfig {
+                name: "small".into(),
+                spacing: None,
+                layout: layout.into(),
+                viewports: vec![ViewportConfig {
+                    slot: "a".into(),
+                    feeds: vec!["a".into()],
+                }],
+            };
+            assert!(panel.validate(&known_feeds).is_err(), "accepted layout: {layout}");
         }
     }
 
