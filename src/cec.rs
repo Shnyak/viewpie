@@ -204,12 +204,10 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
                                     .await;
                                     let _ = state
                                         .command_tx
-                                        .send(
-                                            crate::http_api::state::WallCommand::SetFullscreen(
-                                                first.clone(),
-                                                None,
-                                            ),
-                                        )
+                                        .send(crate::http_api::state::WallCommand::SetFullscreen(
+                                            first.clone(),
+                                            None,
+                                        ))
                                         .await;
                                 }
                                 Err(e) => warn!("CEC fullscreen failed: {e}"),
