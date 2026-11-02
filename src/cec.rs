@@ -134,11 +134,21 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
             match ev {
                 CecEvent::TvPoweredOff => {
                     info!("CEC: TV off → pausing");
-                    let _ = state.manager.pause().await;
+                    crate::http_api::state::set_auto_paused(true).await;
+                    crate::http_api::state::set_paused(true).await;
+                    let _ = state.command_tx.send(crate::http_api::state::WallCommand::Pause).await;
+                    if let Err(e) = state.manager.pause().await {
+                        warn!("CEC pause failed: {e}");
+                    }
                 }
                 CecEvent::TvPoweredOn => {
                     info!("CEC: TV on → resuming");
-                    let _ = state.manager.resume().await;
+                    crate::http_api::state::set_auto_paused(false).await;
+                    crate::http_api::state::set_paused(false).await;
+                    let _ = state.command_tx.send(crate::http_api::state::WallCommand::Resume).await;
+                    if let Err(e) = state.manager.resume().await {
+                        warn!("CEC resume failed: {e}");
+                    }
                 }
                 CecEvent::MenuPressed | CecEvent::OkPressed => {
                     info!("CEC: menu → cycling panel");
@@ -146,19 +156,38 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
                     if all.len() > 1 {
                         let cur = state.manager.active_id().await;
                         let idx = all.iter().position(|(id, _)| *id == cur).unwrap_or(0);
-                        let next = &all[(idx + 1) % all.len()].0;
-                        if let Err(e) = state.manager.switch_to(next).await {
-                            warn!("CEC panel cycle failed: {e}");
+                        let next = all[(idx + 1) % all.len()].0.clone();
+                        match state.manager.switch_to(&next).await {
+                            Ok(()) => {
+                                *state.active_panel.write().await = next.clone();
+                                let _ = state.command_tx.send(crate::http_api::state::WallCommand::SwitchPanel(next)).await;
+                            }
+                            Err(e) => warn!("CEC panel cycle failed: {e}"),
                         }
                     }
                 }
                 CecEvent::SourcePressed => {
                     info!("CEC: source → toggle fullscreen/grid");
                     if let Some(cam) = crate::http_api::state::current_fullscreen().await {
-                        let _ = cam;
-                        let _ = state.manager.leave_fullscreen().await;
-                    } else if let Some(first) = state.camera_names().await.first().cloned() {
-                        let _ = state.manager.enter_fullscreen(&first).await;
+                        if let Err(e) = state.manager.leave_fullscreen().await {
+                            warn!("CEC return to grid failed: {e}");
+                        } else {
+                            let _ = crate::http_api::state::clear_fullscreen_state().await;
+                            let _ = state.command_tx.send(crate::http_api::state::WallCommand::ReturnToGrid).await;
+                        }
+                    } else {
+                        let active = state.manager.active_id().await;
+                        let cameras = state.manager.get_panel(&active).await
+                            .map(|panel| panel.feed_names()).unwrap_or_default();
+                        if let Some(first) = cameras.first() {
+                            match state.manager.enter_fullscreen(first).await {
+                                Ok(()) => {
+                                    let _ = crate::http_api::state::set_fullscreen_state(Some(first.clone())).await;
+                                    let _ = state.command_tx.send(crate::http_api::state::WallCommand::SetFullscreen(first.clone(), None)).await;
+                                }
+                                Err(e) => warn!("CEC fullscreen failed: {e}"),
+                            }
+                        }
                     }
                 }
             }
