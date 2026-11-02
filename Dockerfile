@@ -30,34 +30,34 @@
 # --platform is not optional: the package depends on the target's libav and
 # libdrm, and those are not installable in a base image of another
 # architecture. scripts/build-image.sh pairs each package with its platform.
-FROM debian:trixie-slim
+FROM debian:bookworm-slim
 
 ARG DEB
 COPY ${DEB} /tmp/viewpie.deb
 
-# Raspberry Pi OS's libav, not Debian's. Debian's builds have no stateless
-# V4L2 decoder, so H.265 on a Pi 4 or Pi 5 falls back to software inside the
-# container however many device nodes it is given, which is most of the cost
-# of a wall. The Pi archive's packages carry a higher epoch (8: against 7:),
-# so apt prefers them wherever both exist without needing a pin.
-# The archive's signing key is from 2012 and self-signs with SHA1, which
-# trixie's verifier rejects by policy. The policy is relaxed for apt's
-# verifier alone, which is narrower than the alternative of turning signature
-# checking off to get these packages into a Debian base image.
-# Verify the installed package versions directly: viewpie has no --check-libav
-# command-line option, and its first positional argument is the config path.
+# Raspberry Pi OS Bookworm's libav, not Debian's. Debian's builds have no
+# stateless V4L2 decoder, so H.265 on a Pi 4 or Pi 5 falls back to software
+# inside the container however many device nodes it is given. The Pi archive's
+# packages carry a higher epoch (8: against 7:), so apt prefers them wherever
+# both exist without needing a pin.
+# The archive's signing key self-signs with SHA1; apt's verifier policy is
+# relaxed for this key's repository alone rather than disabling signature
+# checking.
+# Verify the installed package versions directly: viewpie has no
+# --check-libav command-line option, and its first positional argument is
+# the config path.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && curl -fsSL -o /usr/share/keyrings/raspberrypi.gpg.key \
         http://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ trixie main\n' \
+    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ bookworm main\\n' \
         > /etc/apt/sources.list.d/raspi.list \
-    && printf '[hash_algorithms]\nsha1.second_preimage_resistance = "always"\nsha1.collision_resistance = "always"\n' \
+    && printf '[hash_algorithms]\\nsha1.second_preimage_resistance = "always"\\nsha1.collision_resistance = "always"\\n' \
         > /etc/apt-sequoia-policy.toml \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml \
         apt-get install -y --no-install-recommends /tmp/viewpie.deb \
-    && for pkg in libavcodec61 libavformat61 libavutil59; do \
+    && for pkg in libavcodec59 libavformat59 libavutil57; do \
         version="$(dpkg-query -W -f='${Version}' "$pkg")"; \
         case "$version" in *+rpt*) ;; *) \
             echo "Expected Raspberry Pi OS libav package $pkg, got $version" >&2; exit 1 ;; \
