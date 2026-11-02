@@ -133,6 +133,10 @@ impl SettingsPatch {
 /// `GET /api/status` response — full runtime snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusResponse {
+    /// Software package version compiled into this binary.
+    pub software_version: &'static str,
+    /// Source commit date captured at build time (YYYY-MM-DD), when available.
+    pub software_build_date: &'static str,
     pub paused: bool,
     pub pause_off_screen: bool,
     pub screen_off: bool,
