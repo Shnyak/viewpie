@@ -1,3 +1,10 @@
+viewpie (0.2.1-fork-1) unstable; urgency=medium
+
+  * Accept square panel grids from 1x1 through 8x8, retaining square-only validation.
+  * Publish ARMHF and ARM64 Debian packages and multi-architecture container images.
+
+ -- Viewpie Maintainers <maintainers@users.noreply.github.com>  Mon, 02 Nov 2026 09:00:00 +0000
+
 viewpie (0.1.1-1) unstable; urgency=medium
 
   * Close every buffer handle behind a hardware-decoded frame. On a Pi 5 the
