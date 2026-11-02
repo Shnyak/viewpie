@@ -1,4 +1,11 @@
-viewpie (0.2.2-fork-1) unstable; urgency=medium
+viewpie (0.2.3-fork-1) unstable; urgency=medium
+
+  * Fix GHCR image naming by using a lowercase repository path.
+  * Serialize shared API integration tests to prevent cross-test state races.
+  * Accept square panel grids from 1x1 through 8x8, retaining square-only validation.
+  * Publish ARMHF and ARM64 Debian packages and multi-architecture container images.
+
+ -- Viewpie Maintainers <maintainers@users.noreply.github.com>  Mon, 02 Nov 2026 18:10:00 +0000
 
   * Serialize shared API integration tests to prevent cross-test state races.
   * Accept square panel grids from 1x1 through 8x8, retaining square-only validation.
