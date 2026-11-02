@@ -62,6 +62,23 @@ pub async fn fullscreen(
             req.camera
         )));
     }
+    // Resolve the camera's panel before entering fullscreen. The manager
+    // validates fullscreen cameras against the active panel, so switch to a
+    // panel that actually contains the requested camera first.
+    let camera_panels = state.manager.panels_using_camera(&req.camera).await;
+    if camera_panels.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "camera {:?} is not assigned to any panel",
+            req.camera
+        )));
+    }
+    let active_panel = state.manager.active_id().await;
+    if !camera_panels.iter().any(|id| id == &active_panel) {
+        let target_panel = camera_panels[0].clone();
+        state.manager.switch_to(&target_panel).await?;
+        *state.active_panel.write().await = target_panel.clone();
+        let _ = state.command_tx.send(WallCommand::SwitchPanel(target_panel)).await;
+    }
     state
         .manager
         .enter_fullscreen(&req.camera)
