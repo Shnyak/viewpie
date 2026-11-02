@@ -77,7 +77,10 @@ pub async fn fullscreen(
         let target_panel = camera_panels[0].clone();
         state.manager.switch_to(&target_panel).await?;
         *state.active_panel.write().await = target_panel.clone();
-        let _ = state.command_tx.send(WallCommand::SwitchPanel(target_panel)).await;
+        let _ = state
+            .command_tx
+            .send(WallCommand::SwitchPanel(target_panel))
+            .await;
     }
     state
         .manager
