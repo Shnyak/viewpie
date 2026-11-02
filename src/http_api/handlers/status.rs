@@ -38,6 +38,8 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         .flatten();
 
     Ok(Json(StatusResponse {
+        software_version: env!("CARGO_PKG_VERSION"),
+        software_build_date: option_env!("VIEWPIE_BUILD_DATE").unwrap_or("unknown"),
         paused,
         pause_off_screen: settings.pause_off_screen,
         screen_off: !screen_on,
