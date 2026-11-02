@@ -80,10 +80,12 @@ pub async fn create_panel(
     }
     let mut dto = panel;
     dto.id = None;
-    state
-        .manager
-        .add_panel(id.clone(), dto.into_config())
-        .await?;
+    let panel_config = dto.into_config();
+    state.manager.add_panel(id.clone(), panel_config.clone()).await?;
+    if let Err(err) = state.persist_panel_config(&id, Some(&panel_config)).await {
+        let _ = state.manager.delete_panel(&id).await;
+        return Err(ApiError::bad_request(format!("panel was not saved to YAML: {err}")));
+    }
     let mut g = state.panels.write().await;
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
@@ -101,7 +103,13 @@ pub async fn update_panel(
 ) -> Result<Json<OkResponse>, ApiError> {
     let mut dto = panel;
     dto.id = Some(id.clone());
-    state.manager.update_panel(&id, dto.into_config()).await?;
+    let previous = state.manager.get_panel(&id).await?;
+    let panel_config = dto.into_config();
+    state.manager.update_panel(&id, panel_config.clone()).await?;
+    if let Err(err) = state.persist_panel_config(&id, Some(&panel_config)).await {
+        let _ = state.manager.update_panel(&id, previous).await;
+        return Err(ApiError::bad_request(format!("panel was not saved to YAML: {err}")));
+    }
     let mut g = state.panels.write().await;
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
@@ -114,7 +122,12 @@ pub async fn delete_panel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, ApiError> {
+    let previous = state.manager.get_panel(&id).await?;
     state.manager.delete_panel(&id).await?;
+    if let Err(err) = state.persist_panel_config(&id, None).await {
+        let _ = state.manager.add_panel(id.clone(), previous).await;
+        return Err(ApiError::bad_request(format!("panel deletion was not saved to YAML: {err}")));
+    }
     let mut g = state.panels.write().await;
     g.remove(&id);
     let active = state.manager.active_id().await;
