@@ -15,6 +15,20 @@ use std::process::Command;
 const LIBS: [&str; 3] = ["libavcodec", "libavformat", "libavutil"];
 
 fn main() {
+    // Expose the source commit date to the status API for Home Assistant.
+    // CI may override it for source archives that do not contain .git.
+    println!("cargo:rerun-if-env-changed=VIEWPIE_BUILD_DATE");
+    if std::env::var("VIEWPIE_BUILD_DATE").is_err() {
+        let date = Command::new("git")
+            .args(["log", "-1", "--format=%cs"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|date| !date.is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+        println!("cargo:rustc-env=VIEWPIE_BUILD_DATE={date}");
+    }
     // Desktop/headless builds must not require system FFmpeg development headers.
     if std::env::var_os("CARGO_FEATURE_NATIVE_PIPELINE").is_none() {
         return;
