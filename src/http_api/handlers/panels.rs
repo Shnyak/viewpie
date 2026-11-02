@@ -116,7 +116,9 @@ pub async fn update_panel(
         .await?;
     if let Err(err) = state.persist_panel_config(&id, Some(&panel_config)).await {
         let _ = state.manager.update_panel(&id, previous).await;
-        return Err(ApiError::bad_request(format!("panel was not saved to YAML: {err}")));
+        return Err(ApiError::bad_request(format!(
+            "panel was not saved to YAML: {err}"
+        )));
     }
     let mut g = state.panels.write().await;
     if let Ok(c) = state.manager.get_panel(&id).await {
