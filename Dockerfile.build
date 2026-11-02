@@ -10,8 +10,10 @@
 #
 # scripts/build-deb.sh does this for both architectures and copies the
 # packages out.
-
-FROM debian:trixie-slim
+#
+# IMPORTANT: Raspberry Pi OS Bookworm ships FFmpeg 5 / libavcodec.so.59.
+# Build against Bookworm so the resulting binaries match that runtime ABI.
+FROM debian:bookworm-slim
 
 ARG ARCH=arm64
 
@@ -37,10 +39,8 @@ RUN set -eux; \
         libclang-dev clang; \
     rm -rf /var/lib/apt/lists/*
 
-# rustup rather than Debian's rustc: only rustup ships the cross std
-# libraries, and trixie's compiler trails far enough behind that ordinary
-# crates refuse to build against it. None of it reaches the package: the
-# binary links only the C libraries above, and those come from Debian.
+# rustup supplies the cross std libraries. The native FFmpeg libraries linked
+# into the binaries come from Debian Bookworm, matching Raspberry Pi OS Bookworm.
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
 RUN set -eux; \
