@@ -345,10 +345,15 @@ fn t03_fullscreen_with_duration_timer() {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    // Camera missing from active panel → error.
+    // Camera is on another panel: fullscreen must switch to that panel.
     request("POST", "/api/panels/closeup/activate", None);
-    let r = request("POST", "/api/fullscreen", Some(r#"{"camera":"street"}"#));
-    assert_eq!(r.status, 422, "expected rejection, got {}", r.body);
+    let r = request("POST", "/api/fullscreen", Some(r#"{"camera":"street","duration_seconds":600}"#));
+    assert_eq!(r.status, 200, "fullscreen failed: {}", r.body);
+    let r = request("GET", "/api/status", None);
+    assert_eq!(r.field("active_panel"), "outside");
+    assert_eq!(r.field("fullscreen_camera"), "street");
+    // Restore the original panel for the next integration test.
+    request("POST", "/api/grid", None);
     request("POST", "/api/panels/outside/activate", None);
 }
 
