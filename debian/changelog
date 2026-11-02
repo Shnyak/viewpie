@@ -1,5 +1,6 @@
-viewpie (0.2.1-fork-1) unstable; urgency=medium
+viewpie (0.2.2-fork-1) unstable; urgency=medium
 
+  * Serialize shared API integration tests to prevent cross-test state races.
   * Accept square panel grids from 1x1 through 8x8, retaining square-only validation.
   * Publish ARMHF and ARM64 Debian packages and multi-architecture container images.
 
