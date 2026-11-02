@@ -490,6 +490,8 @@ fn t07_camera_test_unreachable() {
 
 #[test]
 fn t08_panels_crud_validation() {
+    // Serialize with other tests: this mutates the shared server configuration.
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     start_server();
     // Valid new panel → 201
     let body = r#"{"id":"itpanel","name":"IT Panel","layout":"gate gate gate\ngate . .\n. . .","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
@@ -526,6 +528,8 @@ fn t08_panels_crud_validation() {
 
 #[test]
 fn t09_reload() {
+    // Reload resets runtime state; do not race other integration tests.
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     start_server();
     let r = request("POST", "/api/reload", None);
     assert_eq!(r.status, 200, "reload failed: {}", r.body);
