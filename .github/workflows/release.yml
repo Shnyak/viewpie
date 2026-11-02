@@ -81,7 +81,7 @@ jobs:
       - uses: docker/metadata-action@v6
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/shnyak/viewpie
           # Without these the action emits only "0.1.0": no "latest", and no
           # "0.1" to follow patch releases. flavor keeps latest off a
           # pre-release tag such as v0.2.0-rc1.
@@ -116,7 +116,7 @@ jobs:
           platforms: linux/arm/v7
           build-args: DEB=${{ steps.debs.outputs.armhf }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/shnyak/viewpie,push-by-digest=true,name-canonical=true,push=true
         id: armhf
       - uses: docker/build-push-action@v7
         with:
@@ -124,7 +124,7 @@ jobs:
           platforms: linux/arm64
           build-args: DEB=${{ steps.debs.outputs.arm64 }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/shnyak/viewpie,push-by-digest=true,name-canonical=true,push=true
         id: arm64
       # The two builds pushed by digest; this is what gives them a tag, so
       # that pulling viewpie:0.1.0 on a Pi 3 and a Pi 5 each gets its own
@@ -138,8 +138,8 @@ jobs:
           printf '%s\n' '${{ steps.meta.outputs.tags }}' | while read -r tag; do
             [ -n "$tag" ] || continue
             docker buildx imagetools create -t "$tag" \
-              "ghcr.io/${{ github.repository }}@${{ steps.armhf.outputs.digest }}" \
-              "ghcr.io/${{ github.repository }}@${{ steps.arm64.outputs.digest }}"
+              "ghcr.io/shnyak/viewpie@${{ steps.armhf.outputs.digest }}" \
+              "ghcr.io/shnyak/viewpie@${{ steps.arm64.outputs.digest }}"
           done
 
   publish:
