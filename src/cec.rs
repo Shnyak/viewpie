@@ -136,7 +136,10 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
                     info!("CEC: TV off → pausing");
                     crate::http_api::state::set_auto_paused(true).await;
                     crate::http_api::state::set_paused(true).await;
-                    let _ = state.command_tx.send(crate::http_api::state::WallCommand::Pause).await;
+                    let _ = state
+                        .command_tx
+                        .send(crate::http_api::state::WallCommand::Pause)
+                        .await;
                     if let Err(e) = state.manager.pause().await {
                         warn!("CEC pause failed: {e}");
                     }
@@ -145,7 +148,10 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
                     info!("CEC: TV on → resuming");
                     crate::http_api::state::set_auto_paused(false).await;
                     crate::http_api::state::set_paused(false).await;
-                    let _ = state.command_tx.send(crate::http_api::state::WallCommand::Resume).await;
+                    let _ = state
+                        .command_tx
+                        .send(crate::http_api::state::WallCommand::Resume)
+                        .await;
                     if let Err(e) = state.manager.resume().await {
                         warn!("CEC resume failed: {e}");
                     }
@@ -160,7 +166,10 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
                         match state.manager.switch_to(&next).await {
                             Ok(()) => {
                                 *state.active_panel.write().await = next.clone();
-                                let _ = state.command_tx.send(crate::http_api::state::WallCommand::SwitchPanel(next)).await;
+                                let _ = state
+                                    .command_tx
+                                    .send(crate::http_api::state::WallCommand::SwitchPanel(next))
+                                    .await;
                             }
                             Err(e) => warn!("CEC panel cycle failed: {e}"),
                         }
@@ -173,12 +182,19 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
                             warn!("CEC return to grid failed: {e}");
                         } else {
                             let _ = crate::http_api::state::clear_fullscreen_state().await;
-                            let _ = state.command_tx.send(crate::http_api::state::WallCommand::ReturnToGrid).await;
+                            let _ = state
+                                .command_tx
+                                .send(crate::http_api::state::WallCommand::ReturnToGrid)
+                                .await;
                         }
                     } else {
                         let active = state.manager.active_id().await;
-                        let cameras = state.manager.get_panel(&active).await
-                            .map(|panel| panel.feed_names()).unwrap_or_default();
+                        let cameras = state
+                            .manager
+                            .get_panel(&active)
+                            .await
+                            .map(|panel| panel.feed_names())
+                            .unwrap_or_default();
                         if let Some(first) = cameras.first() {
                             match state.manager.enter_fullscreen(first).await {
                                 Ok(()) => {
