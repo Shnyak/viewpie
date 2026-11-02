@@ -167,6 +167,47 @@ pub async fn clear_fullscreen_state() -> Option<String> {
 // ─────────────────────── AppState construction ───────────────────────
 
 impl AppState {
+    /// Persist a panel definition in the existing YAML document without
+    /// replacing unrelated display, feed, defaults, or other panel settings.
+    pub async fn persist_panel_config(
+        &self,
+        panel_id: &str,
+        panel: Option<&PanelConfig>,
+    ) -> Result<(), String> {
+        let path = self.config_path.as_ref().clone();
+        let id = panel_id.to_string();
+        let panel_value = panel.cloned().map(serde_yaml::to_value).transpose()
+            .map_err(|e| format!("serialize panel: {e}"))?;
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let source = std::fs::read_to_string(&path)
+                .map_err(|e| format!("read config {}: {e}", path))?;
+            let mut root: serde_yaml::Value = serde_yaml::from_str(&source)
+                .map_err(|e| format!("parse config {}: {e}", path))?;
+            let mapping = root.as_mapping_mut()
+                .ok_or_else(|| "configuration root must be a YAML mapping".to_string())?;
+            let panels_key = serde_yaml::Value::String("panels".into());
+            if !mapping.contains_key(&panels_key) {
+                mapping.insert(panels_key.clone(), serde_yaml::Value::Mapping(Default::default()));
+            }
+            let panels = mapping.get_mut(&panels_key)
+                .and_then(serde_yaml::Value::as_mapping_mut)
+                .ok_or_else(|| "configuration 'panels' must be a YAML mapping".to_string())?;
+            let key = serde_yaml::Value::String(id);
+            match panel_value {
+                Some(value) => { panels.insert(key, value); }
+                None => { panels.remove(&key); }
+            }
+            let rendered = serde_yaml::to_string(&root)
+                .map_err(|e| format!("serialize config: {e}"))?;
+            let temp = format!("{}.viewpie-tmp", path);
+            std::fs::write(&temp, rendered)
+                .map_err(|e| format!("write temporary config {}: {e}", temp))?;
+            std::fs::rename(&temp, &path)
+                .map_err(|e| format!("replace config {}: {e}", path))?;
+            Ok(())
+        }).await.map_err(|e| format!("config writer task failed: {e}"))?
+    }
+
     /// Build the full application from validated configuration.
     pub async fn bootstrap(
         cfg: crate::config::Config,
