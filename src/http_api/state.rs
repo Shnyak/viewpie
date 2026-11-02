@@ -186,7 +186,8 @@ impl AppState {
                 std::fs::read_to_string(&path).map_err(|e| format!("read config {}: {e}", path))?;
             let mut root: serde_yaml::Value =
                 serde_yaml::from_str(&source).map_err(|e| format!("parse config {}: {e}", path))?;
-            let mapping = root.as_mapping_mut()
+            let mapping = root
+                .as_mapping_mut()
                 .ok_or_else(|| "configuration root must be a YAML mapping".to_string())?;
             let panels_key = serde_yaml::Value::String("panels".into());
             if !mapping.contains_key(&panels_key) {
