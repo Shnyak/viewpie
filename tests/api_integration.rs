@@ -347,7 +347,11 @@ fn t03_fullscreen_with_duration_timer() {
 
     // Camera is on another panel: fullscreen must switch to that panel.
     request("POST", "/api/panels/closeup/activate", None);
-    let r = request("POST", "/api/fullscreen", Some(r#"{"camera":"street","duration_seconds":600}"#));
+    let r = request(
+        "POST",
+        "/api/fullscreen",
+        Some(r#"{"camera":"street","duration_seconds":600}"#),
+    );
     assert_eq!(r.status, 200, "fullscreen failed: {}", r.body);
     let r = request("GET", "/api/status", None);
     assert_eq!(r.field("active_panel"), "outside");
