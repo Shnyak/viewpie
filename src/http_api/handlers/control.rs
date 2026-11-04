@@ -159,7 +159,6 @@ pub async fn reload(State(state): State<AppState>) -> Result<Json<OkResponse>, A
     Ok(Json(OkResponse::ok()))
 }
 
-
 /// `POST /api/restart` — reboot the host, protected by a dedicated bearer token.
 pub async fn restart(
     headers: axum::http::HeaderMap,
