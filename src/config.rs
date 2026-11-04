@@ -436,7 +436,7 @@ defaults:
     #[test]
     fn rejects_more_than_eight_grid_rows() {
         let known_feeds = vec!["a".to_string()];
-        let layout = (0..9).map(|_| "a").collect::<Vec<_>>().join("\\n");
+        let layout = (0..9).map(|_| "a").collect::<Vec<_>>().join("\n");
         let panel = PanelConfig {
             layout,
             viewports: vec![ViewportConfig {
