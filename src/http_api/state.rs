@@ -252,7 +252,6 @@ pub fn read_cpu_temp(sysfs_root: Option<&str>) -> Option<f64> {
     Some(milli as f64 / 1000.0)
 }
 
-
 /// Read the one-minute system load average from /proc/loadavg.
 pub fn read_load_average_1m(path: Option<&str>) -> Option<f64> {
     let raw = std::fs::read_to_string(path.unwrap_or("/proc/loadavg")).ok()?;
@@ -343,7 +342,8 @@ defaults:
 
     #[test]
     fn cpu_counters_parse_and_calculate_busy_time() {
-        let first = parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 0 0\ncpu0 1 2 3 4 5 0 0 0 0 0").unwrap();
+        let first = parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 0 0\ncpu0 1 2 3 4 5 0 0 0 0 0")
+            .unwrap();
         let second = parse_cpu_counters("cpu  150 20 50 420 60 0 0 0 0 0").unwrap();
         assert_eq!(first, (600, 450));
         assert_eq!(second, (700, 480));
