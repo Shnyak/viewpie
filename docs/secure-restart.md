@@ -17,6 +17,7 @@ only by root:
 TOKEN="$(openssl rand -hex 32)"
 sudo install -m 600 -o root -g root /dev/null /etc/viewpie/restart.env
 printf 'VIEWPIE_RESTART_TOKEN=%s\n' "$TOKEN" | sudo tee /etc/viewpie/restart.env >/dev/null
+printf 'Сохраните этот токен и введите его в настройках интеграции: %s\n' "$TOKEN"
 ```
 
 Add the following to the `[Service]` section of
