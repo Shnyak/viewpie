@@ -159,6 +159,29 @@ pub async fn reload(State(state): State<AppState>) -> Result<Json<OkResponse>, A
     Ok(Json(OkResponse::ok()))
 }
 
+
+/// `POST /api/restart` — reboot the host, protected by a dedicated bearer token.
+pub async fn restart(
+    headers: axum::http::HeaderMap,
+) -> Result<(StatusCode, Json<OkResponse>), ApiError> {
+    let expected = std::env::var("VIEWPIE_RESTART_TOKEN")
+        .ok().filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ApiError::bad_request("restart endpoint is disabled"))?;
+    let supplied = headers.get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if supplied != expected {
+        return Err(ApiError::bad_request("invalid restart authorization"));
+    }
+    let status = std::process::Command::new("sudo")
+        .args(["-n", "/usr/sbin/reboot"])
+        .spawn()
+        .map_err(|err| ApiError::ReloadFailed(format!("could not start reboot command: {err}")))?;
+    drop(status);
+    Ok((StatusCode::ACCEPTED, Json(OkResponse::ok())))
+}
+
 async fn load_config_async(path: &str) -> Result<Config, crate::config::ConfigError> {
     let p = path.to_string();
     // `p` is moved into the blocking closure; on a JoinError (the task
