@@ -429,7 +429,10 @@ defaults:
                 }],
                 ..PanelConfig::default()
             };
-            assert!(panel.validate(&known_feeds).is_ok(), "layout rejected: {layout}");
+            assert!(
+                panel.validate(&known_feeds).is_ok(),
+                "layout rejected: {layout}"
+            );
         }
     }
 
