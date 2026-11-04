@@ -185,8 +185,8 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: square grid 1x1..8x8, all slots defined,
-    /// every viewport slot referenced in the layout.
+    /// Validate the panel: rectangular grid with 1-8 rows and columns,
+    /// all slots defined, and every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
         None
@@ -418,20 +418,51 @@ defaults:
     }
 
     #[test]
-    fn rejects_too_small_grid() {
-        let bad = r#"
-feeds:
-  a: { url: "rtsp://x/a" }
-panels:
-  p:
-    layout: |
-      a a
-      a a
-    viewports:
-      - { slot: a, feeds: [a] }
-"#;
-        let err = Config::from_yaml(bad).unwrap_err();
-        assert!(format!("{err}").contains("3-8 rows"));
+    fn accepts_small_and_rectangular_grids() {
+        let known_feeds = vec!["a".to_string()];
+        for layout in ["a", "a a\na a", "a a a\na a a\na a a", "a a a"] {
+            let panel = PanelConfig {
+                layout: layout.to_string(),
+                viewports: vec![ViewportConfig {
+                    slot: "a".to_string(),
+                    feeds: vec!["a".to_string()],
+                }],
+                ..PanelConfig::default()
+            };
+            assert!(panel.validate(&known_feeds).is_ok(), "layout rejected: {layout}");
+        }
+    }
+
+    #[test]
+    fn rejects_more_than_eight_grid_rows() {
+        let known_feeds = vec!["a".to_string()];
+        let layout = (0..9).map(|_| "a").collect::<Vec<_>>().join("\\n");
+        let panel = PanelConfig {
+            layout,
+            viewports: vec![ViewportConfig {
+                slot: "a".to_string(),
+                feeds: vec!["a".to_string()],
+            }],
+            ..PanelConfig::default()
+        };
+        let err = panel.validate(&known_feeds).unwrap_err();
+        assert!(format!("{err}").contains("1-8 rows"));
+    }
+
+    #[test]
+    fn rejects_more_than_eight_grid_columns() {
+        let known_feeds = vec!["a".to_string()];
+        let layout = std::iter::repeat("a").take(9).collect::<Vec<_>>().join(" ");
+        let panel = PanelConfig {
+            layout,
+            viewports: vec![ViewportConfig {
+                slot: "a".to_string(),
+                feeds: vec!["a".to_string()],
+            }],
+            ..PanelConfig::default()
+        };
+        let err = panel.validate(&known_feeds).unwrap_err();
+        assert!(format!("{err}").contains("1-8 columns"));
     }
 
     #[test]
