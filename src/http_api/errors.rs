@@ -40,7 +40,9 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    pub fn unauthorized() -> Self { Self::Unauthorized }
+    pub fn unauthorized() -> Self {
+        Self::Unauthorized
+    }
     pub fn bad_request(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
     }
