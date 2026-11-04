@@ -333,6 +333,25 @@ defaults:
     }
 
     #[test]
+    fn cpu_counters_parse_and_calculate_busy_time() {
+        let first = parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 0 0\ncpu0 1 2 3 4 5 0 0 0 0 0").unwrap();
+        let second = parse_cpu_counters("cpu  150 20 50 420 60 0 0 0 0 0").unwrap();
+        assert_eq!(first, (600, 450));
+        assert_eq!(second, (700, 480));
+        let total = second.0 - first.0;
+        let idle = second.1 - first.1;
+        assert!((total - idle) as f64 / total as f64 * 100.0 > 0.0);
+    }
+
+    #[test]
+    fn load_average_reads_first_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("loadavg");
+        std::fs::write(&file, "0.42 0.31 0.20 1/100 1234\n").unwrap();
+        assert_eq!(read_load_average_1m(file.to_str()), Some(0.42));
+    }
+
+    #[test]
     fn cpu_temp_missing_file_is_none() {
         assert!(read_cpu_temp(Some("/definitely/not/here")).is_none());
     }
