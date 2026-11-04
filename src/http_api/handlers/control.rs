@@ -165,23 +165,31 @@ pub async fn restart(
     headers: axum::http::HeaderMap,
 ) -> Result<(StatusCode, Json<OkResponse>), ApiError> {
     let expected = std::env::var("VIEWPIE_RESTART_TOKEN")
-        .ok().filter(|value| !value.trim().is_empty())
+        .ok()
+        .filter(|value| !value.trim().is_empty())
         .ok_or_else(ApiError::unauthorized)?;
-    let supplied = headers.get(axum::http::header::AUTHORIZATION)
+    let supplied = headers
+        .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or("");
     if supplied != expected {
         return Err(ApiError::unauthorized());
     }
+
     let result = tokio::task::spawn_blocking(|| {
         std::process::Command::new("sudo")
             .args(["-n", "/usr/sbin/reboot"])
             .status()
-    }).await.map_err(|err| ApiError::Internal(format!("reboot task failed: {err}")))?
-      .map_err(|err| ApiError::ReloadFailed(format!("could not start reboot command: {err}")))?;
+    })
+    .await
+    .map_err(|err| ApiError::Internal(format!("reboot task failed: {err}")))?
+    .map_err(|err| ApiError::ReloadFailed(format!("could not start reboot command: {err}")))?;
+
     if !result.success() {
-        return Err(ApiError::ReloadFailed(format!("reboot command exited with status {result}")));
+        return Err(ApiError::ReloadFailed(format!(
+            "reboot command exited with status {result}"
+        )));
     }
     Ok((StatusCode::ACCEPTED, Json(OkResponse::ok())))
 }
