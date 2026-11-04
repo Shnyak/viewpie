@@ -13,6 +13,7 @@ use serde_json::json;
 pub enum ApiError {
     #[error("{0}")]
     BadRequest(String),
+    #[error("unauthorized")]
     Unauthorized,
     #[error("resource not found: {0}")]
     NotFound(String),
