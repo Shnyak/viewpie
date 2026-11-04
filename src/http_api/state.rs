@@ -252,6 +252,37 @@ pub fn read_cpu_temp(sysfs_root: Option<&str>) -> Option<f64> {
     Some(milli as f64 / 1000.0)
 }
 
+
+/// Read the one-minute system load average from /proc/loadavg.
+pub fn read_load_average_1m(path: Option<&str>) -> Option<f64> {
+    let raw = std::fs::read_to_string(path.unwrap_or("/proc/loadavg")).ok()?;
+    raw.split_whitespace().next()?.parse().ok()
+}
+
+fn parse_cpu_counters(raw: &str) -> Option<(u64, u64)> {
+    let line = raw.lines().find(|line| line.starts_with("cpu "))?;
+    let values: Vec<u64> = line.split_whitespace().skip(1).map(str::parse).collect::<Result<_, _>>().ok()?;
+    if values.len() < 4 { return None; }
+    let idle = values[3] + values.get(4).copied().unwrap_or(0);
+    let total = values.iter().sum();
+    Some((total, idle))
+}
+
+/// CPU busy percentage since the previous sample. The first sample is None.
+pub fn read_cpu_load_percent(path: Option<&str>) -> Option<f64> {
+    static PREVIOUS: std::sync::Mutex<Option<(u64, u64)>> = std::sync::Mutex::new(None);
+    let raw = std::fs::read_to_string(path.unwrap_or("/proc/stat")).ok()?;
+    let current = parse_cpu_counters(&raw)?;
+    let mut previous = PREVIOUS.lock().ok()?;
+    let result = previous.and_then(|(old_total, old_idle)| {
+        let total = current.0.saturating_sub(old_total);
+        let idle = current.1.saturating_sub(old_idle);
+        (total > 0).then_some(((total.saturating_sub(idle)) as f64 / total as f64 * 100.0).clamp(0.0, 100.0))
+    });
+    *previous = Some(current);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
