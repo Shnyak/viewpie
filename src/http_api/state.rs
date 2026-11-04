@@ -274,7 +274,7 @@ pub fn read_cpu_load_percent(path: Option<&str>) -> Option<f64> {
     let raw = std::fs::read_to_string(path.unwrap_or("/proc/stat")).ok()?;
     let current = parse_cpu_counters(&raw)?;
     let mut previous = PREVIOUS.lock().ok()?;
-    let result = previous.and_then(|(old_total, old_idle)| {
+    let result = (*previous).and_then(|(old_total, old_idle)| {
         let total = current.0.saturating_sub(old_total);
         let idle = current.1.saturating_sub(old_idle);
         (total > 0).then_some(((total.saturating_sub(idle)) as f64 / total as f64 * 100.0).clamp(0.0, 100.0))
