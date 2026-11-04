@@ -5,10 +5,10 @@ is set in the Viewpie service environment. It accepts only
 `Authorization: Bearer <token>` and invokes the fixed command
 `sudo -n /usr/sbin/reboot`.
 
-For the Home Assistant integration, enter the same random token in its
-existing **API key** field. The integration sends it as a bearer token for
-API requests; other Viewpie endpoints do not gain additional permissions
-from this setting. Do not reuse a password or publish this token.
+For the Home Assistant integration, open the Viewpie integration's **Configure**
+dialog and enter the same random value in the dedicated **Restart token** option.
+The integration sends this token only to `POST /api/restart`. Do not reuse a
+password or publish this token.
 
 On Raspberry Pi OS, create a random token and an environment file readable
 only by root:
@@ -44,5 +44,5 @@ sudo systemctl restart viewpie
 
 The integration's **Перезагрузить Raspberry Pi** button appears as available
 only when the endpoint reports that a token is configured and the integration
-has a non-empty API key. The button asks for confirmation before sending the
-restart request.
+has a matching Restart token in its options. The button asks for confirmation
+before sending the restart request.
