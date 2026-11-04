@@ -470,6 +470,8 @@ fn t06_cameras_crud_and_conflict() {
 
 #[test]
 fn t07_camera_test_unreachable() {
+    // Serialize access to the single shared headless API process.
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     start_server();
     // port 1 is closed here → graceful failure, not a crash.
     let r = request("POST", "/api/cameras/street/test", None);
@@ -481,6 +483,8 @@ fn t07_camera_test_unreachable() {
 
 #[test]
 fn t08_panels_crud_validation() {
+    // Serialize access to the single shared headless API process.
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     start_server();
     // Valid new panel → 201
     let body = r#"{"id":"itpanel","name":"IT Panel","layout":"gate gate gate\ngate . .\n. . .","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
@@ -517,6 +521,8 @@ fn t08_panels_crud_validation() {
 
 #[test]
 fn t09_reload() {
+    // Serialize access to the single shared headless API process.
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     start_server();
     let r = request("POST", "/api/reload", None);
     assert_eq!(r.status, 200, "reload failed: {}", r.body);
