@@ -144,6 +144,9 @@ pub struct StatusResponse {
     pub spacing: u32,
     pub uptime_seconds: i64,
     pub cpu_temp_c: Option<f64>,
+    pub cpu_load_percent: Option<f64>,
+    pub load_average_1m: Option<f64>,
+    pub restart_available: bool,
     pub active_streams: usize,
     pub panels_count: usize,
 }

@@ -32,10 +32,15 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
     let uptime_seconds = chrono::Utc::now()
         .signed_duration_since(state.uptime_started)
         .num_seconds();
-    let cpu_temp_c = tokio::task::spawn_blocking(|| crate::http_api::state::read_cpu_temp(None))
-        .await
-        .ok()
-        .flatten();
+    let (cpu_temp_c, cpu_load_percent, load_average_1m) = tokio::task::spawn_blocking(|| {
+        (
+            crate::http_api::state::read_cpu_temp(None),
+            crate::http_api::state::read_cpu_load_percent(None),
+            crate::http_api::state::read_load_average_1m(None),
+        )
+    })
+    .await
+    .unwrap_or((None, None, None));
 
     Ok(Json(StatusResponse {
         paused,
@@ -49,6 +54,10 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         spacing: settings.spacing,
         uptime_seconds,
         cpu_temp_c,
+        cpu_load_percent,
+        load_average_1m,
+        // Keep the remote restart control unavailable until its systemd capability path is implemented.
+        restart_available: false,
         active_streams,
         panels_count,
     }))

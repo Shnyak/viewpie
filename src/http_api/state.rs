@@ -252,6 +252,46 @@ pub fn read_cpu_temp(sysfs_root: Option<&str>) -> Option<f64> {
     Some(milli as f64 / 1000.0)
 }
 
+/// Read the one-minute system load average from /proc/loadavg.
+pub fn read_load_average_1m(path: Option<&str>) -> Option<f64> {
+    let raw = std::fs::read_to_string(path.unwrap_or("/proc/loadavg")).ok()?;
+    raw.split_whitespace().next()?.parse().ok()
+}
+
+fn parse_cpu_counters(raw: &str) -> Option<(u64, u64)> {
+    let line = raw.lines().find(|line| line.starts_with("cpu "))?;
+    let values: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    if values.len() < 4 {
+        return None;
+    }
+    let idle = values[3] + values.get(4).copied().unwrap_or(0);
+    // guest and guest_nice are already included in user and nice; do not count them twice.
+    let total: u64 = values.iter().take(8).sum();
+    Some((total, idle))
+}
+
+/// CPU busy percentage since the previous sample. The first sample is None.
+pub fn read_cpu_load_percent(path: Option<&str>) -> Option<f64> {
+    static PREVIOUS: std::sync::Mutex<Option<(u64, u64)>> = std::sync::Mutex::new(None);
+    let raw = std::fs::read_to_string(path.unwrap_or("/proc/stat")).ok()?;
+    let current = parse_cpu_counters(&raw)?;
+    let mut previous = PREVIOUS.lock().ok()?;
+    let result = (*previous).and_then(|(old_total, old_idle)| {
+        let total = current.0.saturating_sub(old_total);
+        let idle = current.1.saturating_sub(old_idle);
+        (total > 0).then_some(
+            ((total.saturating_sub(idle)) as f64 / total as f64 * 100.0).clamp(0.0, 100.0),
+        )
+    });
+    *previous = Some(current);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +339,27 @@ defaults:
         assert_eq!(current_fullscreen().await.as_deref(), Some("a"));
         assert_eq!(clear_fullscreen_state().await.as_deref(), Some("a"));
         assert_eq!(current_fullscreen().await, None);
+    }
+
+    #[test]
+    fn cpu_counters_parse_and_calculate_busy_time() {
+        let first =
+            parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 90 10\ncpu0 1 2 3 4 5 0 0 0 0 0")
+                .unwrap();
+        let second = parse_cpu_counters("cpu  150 20 50 420 60 0 0 0 0 0").unwrap();
+        assert_eq!(first, (600, 450));
+        assert_eq!(second, (700, 480));
+        let total = second.0 - first.0;
+        let idle = second.1 - first.1;
+        assert!((total - idle) as f64 / total as f64 * 100.0 > 0.0);
+    }
+
+    #[test]
+    fn load_average_reads_first_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("loadavg");
+        std::fs::write(&file, "0.42 0.31 0.20 1/100 1234\n").unwrap();
+        assert_eq!(read_load_average_1m(file.to_str()), Some(0.42));
     }
 
     #[test]
