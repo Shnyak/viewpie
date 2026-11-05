@@ -44,9 +44,8 @@ COPY ${DEB} /tmp/viewpie.deb
 # trixie's verifier rejects by policy. The policy is relaxed for apt's
 # verifier alone, which is narrower than the alternative of turning signature
 # checking off to get these packages into a Debian base image.
-# Debian's libav satisfies the package's dependencies just as well, so nothing
-# in apt would notice if the Pi archive stopped winning. viewpie --check-libav
-# asks libav itself and fails the build instead.
+# Verify the installed package versions directly: viewpie has no --check-libav
+# command-line option, and its first positional argument is the config path.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && curl -fsSL -o /usr/share/keyrings/raspberrypi.gpg.key \
@@ -58,7 +57,18 @@ RUN apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml \
         apt-get install -y --no-install-recommends /tmp/viewpie.deb \
-    && viewpie --check-libav \
+    && test -x /usr/bin/viewpie-native \
+    && ldd /usr/bin/viewpie-native | tee /tmp/viewpie-native.ldd \
+    && grep -q 'libavcodec.so' /tmp/viewpie-native.ldd \
+    && grep -q 'libavformat.so' /tmp/viewpie-native.ldd \
+    && grep -q 'libavutil.so' /tmp/viewpie-native.ldd \
+    && ! grep -q 'not found' /tmp/viewpie-native.ldd \
+    && for pkg in libavcodec61 libavformat61 libavutil59; do \
+        version="$(dpkg-query -W -f='${Version}' "$pkg")"; \
+        case "$version" in *+rpt*) ;; *) \
+            echo "Expected Raspberry Pi OS libav package $pkg, got $version" >&2; exit 1 ;; \
+        esac; \
+    done \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -f /tmp/viewpie.deb /etc/apt-sequoia-policy.toml \
     && rm -rf /var/lib/apt/lists/*
