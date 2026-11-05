@@ -201,11 +201,6 @@ impl PanelConfig {
             )));
         }
         let cols = grid[0].len();
-        if rows != cols {
-            return Err(ConfigError::Validation(format!(
-                "panel layout must be square, got {rows}x{cols}"
-            )));
-        }
         for row in &grid {
             if row.len() != cols {
                 return Err(ConfigError::Validation(
@@ -458,7 +453,7 @@ panels:
     }
 
     #[test]
-    fn rejects_rectangular_grid() {
+    fn accepts_rectangular_grid() {
         let yaml = r#"
 feeds:
   a: { url: "rtsp://x/a" }
@@ -470,9 +465,7 @@ panels:
     viewports:
       - { slot: a, feeds: [a] }
 "#;
-        let err = Config::from_yaml(yaml).unwrap_err();
-        assert!(matches!(err, ConfigError::Validation(_)));
-        assert!(err.to_string().contains("square"));
+        assert!(Config::from_yaml(yaml).is_ok());
     }
 
     #[test]
