@@ -4,17 +4,28 @@ on:
   push:
     tags:
       - "v*"
+  workflow_run:
+    workflows:
+      - Tag versioned release
+    types:
+      - completed
 
 # Declared per job rather than here: only the jobs that publish need more than
 # to read the repository.
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_run' && 'v0.2.5-fork' || github.ref_name }}
+
 jobs:
   test:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && 'v0.2.5-fork' || github.ref }}
       - name: Install what the crate builds against
         run: |
           sudo apt-get update
@@ -26,14 +37,17 @@ jobs:
   deb:
     needs: test
     runs-on: ubuntu-latest
+    if: needs.test.result == 'success'
     strategy:
       matrix:
         arch: [armhf, arm64]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && 'v0.2.5-fork' || github.ref }}
       - name: Check the versions against the tag
         run: |
-          tag=${GITHUB_REF_NAME#v}
+          tag=${RELEASE_TAG#v}
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           if [ "$version" != "$tag" ]; then
             echo "Cargo.toml version $version does not match tag $tag" >&2
@@ -54,6 +68,7 @@ jobs:
           path: dist/*.deb
 
   image:
+    if: needs.deb.result == 'success'
     # Takes the packages the deb job built rather than building its own: the
     # image installs the same file a Pi installs, and building it twice is
     # both slower and a chance for the two to differ.
@@ -64,6 +79,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && 'v0.2.5-fork' || github.ref }}
       - uses: actions/download-artifact@v8
         with:
           pattern: deb-*
@@ -88,6 +105,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=0.2.5-fork,enable=${{ github.event_name == 'workflow_run' }}
           flavor: |
             latest=auto
       # One line per architecture, so keep these in step with the deb job's
@@ -96,7 +114,7 @@ jobs:
       - name: Name the package each architecture installs
         id: debs
         run: |
-          version=${GITHUB_REF_NAME#v}
+          version=${RELEASE_TAG#v}
           revision=$(sed -n "1s/^viewpie ($version-\([^)]*\)).*/\1/p" debian/changelog)
           echo "armhf=dist/viewpie_${version}-${revision}_armhf.deb" >> "$GITHUB_OUTPUT"
           echo "arm64=dist/viewpie_${version}-${revision}_arm64.deb" >> "$GITHUB_OUTPUT"
@@ -144,11 +162,14 @@ jobs:
 
   publish:
     needs: [deb, image]
+    if: needs.deb.result == 'success' && needs.image.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && 'v0.2.5-fork' || github.ref }}
       - uses: actions/download-artifact@v8
         with:
           pattern: deb-*
@@ -157,4 +178,4 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.deb --generate-notes
+        run: gh release create "$RELEASE_TAG" dist/*.deb --generate-notes
