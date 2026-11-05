@@ -343,8 +343,9 @@ defaults:
 
     #[test]
     fn cpu_counters_parse_and_calculate_busy_time() {
-        let first = parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 90 10\ncpu0 1 2 3 4 5 0 0 0 0 0")
-            .unwrap();
+        let first =
+            parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 90 10\ncpu0 1 2 3 4 5 0 0 0 0 0")
+                .unwrap();
         let second = parse_cpu_counters("cpu  150 20 50 420 60 0 0 0 0 0").unwrap();
         assert_eq!(first, (600, 450));
         assert_eq!(second, (700, 480));
