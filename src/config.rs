@@ -185,7 +185,7 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: square grid 1x1..8x8, all slots defined,
+    /// Validate the panel: grid 1x1..8x8, all slots defined,
     /// every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
@@ -375,6 +375,7 @@ panels:
       yard yard gate pool
       yard yard gate pool
       . . . .
+      . . . .
     viewports:
       - slot: yard
         feeds: [yard]
@@ -418,20 +419,76 @@ defaults:
     }
 
     #[test]
-    fn rejects_too_small_grid() {
-        let bad = r#"
+    fn accepts_single_cell_grid() {
+        let yaml = r#"
 feeds:
   a: { url: "rtsp://x/a" }
 panels:
   p:
     layout: |
-      a a
-      a a
+      a
     viewports:
       - { slot: a, feeds: [a] }
 "#;
-        let err = Config::from_yaml(bad).unwrap_err();
-        assert!(format!("{err}").contains("3-8 rows"));
+        assert!(Config::from_yaml(yaml).is_ok());
+    }
+
+    #[test]
+    fn accepts_two_by_two_grid() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a b
+      c d
+    viewports:
+      - { slot: a, feeds: [a] }
+      - { slot: b, feeds: [a] }
+      - { slot: c, feeds: [a] }
+      - { slot: d, feeds: [a] }
+"#;
+        assert!(Config::from_yaml(yaml).is_ok());
+    }
+
+    #[test]
+    fn accepts_rectangular_grid() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a a a
+      a a a
+    viewports:
+      - { slot: a, feeds: [a] }
+"#;
+        assert!(Config::from_yaml(yaml).is_ok());
+    }
+
+    #[test]
+    fn rejects_grid_larger_than_eight() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+      a a a a a a a a a
+    viewports:
+      - { slot: a, feeds: [a] }
+"#;
+        assert!(Config::from_yaml(yaml).is_err());
     }
 
     #[test]

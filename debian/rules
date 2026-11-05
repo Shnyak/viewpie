@@ -17,6 +17,7 @@ include /usr/share/dpkg/architecture.mk
 # output straight in target/release.
 RUST_TARGET := $(VIEWPIE_RUST_TARGET)
 BIN := $(CURDIR)/target/$(if $(RUST_TARGET),$(RUST_TARGET)/,)release/viewpie
+NATIVE_BIN := $(CURDIR)/target/$(if $(RUST_TARGET),$(RUST_TARGET)/,)release/viewpie-native
 
 %:
 	dh $@
@@ -32,11 +33,13 @@ ifeq ($(RUST_TARGET),)
 		exit 2; \
 	fi
 endif
-	cargo build --release --locked $(if $(RUST_TARGET),--target $(RUST_TARGET),)
+	cargo build --release --locked --features hw $(if $(RUST_TARGET),--target $(RUST_TARGET),)
 
 override_dh_auto_install:
 	install -D -m 0755 $(BIN) \
 		debian/viewpie/usr/bin/viewpie
+	install -D -m 0755 $(NATIVE_BIN) \
+		debian/viewpie/usr/bin/viewpie-native
 	install -D -m 0644 examples/viewpie.yaml \
 		debian/viewpie/usr/share/viewpie/viewpie.yaml
 

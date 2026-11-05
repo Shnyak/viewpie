@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         height: 1080,
     };
 
-    let state = http_api::run(cfg, backend, resolution, &config_path, bind).await?;
+    let state = http_api::run(cfg, backend, resolution, &config_path, bind, None).await?;
     info!(%bind, "headless viewpie ready");
 
     tokio::signal::ctrl_c().await?;

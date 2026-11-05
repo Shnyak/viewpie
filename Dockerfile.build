@@ -33,6 +33,7 @@ RUN set -eux; \
         "libavcodec-dev:$ARCH" \
         "libavformat-dev:$ARCH" \
         "libavutil-dev:$ARCH" \
+        "libssl-dev:$ARCH" \
         libclang-dev clang; \
     rm -rf /var/lib/apt/lists/*
 

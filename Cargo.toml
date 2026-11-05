@@ -14,6 +14,11 @@ path = "src/main.rs"
 # Headless test binary: same application logic, but without KMS/DRM and
 # FFmpeg hardware decoding. Used by the integration tests in tests/.
 [[bin]]
+name = "viewpie-native"
+path = "src/bin/viewpie-native.rs"
+required-features = ["native-pipeline"]
+
+[[bin]]
 name = "viewpie-headless"
 path = "src/bin/headless.rs"
 
@@ -34,24 +39,26 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+yaml-rust2 = { version = "0.13", optional = true }
+rustix = { version = "1", features = ["event"], optional = true }
+libc = { version = "0.2", optional = true }
 
-# Hardware backends (DRM/KMS, libcec) are enabled only for the ARM release
-# build produced by Dockerfile.build — see scripts/build-deb.sh which passes
-# `--features hw`. Desktop checkouts therefore build without C libraries.
-# Note: `libcec-rs` is not published on crates.io; the CEC bridge in src/cec.rs
-# talks to /dev/cec0 directly and needs no extra crate, so the `hw` feature
-# only pulls in `drm`.
+# The native FFmpeg/libav + DRM/KMS pipeline is enabled for ARM release builds
+# with `--features hw`. The optional feature keeps default desktop/headless
+# builds independent of FFmpeg headers and native DRM bindings. The API-side
+# CEC bridge talks to /dev/cec0 directly and does not need libcec-rs.
 [features]
 default = []
-hw = ["dep:drm"]
+hw = ["dep:drm", "native-pipeline"]
+native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix", "dep:libc"]
 
 [dependencies.drm]
-# Примечание: в ТЗ была указана версия "1.5", однако в crates.io у крейта
-# `drm` нет релизов 1.x/2.x — актуальная линейка 0.x (0.15.0). Оригинальный
-# viewpie использует именно drm 0.15, API (drm::control, AtomicModeSet,
-# framebuffer/plane/crtc handles) соответствует требованиям ТЗ.
+# Версия drm 0.15 соответствует используемому API.
 version = "0.15"
 optional = true
+
+[build-dependencies]
+bindgen = "0.71"
 
 [dev-dependencies]
 tempfile = "3"
