@@ -45,8 +45,9 @@ COPY ${DEB} /tmp/viewpie.deb
 # verifier alone, which is narrower than the alternative of turning signature
 # checking off to get these packages into a Debian base image.
 # Debian's libav satisfies the package's dependencies just as well, so nothing
-# in apt would notice if the Pi archive stopped winning. viewpie --check-libav
-# asks libav itself and fails the build instead.
+# in apt would notice if the Pi archive stopped winning. Check the installed
+# executable's dynamic dependencies here; the application has no --check-libav
+# CLI option, and passing one would be mistaken for a configuration path.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && curl -fsSL -o /usr/share/keyrings/raspberrypi.gpg.key \
@@ -58,7 +59,8 @@ RUN apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml \
         apt-get install -y --no-install-recommends /tmp/viewpie.deb \
-    && viewpie --check-libav \
+    && ldd /usr/bin/viewpie | tee /tmp/viewpie.ldd \
+    && grep -q 'libavcodec.so' /tmp/viewpie.ldd \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -f /tmp/viewpie.deb /etc/apt-sequoia-policy.toml \
     && rm -rf /var/lib/apt/lists/*

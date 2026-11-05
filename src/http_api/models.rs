@@ -144,6 +144,9 @@ pub struct StatusResponse {
     pub spacing: u32,
     pub uptime_seconds: i64,
     pub cpu_temp_c: Option<f64>,
+    pub cpu_load_percent: Option<f64>,
+    pub load_average_1m: Option<f64>,
+    pub restart_available: bool,
     pub active_streams: usize,
     pub panels_count: usize,
 }
@@ -228,7 +231,10 @@ mod tests {
         let p: PanelDto = serde_json::from_value(serde_json::json!({
             "name": "Outside",
             "layout": "a a b\na a b\nb b b\n",
-            "viewports": [{"slot":"a","feeds":["cam_a"]},{"slot":"b","feeds":["cam_b"]}]
+            "viewports": [
+                {"slot":"a","feeds":["cam_a"]},
+                {"slot":"b","feeds":["cam_b"]}
+            ]
         }))
         .unwrap();
         assert_eq!(p.panel.camera_count(), 2);
@@ -237,7 +243,10 @@ mod tests {
             "id": "outside",
             "name": "Outside",
             "layout": "a a b\na a b\nb b b\n",
-            "viewports": [{"slot":"a","feeds":["cam_a"]},{"slot":"b","feeds":["cam_b"]}]
+            "viewports": [
+                {"slot":"a","feeds":["cam_a"]},
+                {"slot":"b","feeds":["cam_b"]}
+            ]
         }))
         .unwrap();
         assert_eq!(with_id.id.as_deref(), Some("outside"));

@@ -13,6 +13,8 @@ use serde_json::json;
 pub enum ApiError {
     #[error("{0}")]
     BadRequest(String),
+    #[error("unauthorized")]
+    Unauthorized,
     #[error("resource not found: {0}")]
     NotFound(String),
     #[error("conflict: {0}")]
@@ -38,6 +40,9 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    pub fn unauthorized() -> Self {
+        Self::Unauthorized
+    }
     pub fn bad_request(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
     }
@@ -62,6 +67,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
+            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "invalid authorization".into()),
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m.clone()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             ApiError::CameraNotInActivePanel => {
