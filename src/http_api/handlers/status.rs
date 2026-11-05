@@ -56,9 +56,8 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         cpu_temp_c,
         cpu_load_percent,
         load_average_1m,
-        restart_available: std::env::var("VIEWPIE_RESTART_TOKEN")
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false),
+        // Keep the remote restart control unavailable until its systemd capability path is implemented.
+        restart_available: false,
         active_streams,
         panels_count,
     }))
