@@ -1,0 +1,37 @@
+name: Tag versioned release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      - debian/changelog
+      - .github/workflows/tag-versioned-release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify package versions and create release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          changelog_version=$(sed -n '1s/^viewpie (\(.*\)) unstable;.*/\1/p' debian/changelog)
+          if [ "$cargo_version" != "0.2.5-fork" ] || [ "$changelog_version" != "0.2.5-fork-1" ]; then
+            echo "Unexpected release versions: Cargo=$cargo_version changelog=$changelog_version" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v0.2.5-fork"; then
+            echo "Tag already exists"
+            exit 0
+          fi
+          git tag -a v0.2.5-fork -m "Viewpie v0.2.5-fork"
+          git push origin refs/tags/v0.2.5-fork
