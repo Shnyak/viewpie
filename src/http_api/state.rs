@@ -252,7 +252,6 @@ pub fn read_cpu_temp(sysfs_root: Option<&str>) -> Option<f64> {
     Some(milli as f64 / 1000.0)
 }
 
-
 /// Read the one-minute system load average from /proc/loadavg.
 pub fn read_load_average_1m(path: Option<&str>) -> Option<f64> {
     let raw = std::fs::read_to_string(path.unwrap_or("/proc/loadavg")).ok()?;
