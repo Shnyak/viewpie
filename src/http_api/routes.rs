@@ -18,7 +18,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/grid", post(control::grid))
         .route("/api/fullscreen", post(control::fullscreen))
         .route("/api/reload", post(control::reload))
-        .route("/api/restart", post(control::restart))
         // Display settings
         .route(
             "/api/settings",
