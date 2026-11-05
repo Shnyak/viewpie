@@ -1,5 +1,5 @@
 name: Tag versioned release
-# Re-run after release pipeline wiring update
+# Re-run after lowercase GHCR image reference fix
 
 on:
   push:
