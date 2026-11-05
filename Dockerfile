@@ -59,7 +59,8 @@ RUN apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml \
         apt-get install -y --no-install-recommends /tmp/viewpie.deb \
-    && dpkg-query -W -f='${Depends}' viewpie | grep -q 'libavcodec' \
+    && ldd /usr/bin/viewpie | tee /tmp/viewpie.ldd \
+    && grep -q 'libavcodec.so' /tmp/viewpie.ldd \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -f /tmp/viewpie.deb /etc/apt-sequoia-policy.toml \
     && rm -rf /var/lib/apt/lists/*
