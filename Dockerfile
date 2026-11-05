@@ -57,6 +57,12 @@ RUN apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml apt-get update \
     && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml \
         apt-get install -y --no-install-recommends /tmp/viewpie.deb \
+    && test -x /usr/bin/viewpie-native \
+    && ldd /usr/bin/viewpie-native | tee /tmp/viewpie-native.ldd \
+    && grep -q 'libavcodec.so' /tmp/viewpie-native.ldd \
+    && grep -q 'libavformat.so' /tmp/viewpie-native.ldd \
+    && grep -q 'libavutil.so' /tmp/viewpie-native.ldd \
+    && ! grep -q 'not found' /tmp/viewpie-native.ldd \
     && for pkg in libavcodec61 libavformat61 libavutil59; do \
         version="$(dpkg-query -W -f='${Version}' "$pkg")"; \
         case "$version" in *+rpt*) ;; *) \
