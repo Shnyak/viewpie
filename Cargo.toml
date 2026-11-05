@@ -41,7 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 yaml-rust2 = { version = "0.13", optional = true }
 rustix = { version = "1", features = ["event"], optional = true }
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 
 # The native FFmpeg/libav + DRM/KMS pipeline is enabled for ARM release builds
 # with `--features hw`. The optional feature keeps default desktop/headless
@@ -50,7 +50,7 @@ libc = "0.2"
 [features]
 default = []
 hw = ["dep:drm", "native-pipeline"]
-native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix"]
+native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix", "dep:libc"]
 
 [dependencies.drm]
 # Версия drm 0.15 соответствует используемому API.
