@@ -1,3 +1,14 @@
+viewpie (0.2.5-fork-1) unstable; urgency=medium
+
+  * Restore the native FFmpeg/libav decoder and DRM/KMS renderer in the fork.
+  * Package the HTTP API service and native renderer as separate binaries.
+  * Connect panel selection, fullscreen camera selection and display pause/resume
+    to the native renderer.
+  * Preserve rectangular panel layouts and validate the real FFmpeg runtime
+    dependencies in the package image for ARMHF and ARM64.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Thu, 05 Nov 2026 08:05:00 +0000
+
 viewpie (0.1.1-1) unstable; urgency=medium
 
   * Close every buffer handle behind a hardware-decoded frame. On a Pi 5 the
