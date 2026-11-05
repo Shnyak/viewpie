@@ -270,7 +270,8 @@ fn parse_cpu_counters(raw: &str) -> Option<(u64, u64)> {
         return None;
     }
     let idle = values[3] + values.get(4).copied().unwrap_or(0);
-    let total = values.iter().sum();
+    // guest and guest_nice are already included in user and nice; do not count them twice.
+    let total: u64 = values.iter().take(8).sum();
     Some((total, idle))
 }
 
@@ -342,7 +343,7 @@ defaults:
 
     #[test]
     fn cpu_counters_parse_and_calculate_busy_time() {
-        let first = parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 0 0\\ncpu0 1 2 3 4 5 0 0 0 0 0")
+        let first = parse_cpu_counters("cpu  100 20 30 400 50 0 0 0 90 10\\ncpu0 1 2 3 4 5 0 0 0 0 0")
             .unwrap();
         let second = parse_cpu_counters("cpu  150 20 50 420 60 0 0 0 0 0").unwrap();
         assert_eq!(first, (600, 450));
