@@ -1,4 +1,5 @@
 name: Tag versioned release
+# Re-run after release pipeline wiring update
 
 on:
   push:
