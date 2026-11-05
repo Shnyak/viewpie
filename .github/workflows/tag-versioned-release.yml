@@ -33,5 +33,7 @@ jobs:
             echo "Tag already exists"
             exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a v0.2.5-fork -m "Viewpie v0.2.5-fork"
           git push origin refs/tags/v0.2.5-fork
