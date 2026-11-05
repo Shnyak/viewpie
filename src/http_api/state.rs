@@ -342,7 +342,6 @@ defaults:
         assert_eq!(current_fullscreen().await, None);
     }
 
-
     #[test]
     fn cpu_counters_parse_and_calculate_busy_time() {
         let first =
