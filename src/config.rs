@@ -353,9 +353,8 @@ impl Config {
             drop(file);
             fs::rename(&temporary, destination)?;
             // Persist the directory entry as well as the file contents.
-            if let Ok(dir) = fs::File::open(parent) {
-                dir.sync_all()?;
-            }
+            let dir = fs::File::open(parent)?;
+            dir.sync_all()?;
             Ok(())
         })();
 
@@ -581,4 +580,43 @@ panels:
         assert_eq!(cfg.display, DisplaySettings::default());
         assert_eq!(cfg.initial_panel(), "p");
     }
+    #[test]
+    fn atomic_save_round_trips_and_keeps_credentials_private() {
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        cfg.save_atomic(path.to_str().unwrap()).unwrap();
+
+        let loaded = Config::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded, cfg);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn atomic_save_rejects_invalid_config_without_replacing_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        std::fs::write(&path, "keep this file").unwrap();
+
+        let mut cfg = Config::from_yaml(SAMPLE).unwrap();
+        cfg.panels.clear();
+        assert!(cfg.save_atomic(path.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "keep this file");
+    }
+
+    #[test]
+    fn atomic_save_does_not_leave_temporary_file_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_parent = dir.path().join("missing").join("viewpie.yaml");
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        assert!(cfg.save_atomic(missing_parent.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
 }
