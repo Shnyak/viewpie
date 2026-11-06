@@ -253,6 +253,23 @@ impl PanelManager {
         Ok(wall::grid_frame(panel, spacing, &bg, &slots))
     }
 
+    /// Undo a failed panel switch, including feed references and fullscreen.
+    async fn rollback_switch(
+        &self,
+        leaving: &HashSet<String>,
+        entering: &HashSet<String>,
+        old_slots: HashMap<String, String>,
+        fullscreen: Option<String>,
+    ) -> Result<(), PanelError> {
+        self.pool.apply_switch(entering, leaving).await?;
+        *self.slot_feed.write().await = old_slots;
+        if let Some(camera) = fullscreen {
+            crate::http_api::state::set_fullscreen_state(Some(camera.clone())).await;
+            self.pool.start_fullscreen(&camera).await?;
+        }
+        Ok(())
+    }
+
     /// Switch the active panel gracefully using reference counting.
     pub async fn switch_to(&self, new_id: &str) -> Result<(), PanelError> {
         let old_displayed = self.displayed.read().await.clone();
@@ -271,6 +288,8 @@ impl PanelManager {
             None => HashSet::new(),
         };
         let entering = self.feeds_of(new_id).await;
+
+        let old_slots = self.slot_feed.read().await.clone();
 
         // 1..5 — reference-counted diff on the shared decoder pool.
         self.pool.apply_switch(&leaving, &entering).await?;
@@ -294,8 +313,15 @@ impl PanelManager {
             *self.slot_feed.write().await = m;
         }
 
-        // 7 — submit the new layout to the display backend.
-        let frame = self.build_grid_frame(new_id).await?;
+        // 7 — submit the new layout to the display backend. Any failure
+        // restores the previous decoder set and fullscreen stream.
+        let frame = match self.build_grid_frame(new_id).await {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.rollback_switch(&leaving, &entering, old_slots, fs).await?;
+                return Err(error);
+            }
+        };
         info!(
             panel = %new_id,
             resolution_width = self.resolution.width,
@@ -308,6 +334,7 @@ impl PanelManager {
         );
         if let Err(err) = self.backend.commit(&frame).await {
             warn!(panel = %new_id, error = %err, "display backend rejected panel frame");
+            self.rollback_switch(&leaving, &entering, old_slots, fs).await?;
             return Err(err.into());
         }
 
