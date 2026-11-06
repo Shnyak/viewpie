@@ -2017,7 +2017,7 @@ fn feed_session(
     let codec = dec.codec();
 
     while !shutdown.load(Ordering::Acquire) {
-        let Some(frame) = dec.next_frame() else {
+        let Some(frame) = dec.next_frame(shutdown) else {
             break;
         };
         if shutdown.load(Ordering::Acquire) {
