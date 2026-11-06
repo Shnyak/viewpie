@@ -8,9 +8,9 @@ use axum::extract::State;
 use axum::Json;
 
 use crate::http_api::errors::ApiError;
+use crate::http_api::handlers::restart::restart_available;
 use crate::http_api::models::StatusResponse;
 use crate::http_api::state::AppState;
-use crate::http_api::handlers::restart::restart_available;
 
 pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse>, ApiError> {
     let wall = state.wall_state.read().await;
