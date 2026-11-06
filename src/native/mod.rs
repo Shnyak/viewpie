@@ -717,8 +717,10 @@ impl Wall {
 }
 
 fn run(config: &Config) -> Result<(), String> {
-    // Before any thread starts, so that every one inherits the mask.
-    stop_cleanly();
+    // Block termination signals before spawning any worker, then turn them
+    // into the same orderly STOP command used by the parent API process.
+    let (command_tx, command_rx) = std::sync::mpsc::channel();
+    stop_cleanly(command_tx.clone());
 
     // Only for blocks the board has: a Pi 3 has no HEVC block for any libav
     // to reach, and a Pi 5 no H.264 one. Said rather than refused, since the
@@ -800,6 +802,8 @@ fn run(config: &Config) -> Result<(), String> {
     // Started once every wall is built, since until then nothing could show
     // what they decode: a second display that is still off would otherwise
     // have the first display's cameras decoding for nobody while it waited.
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut feed_threads = Vec::new();
     for (i, (feed, source)) in config.feeds.iter().zip(&sources).enumerate() {
         // How many displays show this feed decides how many of its frames
         // can be held at once, and so how many buffers a software-decoded
@@ -817,7 +821,10 @@ fn run(config: &Config) -> Result<(), String> {
             let url = url.clone();
             let card = card.clone();
             let source = source.clone();
-            std::thread::spawn(move || feed_thread(&url, card, source, displays));
+            let stop = shutdown.clone();
+            feed_threads.push(std::thread::spawn(move || {
+                feed_thread(&url, card, source, displays, stop)
+            }));
         }
     }
 
@@ -827,30 +834,50 @@ fn run(config: &Config) -> Result<(), String> {
         .into_iter()
         .chain(fullscreen.into_iter().flatten())
         .collect();
-    // Read display power commands from the parent API process.
-    let (display_tx, display_rx) = std::sync::mpsc::channel();
+    // Read display power and STOP commands from the parent API process.
+    // EOF is also a stop request: an orphaned renderer must not keep decoding.
+    let input_tx = command_tx.clone();
     std::thread::spawn(move || {
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
             let Ok(line) = line else {
+                let _ = input_tx.send(RendererCommand::Stop);
                 break;
             };
             match line.trim() {
-                "OFF" => {
-                    let _ = display_tx.send(false);
-                }
-                "ON" => {
-                    let _ = display_tx.send(true);
+                "OFF" => { let _ = input_tx.send(RendererCommand::DisplayPower(false)); }
+                "ON" => { let _ = input_tx.send(RendererCommand::DisplayPower(true)); }
+                "STOP" => {
+                    let _ = input_tx.send(RendererCommand::Stop);
+                    break;
                 }
                 _ => {}
             }
         }
     });
 
-    run_walls(&card, &sources, &mut walls, display_rx)
+    let result = run_walls(
+        &card,
+        &sources,
+        &mut walls,
+        command_rx,
+        shutdown,
+        feed_threads,
+    );
+    // The renderer has detached every plane and joined every decoder before
+    // releasing the CEC ownership held by the API process.
+    drop(walls);
+    drop(sources);
+    cec::release();
+    result
 }
 
-/// Exit when told to stop, handing back any CEC address first.
+enum RendererCommand {
+    DisplayPower(bool),
+    Stop,
+}
+
+/// Exit when told to stop, handing the request back to the render loop.
 ///
 /// Waited for on a thread of its own rather than handled: a handler can do
 /// almost nothing safely, and releasing an address is an ioctl that waits on
@@ -861,7 +888,7 @@ fn run(config: &Config) -> Result<(), String> {
 /// container the wall is process 1, which the kernel does not let SIGTERM
 /// kill while it has the default disposition, so `docker stop` waited out
 /// its ten seconds and sent SIGKILL instead. A blocked signal is kept for sigwait rather than ignored.
-fn stop_cleanly() {
+fn stop_cleanly(commands: std::sync::mpsc::Sender<RendererCommand>) {
     let set = unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
@@ -872,9 +899,9 @@ fn stop_cleanly() {
     };
     std::thread::spawn(move || {
         let mut signal = 0;
-        unsafe { libc::sigwait(&set, &mut signal) };
-        cec::release();
-        std::process::exit(0);
+        if unsafe { libc::sigwait(&set, &mut signal) } == 0 {
+            let _ = commands.send(RendererCommand::Stop);
+        }
     });
 }
 
