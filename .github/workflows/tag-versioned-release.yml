@@ -2,6 +2,7 @@ name: Tag versioned release
 # Create a version tag from the package metadata on main.
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
