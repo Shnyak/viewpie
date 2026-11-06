@@ -1,3 +1,10 @@
+viewpie (0.2.8-fork-1) unstable; urgency=medium
+
+  * Report the compiled package version in the /api/status response so
+    Home Assistant can identify the actual running Viewpie build.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 06 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.7-fork-1) unstable; urgency=medium
 
   * Fix the service command to pass the configuration path as the positional
@@ -29,7 +36,7 @@ viewpie (0.2.5-fork-1) unstable; urgency=medium
   * Preserve rectangular panel layouts and validate the real FFmpeg runtime
     dependencies in the package image for ARMHF and ARM64.
 
- -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Thu, 05 Nov 2026 08:05:00 +0000
+ -- Shnyak <Shnyak@users.noreply.github.com>  Thu, 05 Nov 2026 08:05:00 +0000
 
 viewpie (0.1.1-1) unstable; urgency=medium
 
