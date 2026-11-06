@@ -1783,7 +1783,13 @@ impl Throttle {
 ///
 /// `displays` is how many displays show the feed, which bounds how many of
 /// its frames can be held at once (see Scanout).
-fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize) {
+fn feed_thread(
+    url: &str,
+    card: Arc<Card>,
+    source: Arc<Source>,
+    displays: usize,
+    shutdown: Arc<AtomicBool>,
+) {
     let mut backoff = Backoff::new();
     let name = &source.name;
     // Nothing is refused for its size if the card will not say what fits:
@@ -1795,15 +1801,26 @@ fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize)
     let mut too_large = false;
 
     loop {
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         // Not connected at all while nobody is watching: an open session
         // costs the camera a stream and the network its bitrate, decoded or
         // not.
-        while !source.wanted.load(Ordering::Relaxed) {
+        while !source.wanted.load(Ordering::Relaxed)
+            && !shutdown.load(Ordering::Acquire)
+        {
             std::thread::sleep(PAUSE_POLL);
         }
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         let started = Instant::now();
-        let result = feed_session(url, &card, &source, displays, limit);
+        let result = feed_session(url, &card, &source, displays, limit, &shutdown);
         let paused = !source.wanted.load(Ordering::Relaxed);
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         match result {
             // Ended for the pause, which the display has said.
             Ok(()) if paused => {}
@@ -1851,6 +1868,9 @@ fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize)
         source.shown.lock().unwrap().take();
         // Back as soon as someone is watching again, which is no reflection
         // on the camera.
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         if paused {
             backoff.reset();
             too_large = false;
@@ -1865,20 +1885,26 @@ fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize)
         }
         // Cut short when nobody wants the feed any more, like a pause: the
         // next try waits for someone to, and then goes at once.
-        if !nap(&source, backoff.next()) {
+        if !nap(&source, backoff.next(), &shutdown) {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
             backoff.reset();
             too_large = false;
             continue;
         }
         backoff.advance();
     }
+    // The last published frame is no longer needed once the render loop has
+    // drained all page flips; the source is cleared again by the owner too.
+    source.shown.lock().unwrap().take();
 }
 
-/// Sleep for `d`, or until nobody wants the feed any more, and say whether
-/// anyone still does.
-fn nap(source: &Source, d: Duration) -> bool {
+/// Sleep for `d`, or until nobody wants the feed any more, shutdown is
+/// requested, and say whether the feed is still wanted.
+fn nap(source: &Source, d: Duration, shutdown: &AtomicBool) -> bool {
     let until = Instant::now() + d;
-    while source.wanted.load(Ordering::Relaxed) {
+    while source.wanted.load(Ordering::Relaxed) && !shutdown.load(Ordering::Acquire) {
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return true;
@@ -1940,6 +1966,7 @@ fn feed_session(
     source: &Source,
     displays: usize,
     limit: (u32, u32),
+    shutdown: &AtomicBool,
 ) -> Result<(), Refused> {
     let name = &source.name;
     let mut dec = Decoder::open(url, source.stats.clone(), limit, frames_held(displays))?;
@@ -1968,7 +1995,13 @@ fn feed_session(
     // a session runs, since a different codec means a different stream.
     let codec = dec.codec();
 
-    while let Some(frame) = dec.next_frame() {
+    while !shutdown.load(Ordering::Acquire) {
+        let Some(frame) = dec.next_frame() else {
+            break;
+        };
+        if shutdown.load(Ordering::Acquire) {
+            return Ok(());
+        }
         if !source.wanted.load(Ordering::Relaxed) {
             return Ok(());
         }
