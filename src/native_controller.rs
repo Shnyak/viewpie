@@ -105,9 +105,37 @@ impl NativeRendererController {
 
     async fn stop_inner(&self) {
         if let Some(mut running) = self.child.lock().await.take() {
+            // Ask the renderer to drain page flips and join every decoder
+            // before considering a forced termination.
+            if let Err(error) = running.stdin.write_all(b"STOP\\n").await {
+                tracing::warn!("could not send graceful STOP to native renderer: {error}");
+            } else if let Err(error) = running.stdin.flush().await {
+                tracing::warn!("could not flush graceful STOP to native renderer: {error}");
+            }
             drop(running.stdin);
-            let _ = running.child.kill().await;
-            let _ = running.child.wait().await;
+
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(12),
+                running.child.wait(),
+            )
+            .await
+            {
+                Ok(Ok(status)) => {
+                    tracing::info!("native renderer stopped cleanly: {status}");
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!("waiting for native renderer failed: {error}");
+                    let _ = running.child.kill().await;
+                    let _ = running.child.wait().await;
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "native renderer did not finish graceful shutdown in 12s; forcing termination"
+                    );
+                    let _ = running.child.kill().await;
+                    let _ = running.child.wait().await;
+                }
+            }
         }
     }
 }
