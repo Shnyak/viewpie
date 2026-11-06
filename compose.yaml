@@ -3,9 +3,10 @@
 #
 #   docker compose up -d
 #
-# The feed list stays on the host and is mounted read-only: RTSP urls embed
-# credentials and have no business inside an image. The container runs as
-# uid 100 in group video (44), so the file must be readable by one of those.
+# The config stays on the host and is mounted read-write because the HTTP API
+# persists camera, panel and settings changes to viewpie.yaml. The package
+# keeps that file private (0600); the container runs as uid 100 in group video
+# (44), so the host config directory/file must be owned by the viewpie account.
 #
 # To run an image built here rather than a released one, replace the image
 # with the tag scripts/build-image.sh produced, such as viewpie:arm64.
@@ -41,4 +42,4 @@ services:
       - /dev/cec0
       - /dev/cec1           # Pi 4, Pi 5
     volumes:
-      - /etc/viewpie:/etc/viewpie:ro
+      - /etc/viewpie:/etc/viewpie
