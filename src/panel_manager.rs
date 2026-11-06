@@ -296,8 +296,8 @@ impl PanelManager {
 
         // 6 — reset fullscreen before committing the new grid.
         let fs = crate::http_api::state::clear_fullscreen_state().await;
-        if let Some(cam) = fs {
-            self.pool.stop_fullscreen(&cam).await;
+        if let Some(cam) = fs.as_ref() {
+            self.pool.stop_fullscreen(cam).await;
         }
 
         // Recompute slot→feed map for the new panel.
