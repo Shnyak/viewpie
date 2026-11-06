@@ -806,7 +806,7 @@ fn run(config: &Config) -> Result<(), String> {
     let mut walls = Vec::new();
     for display in &config.displays {
         let taken: Vec<crtc::Handle> = walls.iter().map(|w: &Wall| w.out.crtc).collect();
-        let mut wall = build(
+        let mut wall = match build(
             &card,
             &sources,
             &fullscreen,
