@@ -18,9 +18,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
-use crate::config::{DisplaySettings, FeedConfig, PanelConfig};
+use crate::config::{Config, ConfigError, DisplaySettings, FeedConfig, PanelConfig};
 use crate::feed::FeedPool;
 use crate::kms::DisplayBackend;
 use crate::panel_manager::PanelManager;
@@ -67,6 +67,9 @@ pub struct AppState {
     pub command_tx: mpsc::Sender<WallCommand>,
     pub uptime_started: DateTime<Utc>,
     pub config_path: Arc<String>,
+    /// Last validated configuration and the serialization lock for API writes.
+    pub config: Arc<RwLock<Config>>,
+    pub config_update_lock: Arc<Mutex<()>>,
     pub manager: Arc<PanelManager>,
     pub backend: Arc<dyn DisplayBackend>,
 }
@@ -211,10 +214,23 @@ impl AppState {
             command_tx: tx,
             uptime_started: Utc::now(),
             config_path: Arc::new(config_path.to_string()),
+            config: Arc::new(RwLock::new(cfg.clone())),
+            config_update_lock: Arc::new(Mutex::new(())),
             manager,
             backend,
         };
         (state, rx)
+    }
+
+    /// Persist a validated candidate before publishing it to API readers.
+    /// Callers hold config_update_lock while coordinating runtime mutations.
+    pub fn persist_config(&self, candidate: &Config) -> Result<(), ConfigError> {
+        candidate.save_atomic(self.config_path.as_str())
+    }
+
+    /// Publish the configuration after its runtime counterpart was updated.
+    pub async fn publish_config(&self, candidate: Config) {
+        *self.config.write().await = candidate;
     }
 
     /// Snapshot of cameras known to the pool.
