@@ -264,7 +264,7 @@ impl PanelManager {
         self.pool.apply_switch(entering, leaving).await?;
         *self.slot_feed.write().await = old_slots;
         if let Some(camera) = fullscreen {
-            crate::http_api::state::set_fullscreen_state(Some(camera.clone())).await;
+            let _ = crate::http_api::state::set_fullscreen_state(Some(camera.clone())).await;
             self.pool.start_fullscreen(&camera).await?;
         }
         Ok(())
