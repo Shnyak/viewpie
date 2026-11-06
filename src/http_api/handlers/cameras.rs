@@ -33,6 +33,13 @@ pub async fn create_camera(
     if !dto.url.starts_with("rtsp://") && !dto.url.starts_with("rtspt://") {
         return Err(ApiError::bad_request("camera url must be an rtsp:// URL"));
     }
+    if dto.fullscreen_url.as_deref().is_some_and(|url| {
+        !url.starts_with("rtsp://") && !url.starts_with("rtspt://")
+    }) {
+        return Err(ApiError::bad_request(
+            "fullscreen_url must be an rtsp:// URL",
+        ));
+    }
     let _config_guard = state.config_update_lock.lock().await;
     let old_config = state.config.read().await.clone();
     let mut candidate = old_config.clone();
