@@ -1,5 +1,4 @@
-# Cross-builds viewpie's Debian package for a Pi, on whatever machine runs
-# Docker.
+# Cross-builds viewpie's Debian packages for Raspberry Pi OS Bookworm.
 #
 # Cross-compiled rather than emulated: a qemu build of both architectures takes
 # tens of minutes where this takes seconds, and the Pis themselves are
@@ -11,13 +10,12 @@
 # scripts/build-deb.sh does this for both architectures and copies the
 # packages out.
 
-FROM debian:trixie-slim
+FROM debian:bookworm-slim
 
 ARG ARCH=arm64
 
-# dpkg's foreign architecture is what lets the target's -dev packages sit
-# beside the host's compiler, so pkg-config and the linker find the right
-# libraries.
+# Use Bookworm's target libraries: the resulting ELF dependencies must match
+# Raspberry Pi OS Bookworm (libavcodec59/format59/util57 and glibc 2.36).
 RUN set -eux; \
     case "$ARCH" in \
       armhf) GNU=arm-linux-gnueabihf;  RUST=armv7-unknown-linux-gnueabihf ;; \
@@ -37,10 +35,8 @@ RUN set -eux; \
         libclang-dev clang; \
     rm -rf /var/lib/apt/lists/*
 
-# rustup rather than Debian's rustc: only rustup ships the cross std
-# libraries, and trixie's compiler trails far enough behind that ordinary
-# crates refuse to build against it. None of it reaches the package: the
-# binary links only the C libraries above, and those come from Debian.
+# rustup supplies the cross standard libraries; none of the toolchain reaches
+# the package. The binary links only the target's system C libraries above.
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
 RUN set -eux; \
@@ -52,8 +48,7 @@ WORKDIR /src
 COPY . .
 
 # -a names the target architecture, which is what sends dh_shlibdeps to the
-# target's libraries rather than the build machine's: get that wrong and the
-# package's dependencies describe the wrong system.
+# target's libraries rather than the build machine's.
 #
 # -d because the Rust toolchain came from rustup, which dpkg cannot see.
 RUN set -eux; \
