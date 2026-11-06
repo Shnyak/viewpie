@@ -323,14 +323,21 @@ impl Config {
         self.validate()?;
         let yaml = serde_yaml::to_string(self)?;
         let destination = Path::new(path);
-        let parent = destination.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let parent = destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         let file_name = destination
             .file_name()
             .ok_or_else(|| ConfigError::Validation(format!("invalid config path: {path}")))?
             .to_string_lossy();
         static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
         let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-        let temporary: PathBuf = parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), sequence));
+        let temporary: PathBuf = parent.join(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
 
         let write_result = (|| -> std::io::Result<()> {
             let mut options = OpenOptions::new();
