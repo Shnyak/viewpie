@@ -33,9 +33,11 @@ pub async fn create_camera(
     if !dto.url.starts_with("rtsp://") && !dto.url.starts_with("rtspt://") {
         return Err(ApiError::bad_request("camera url must be an rtsp:// URL"));
     }
-    if dto.fullscreen_url.as_deref().is_some_and(|url| {
-        !url.starts_with("rtsp://") && !url.starts_with("rtspt://")
-    }) {
+    if dto
+        .fullscreen_url
+        .as_deref()
+        .is_some_and(|url| !url.starts_with("rtsp://") && !url.starts_with("rtspt://"))
+    {
         return Err(ApiError::bad_request(
             "fullscreen_url must be an rtsp:// URL",
         ));
@@ -49,7 +51,9 @@ pub async fn create_camera(
             dto.name
         )));
     }
-    candidate.feeds.insert(dto.name.clone(), dto.to_feed_config());
+    candidate
+        .feeds
+        .insert(dto.name.clone(), dto.to_feed_config());
     candidate.validate()?;
     state.persist_config(&candidate)?;
     let created = state
@@ -57,7 +61,9 @@ pub async fn create_camera(
         .await;
     if !created {
         state.persist_config(&old_config).map_err(|rollback| {
-            ApiError::Internal(format!("camera creation failed and config rollback failed: {rollback}"))
+            ApiError::Internal(format!(
+                "camera creation failed and config rollback failed: {rollback}"
+            ))
         })?;
         return Err(ApiError::conflict(format!(
             "camera {:?} already exists",
@@ -81,14 +87,14 @@ pub async fn update_camera(
             "camera name in the request body must match the URL",
         ));
     }
-    if dto.url.is_empty()
-        || (!dto.url.starts_with("rtsp://") && !dto.url.starts_with("rtspt://"))
-    {
+    if dto.url.is_empty() || (!dto.url.starts_with("rtsp://") && !dto.url.starts_with("rtspt://")) {
         return Err(ApiError::bad_request("camera url must be an rtsp:// URL"));
     }
-    if dto.fullscreen_url.as_deref().is_some_and(|url| {
-        !url.starts_with("rtsp://") && !url.starts_with("rtspt://")
-    }) {
+    if dto
+        .fullscreen_url
+        .as_deref()
+        .is_some_and(|url| !url.starts_with("rtsp://") && !url.starts_with("rtspt://"))
+    {
         return Err(ApiError::bad_request(
             "fullscreen_url must be an rtsp:// URL",
         ));
@@ -109,14 +115,19 @@ pub async fn update_camera(
         .await
     {
         state.persist_config(&old_config).map_err(|rollback| {
-            ApiError::Internal(format!("camera update failed ({error}) and config rollback failed: {rollback}"))
+            ApiError::Internal(format!(
+                "camera update failed ({error}) and config rollback failed: {rollback}"
+            ))
         })?;
         return Err(error.into());
     }
     state.publish_config(candidate).await;
     if !users.is_empty() {
         let active = state.manager.active_id().await;
-        let _ = state.command_tx.send(crate::http_api::state::WallCommand::SwitchPanel(active)).await;
+        let _ = state
+            .command_tx
+            .send(crate::http_api::state::WallCommand::SwitchPanel(active))
+            .await;
     }
     // If fullscreen was active for this camera, restart main stream too.
     if crate::http_api::state::current_fullscreen()
@@ -152,7 +163,9 @@ pub async fn delete_camera(
     state.persist_config(&candidate)?;
     if let Err(error) = state.feeds_pool.remove_feed(&name).await {
         state.persist_config(&old_config).map_err(|rollback| {
-            ApiError::Internal(format!("camera deletion failed ({error}) and config rollback failed: {rollback}"))
+            ApiError::Internal(format!(
+                "camera deletion failed ({error}) and config rollback failed: {rollback}"
+            ))
         })?;
         return Err(error.into());
     }
