@@ -25,17 +25,16 @@ configure)
     # upgrade, which is what opens up the 0750 earlier versions made it.
     install -d -m 0755 -o "$VP_USER" -g "$VP_USER" /etc/viewpie
     VP_CONFIG=/etc/viewpie/viewpie.yaml
+    # Never follow a config symlink when repairing ownership: doing so
+    # could change permissions on a file outside /etc/viewpie.
+    if [ -L "$VP_CONFIG" ]; then
+        echo "viewpie: refusing symlink configuration at $VP_CONFIG" >&2
+        exit 1
+    fi
     if [ ! -e "$VP_CONFIG" ]; then
         install -m 0600 -o "$VP_USER" -g "$VP_USER" \
             /usr/share/viewpie/viewpie.yaml "$VP_CONFIG"
     else
-        # Never follow a config symlink when repairing ownership: doing so
-        # could change permissions on a file outside /etc/viewpie.
-        if [ -L "$VP_CONFIG" ]; then
-            echo "viewpie: refusing symlink configuration at $VP_CONFIG" >&2
-            exit 1
-        fi
-
         # API writes use an atomic rename by the viewpie service account.
         # Repair older root-owned or overly-permissive configs only after a
         # root-only backup, and never replace the user's YAML contents.
