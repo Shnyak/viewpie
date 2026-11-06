@@ -1,3 +1,12 @@
+viewpie (0.2.9-fork-1) unstable; urgency=medium
+
+  * Build ARMHF and ARM64 packages against Debian 12 / Raspberry Pi OS
+    Bookworm libraries rather than Debian Trixie.
+  * Verify the package in a Bookworm runtime image with Raspberry Pi's
+    hardware-enabled FFmpeg libraries before publishing.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 06 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.8-fork-1) unstable; urgency=medium
 
   * Report the compiled package version in the /api/status response so
