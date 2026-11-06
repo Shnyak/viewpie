@@ -7,5 +7,6 @@
 pub mod cameras;
 pub mod control;
 pub mod panels;
+pub mod restart;
 pub mod settings;
 pub mod status;

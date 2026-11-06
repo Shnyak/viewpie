@@ -8,6 +8,7 @@ use axum::extract::State;
 use axum::Json;
 
 use crate::http_api::errors::ApiError;
+use crate::http_api::handlers::restart::restart_available;
 use crate::http_api::models::StatusResponse;
 use crate::http_api::state::AppState;
 
@@ -57,8 +58,7 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         cpu_temp_c,
         cpu_load_percent,
         load_average_1m,
-        // Keep the remote restart control unavailable until its systemd capability path is implemented.
-        restart_available: false,
+        restart_available: restart_available(),
         active_streams,
         panels_count,
     }))

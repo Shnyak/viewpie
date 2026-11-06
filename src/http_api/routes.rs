@@ -7,7 +7,7 @@
 use axum::routing::{get, post, put};
 use axum::Router;
 
-use crate::http_api::handlers::{cameras, control, panels, settings, status};
+use crate::http_api::handlers::{cameras, control, panels, restart, settings, status};
 use crate::http_api::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -48,5 +48,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/cameras/:name/test", post(cameras::test_camera))
         // Status
         .route("/api/status", get(status::status))
+        .route("/api/restart", post(restart::restart))
         .with_state(state)
 }
