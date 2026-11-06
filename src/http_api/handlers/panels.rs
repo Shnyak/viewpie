@@ -113,6 +113,8 @@ pub async fn update_panel(
     Json(panel): Json<PanelDto>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let _config_guard = state.config_update_lock.lock().await;
+    let active_panel = state.manager.active_id().await;
+    let updates_active = active_panel == id;
     let mut dto = panel;
     dto.id = Some(id.clone());
     let new_panel = dto.into_config();
@@ -138,6 +140,10 @@ pub async fn update_panel(
     let mut g = state.panels.write().await;
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
+    }
+    drop(g);
+    if updates_active {
+        let _ = state.command_tx.send(WallCommand::SwitchPanel(active_panel)).await;
     }
     Ok(Json(OkResponse::ok()))
 }
