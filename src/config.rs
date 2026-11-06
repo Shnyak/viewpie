@@ -580,6 +580,7 @@ panels:
         assert_eq!(cfg.display, DisplaySettings::default());
         assert_eq!(cfg.initial_panel(), "p");
     }
+
     #[test]
     fn atomic_save_round_trips_and_keeps_credentials_private() {
         let cfg = Config::from_yaml(SAMPLE).unwrap();
