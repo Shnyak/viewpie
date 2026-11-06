@@ -42,7 +42,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
-ReadOnlyPaths=/etc/viewpie
+ReadWritePaths=/etc/viewpie
 DeviceAllow=char-drm rw
 DeviceAllow=char-video4linux rw
 # The media node beside the decoder, which is its own device class rather than
