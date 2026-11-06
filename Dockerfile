@@ -43,7 +43,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && curl -fsSL -o /usr/share/keyrings/raspberrypi.gpg.key \
         http://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ bookworm main\\n' \
+    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ bookworm main\n' \
         > /etc/apt/sources.list.d/raspi.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends /tmp/viewpie.deb \
