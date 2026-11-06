@@ -12,6 +12,12 @@ configure)
                 --home /nonexistent --shell /usr/sbin/nologin \
                 --gecos "Viewpie camera wall" "$VP_USER"
     fi
+    # The service unit uses viewpie as its primary group too. Repair an
+    # account created by an older/manual install that lacks that group.
+    if ! getent group "$VP_USER" >/dev/null; then
+        addgroup --system "$VP_USER"
+    fi
+    usermod --gid "$VP_USER" "$VP_USER"
     for grp in video render; do
         if getent group "$grp" >/dev/null; then
             adduser "$VP_USER" "$grp" >/dev/null 2>&1 || true
