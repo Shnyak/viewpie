@@ -1181,7 +1181,9 @@ fn run_walls(
     card: &Arc<Card>,
     sources: &[Arc<Source>],
     walls: &mut [Wall],
-    display_commands: std::sync::mpsc::Receiver<bool>,
+    commands: std::sync::mpsc::Receiver<RendererCommand>,
+    shutdown: Arc<AtomicBool>,
+    feed_threads: Vec<std::thread::JoinHandle<()>>,
 ) -> Result<(), String> {
     // What every rotation is timed from. One for the whole process, so
     // viewports on different displays switch together too.
@@ -1200,12 +1202,22 @@ fn run_walls(
     let mut commit_gripe = Throttle::new();
     let mut display_requested_on = true;
     let mut display_on = true;
+    let mut stopping = false;
 
-    loop {
+    while !stopping {
         // Keep the latest requested state. OFF waits for outstanding flips
         // before changing DPMS, but prevents any further commits immediately.
-        while let Ok(on) = display_commands.try_recv() {
-            display_requested_on = on;
+        while let Ok(command) = commands.try_recv() {
+            match command {
+                RendererCommand::DisplayPower(on) => display_requested_on = on,
+                RendererCommand::Stop => {
+                    stopping = true;
+                    break;
+                }
+            }
+        }
+        if stopping {
+            break;
         }
 
         if !display_requested_on && display_on && walls.iter().all(|wall| wall.in_flight.is_none())
@@ -1343,6 +1355,63 @@ fn run_walls(
             report(sources, walls, &mut marks, clock);
         }
     }
+
+    // Stop admitting frames first. Each decoder observes this independently
+    // of the pause/wanted state, which may become true again during runtime.
+    shutdown.store(true, Ordering::Release);
+    for source in sources {
+        source.wanted.store(false, Ordering::Release);
+    }
+
+    // Drain every accepted page flip, then detach all planes and wait for
+    // those detach commits to flip before releasing any frame or decoder.
+    loop {
+        let mut all_clear = true;
+        for wall in walls.iter_mut() {
+            if wall.in_flight.is_none() && wall.on_screen.iter().any(Option::is_some) {
+                let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
+                let ready = let_go(&wall.viewports, showing, 0);
+                let request = ready.iter().map(|(_, viewport, _)| (*viewport, None));
+                match card.commit(wall.out.crtc, wall.crtc_active, request) {
+                    Ok(()) => {
+                        wall.in_flight = Some(InFlight {
+                            at: Instant::now(),
+                            overdue_said: false,
+                            named: ready.into_iter().map(|(i, _, shown)| (i, shown)).collect(),
+                        });
+                    }
+                    Err(error) => commit_gripe.say(format_args!(
+                        "shutdown detach on {}: {error}",
+                        wall.out.name
+                    )),
+                }
+            }
+            if wall.in_flight.is_some() || wall.on_screen.iter().any(Option::is_some) {
+                all_clear = false;
+            }
+        }
+        if all_clear {
+            break;
+        }
+        match card.next_flips(Duration::from_millis(100)) {
+            Ok(flipped) => {
+                for wall in walls.iter_mut().filter(|w| flipped.contains(&w.out.crtc)) {
+                    wall.flipped();
+                }
+            }
+            Err(error) => commit_gripe.say(format_args!("shutdown waiting for page flip: {error}")),
+        }
+    }
+
+    for handle in feed_threads {
+        if handle.join().is_err() {
+            eprintln!("a decoder thread panicked during shutdown");
+        }
+    }
+    for source in sources {
+        source.shown.lock().unwrap().take();
+    }
+    Ok(())
 }
 
 /// How long a commit may go without its flip before that is worth saying.
