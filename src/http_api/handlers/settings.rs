@@ -64,7 +64,9 @@ pub async fn put_settings(
             if let Err(error) = state.manager.recomposite().await {
                 *state.settings.write().await = old.clone();
                 state.persist_config(&old_config).map_err(|rollback| {
-                    ApiError::Internal(format!("settings apply failed ({error}) and config rollback failed: {rollback}"))
+                    ApiError::Internal(format!(
+                        "settings apply failed ({error}) and config rollback failed: {rollback}"
+                    ))
                 })?;
                 return Err(error.into());
             }
