@@ -33,15 +33,31 @@ pub async fn create_camera(
     if !dto.url.starts_with("rtsp://") && !dto.url.starts_with("rtspt://") {
         return Err(ApiError::bad_request("camera url must be an rtsp:// URL"));
     }
-    let created = state
-        .add_camera(dto.name.clone(), dto.to_feed_config())
-        .await;
-    if !created {
+    let _config_guard = state.config_update_lock.lock().await;
+    let old_config = state.config.read().await.clone();
+    let mut candidate = old_config.clone();
+    if candidate.feeds.contains_key(&dto.name) {
         return Err(ApiError::conflict(format!(
             "camera {:?} already exists",
             dto.name
         )));
     }
+    candidate.feeds.insert(dto.name.clone(), dto.to_feed_config());
+    candidate.validate()?;
+    state.persist_config(&candidate)?;
+    let created = state
+        .add_camera(dto.name.clone(), dto.to_feed_config())
+        .await;
+    if !created {
+        state.persist_config(&old_config).map_err(|rollback| {
+            ApiError::Internal(format!("camera creation failed and config rollback failed: {rollback}"))
+        })?;
+        return Err(ApiError::conflict(format!(
+            "camera {:?} already exists",
+            dto.name
+        )));
+    }
+    state.publish_config(candidate).await;
     info!(camera = dto.name, "camera registered");
     Ok((StatusCode::CREATED, Json(OkResponse::ok())))
 }
@@ -53,13 +69,26 @@ pub async fn update_camera(
     Path(name): Path<String>,
     Json(dto): Json<CameraDto>,
 ) -> Result<Json<OkResponse>, ApiError> {
+    let _config_guard = state.config_update_lock.lock().await;
     if state.feeds_pool.get(&name).await.is_none() {
         return Err(ApiError::not_found(format!("camera {name:?} not found")));
     }
-    state
+    let old_config = state.config.read().await.clone();
+    let mut candidate = old_config.clone();
+    candidate.feeds.insert(name.clone(), dto.to_feed_config());
+    candidate.validate()?;
+    state.persist_config(&candidate)?;
+    if let Err(error) = state
         .feeds_pool
         .update_feed(&name, dto.to_feed_config())
-        .await?;
+        .await
+    {
+        state.persist_config(&old_config).map_err(|rollback| {
+            ApiError::Internal(format!("camera update failed ({error}) and config rollback failed: {rollback}"))
+        })?;
+        return Err(error.into());
+    }
+    state.publish_config(candidate).await;
     // If fullscreen was active for this camera, restart main stream too.
     if crate::http_api::state::current_fullscreen()
         .await
@@ -77,6 +106,7 @@ pub async fn delete_camera(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<OkResponse>, ApiError> {
+    let _config_guard = state.config_update_lock.lock().await;
     let users = state.manager.panels_using_camera(&name).await;
     if !users.is_empty() {
         return Err(ApiError::conflict(format!(
@@ -84,7 +114,20 @@ pub async fn delete_camera(
             users.join(", ")
         )));
     }
-    state.feeds_pool.remove_feed(&name).await?;
+    let old_config = state.config.read().await.clone();
+    let mut candidate = old_config.clone();
+    if candidate.feeds.remove(&name).is_none() {
+        return Err(ApiError::not_found(format!("camera {name:?} not found")));
+    }
+    candidate.validate()?;
+    state.persist_config(&candidate)?;
+    if let Err(error) = state.feeds_pool.remove_feed(&name).await {
+        state.persist_config(&old_config).map_err(|rollback| {
+            ApiError::Internal(format!("camera deletion failed ({error}) and config rollback failed: {rollback}"))
+        })?;
+        return Err(error.into());
+    }
+    state.publish_config(candidate).await;
     info!(camera = name, "camera removed");
     Ok(Json(OkResponse::ok()))
 }
