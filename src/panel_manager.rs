@@ -165,7 +165,10 @@ impl PanelManager {
             self.pool.apply_switch(&old_feeds, &new_feeds).await?;
         }
 
-        self.panels.write().await.insert(id.to_string(), panel.clone());
+        self.panels
+            .write()
+            .await
+            .insert(id.to_string(), panel.clone());
         if active {
             let mut slot_map = HashMap::new();
             for vp in &panel.viewports {
@@ -213,7 +216,8 @@ impl PanelManager {
             }
             let was_active = self.active_id().await == id;
             let fallback = if was_active {
-                let mut keys: Vec<&String> = panels.keys().filter(|key| key.as_str() != id).collect();
+                let mut keys: Vec<&String> =
+                    panels.keys().filter(|key| key.as_str() != id).collect();
                 keys.sort();
                 keys.first().map(|key| key.as_str().to_owned())
             } else {
@@ -318,7 +322,8 @@ impl PanelManager {
         let frame = match self.build_grid_frame(new_id).await {
             Ok(frame) => frame,
             Err(error) => {
-                self.rollback_switch(&leaving, &entering, old_slots, fs).await?;
+                self.rollback_switch(&leaving, &entering, old_slots, fs)
+                    .await?;
                 return Err(error);
             }
         };
@@ -334,7 +339,8 @@ impl PanelManager {
         );
         if let Err(err) = self.backend.commit(&frame).await {
             warn!(panel = %new_id, error = %err, "display backend rejected panel frame");
-            self.rollback_switch(&leaving, &entering, old_slots, fs).await?;
+            self.rollback_switch(&leaving, &entering, old_slots, fs)
+                .await?;
             return Err(err.into());
         }
 
