@@ -619,5 +619,4 @@ panels:
         assert!(cfg.save_atomic(missing_parent.to_str().unwrap()).is_err());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
-
 }
