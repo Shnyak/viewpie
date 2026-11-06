@@ -30,47 +30,37 @@
 # --platform is not optional: the package depends on the target's libav and
 # libdrm, and those are not installable in a base image of another
 # architecture. scripts/build-image.sh pairs each package with its platform.
-FROM debian:trixie-slim
+FROM debian:bookworm-slim
 
 ARG DEB
 COPY ${DEB} /tmp/viewpie.deb
 
-# Raspberry Pi OS's libav, not Debian's. Debian's builds have no stateless
-# V4L2 decoder, so H.265 on a Pi 4 or Pi 5 falls back to software inside the
-# container however many device nodes it is given, which is most of the cost
-# of a wall. The Pi archive's packages carry a higher epoch (8: against 7:),
-# so apt prefers them wherever both exist without needing a pin.
-# The archive's signing key is from 2012 and self-signs with SHA1, which
-# trixie's verifier rejects by policy. The policy is relaxed for apt's
-# verifier alone, which is narrower than the alternative of turning signature
-# checking off to get these packages into a Debian base image.
-# Verify the installed package versions directly: viewpie has no --check-libav
-# command-line option, and its first positional argument is the config path.
+# Raspberry Pi OS Bookworm's libav, not Debian's. Debian's builds have no
+# stateless V4L2 decoder, so H.265 on a Pi 4 or Pi 5 falls back to software
+# inside the container. The Raspberry Pi archive provides the matching
+# Bookworm libraries with the same ABI as the host OS.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && curl -fsSL -o /usr/share/keyrings/raspberrypi.gpg.key \
         http://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ trixie main\n' \
+    && printf 'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg.key] http://archive.raspberrypi.com/debian/ bookworm main\\n' \
         > /etc/apt/sources.list.d/raspi.list \
-    && printf '[hash_algorithms]\nsha1.second_preimage_resistance = "always"\nsha1.collision_resistance = "always"\n' \
-        > /etc/apt-sequoia-policy.toml \
-    && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml apt-get update \
-    && SEQUOIA_CRYPTO_POLICY=/etc/apt-sequoia-policy.toml \
-        apt-get install -y --no-install-recommends /tmp/viewpie.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/viewpie.deb \
     && test -x /usr/bin/viewpie-native \
     && ldd /usr/bin/viewpie-native | tee /tmp/viewpie-native.ldd \
     && grep -q 'libavcodec.so' /tmp/viewpie-native.ldd \
     && grep -q 'libavformat.so' /tmp/viewpie-native.ldd \
     && grep -q 'libavutil.so' /tmp/viewpie-native.ldd \
     && ! grep -q 'not found' /tmp/viewpie-native.ldd \
-    && for pkg in libavcodec61 libavformat61 libavutil59; do \
+    && for pkg in libavcodec59 libavformat59 libavutil57; do \
         version="$(dpkg-query -W -f='${Version}' "$pkg")"; \
         case "$version" in *+rpt*) ;; *) \
-            echo "Expected Raspberry Pi OS libav package $pkg, got $version" >&2; exit 1 ;; \
+            echo "Expected Raspberry Pi OS Bookworm libav package $pkg, got $version" >&2; exit 1 ;; \
         esac; \
     done \
     && apt-get purge -y curl && apt-get autoremove -y \
-    && rm -f /tmp/viewpie.deb /etc/apt-sequoia-policy.toml \
+    && rm -f /tmp/viewpie.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # Not root. The package made this user, in the video group, and every device
