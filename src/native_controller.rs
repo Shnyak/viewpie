@@ -107,7 +107,7 @@ impl NativeRendererController {
         if let Some(mut running) = self.child.lock().await.take() {
             // Ask the renderer to drain page flips and join every decoder
             // before considering a forced termination.
-            if let Err(error) = running.stdin.write_all(b"STOP\\n").await {
+            if let Err(error) = running.stdin.write_all(b"STOP\n").await {
                 tracing::warn!("could not send graceful STOP to native renderer: {error}");
             } else if let Err(error) = running.stdin.flush().await {
                 tracing::warn!("could not flush graceful STOP to native renderer: {error}");
