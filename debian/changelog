@@ -1,3 +1,10 @@
+viewpie (0.2.11-fork-1) unstable; urgency=medium
+
+  * Restore immediate native renderer termination when switching panels,
+    avoiding long waits for FFmpeg decoder threads blocked on live streams.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 06 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.10-fork-1) unstable; urgency=medium
 
   * Add a token-protected POST /api/restart endpoint.
