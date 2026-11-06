@@ -114,11 +114,8 @@ impl NativeRendererController {
             }
             drop(running.stdin);
 
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(12),
-                running.child.wait(),
-            )
-            .await
+            match tokio::time::timeout(std::time::Duration::from_secs(12), running.child.wait())
+                .await
             {
                 Ok(Ok(status)) => {
                     tracing::info!("native renderer stopped cleanly: {status}");
