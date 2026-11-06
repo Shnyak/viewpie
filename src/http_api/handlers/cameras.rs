@@ -69,6 +69,23 @@ pub async fn update_camera(
     Path(name): Path<String>,
     Json(dto): Json<CameraDto>,
 ) -> Result<Json<OkResponse>, ApiError> {
+    if dto.name != name {
+        return Err(ApiError::bad_request(
+            "camera name in the request body must match the URL",
+        ));
+    }
+    if dto.url.is_empty()
+        || (!dto.url.starts_with("rtsp://") && !dto.url.starts_with("rtspt://"))
+    {
+        return Err(ApiError::bad_request("camera url must be an rtsp:// URL"));
+    }
+    if dto.fullscreen_url.as_deref().is_some_and(|url| {
+        !url.starts_with("rtsp://") && !url.starts_with("rtspt://")
+    }) {
+        return Err(ApiError::bad_request(
+            "fullscreen_url must be an rtsp:// URL",
+        ));
+    }
     let _config_guard = state.config_update_lock.lock().await;
     if state.feeds_pool.get(&name).await.is_none() {
         return Err(ApiError::not_found(format!("camera {name:?} not found")));
