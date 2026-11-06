@@ -12,7 +12,7 @@
 # with the tag scripts/build-image.sh produced, such as viewpie:arm64.
 services:
   viewpie:
-    image: ghcr.io/snoack/viewpie:latest
+    image: ghcr.io/shnyak/viewpie:0.2.6-fork
     restart: unless-stopped
     # Keep the lines for your board and delete the rest. The numbering depends
     # on what else the board registered first, so the README has a command
