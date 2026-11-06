@@ -41,7 +41,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
             libclang-dev clang
-      - run: cargo test --locked
+      # Panel-manager tests share process-wide singleton state. Keep the
+      # release gate consistent with ci.yml so parallel test execution cannot
+      # make the result nondeterministic.
+      - name: Run unit tests serially
+        run: cargo test --locked -- --test-threads=1
 
   deb:
     needs: test
@@ -158,7 +162,7 @@ jobs:
         id: arm64
       - name: Join them under one tag
         run: |
-          printf '%s\n' '${{ steps.meta.outputs.tags }}' | while read -r tag; do
+          printf '%s\\n' '${{ steps.meta.outputs.tags }}' | while read -r tag; do
             [ -n "$tag" ] || continue
             docker buildx imagetools create -t "$tag" \
               "ghcr.io/shnyak/viewpie@${{ steps.armhf.outputs.digest }}" \
