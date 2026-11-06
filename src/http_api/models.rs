@@ -133,6 +133,8 @@ impl SettingsPatch {
 /// `GET /api/status` response — full runtime snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusResponse {
+    /// Version of the Viewpie package used to build this running binary.
+    pub software_version: &'static str,
     pub paused: bool,
     pub pause_off_screen: bool,
     pub screen_off: bool,
@@ -244,5 +246,30 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(with_id.id.as_deref(), Some("outside"));
+    }
+
+    #[test]
+    fn status_response_includes_build_package_version() {
+        let status = StatusResponse {
+            software_version: env!("CARGO_PKG_VERSION"),
+            paused: false,
+            pause_off_screen: true,
+            screen_off: false,
+            active_panel: "main".into(),
+            active_panel_name: "Main".into(),
+            fullscreen_camera: None,
+            cameras: vec![],
+            layout: String::new(),
+            spacing: 2,
+            uptime_seconds: 1,
+            cpu_temp_c: None,
+            cpu_load_percent: None,
+            load_average_1m: None,
+            restart_available: false,
+            active_streams: 0,
+            panels_count: 1,
+        };
+        let json = serde_json::to_value(status).unwrap();
+        assert_eq!(json["software_version"], env!("CARGO_PKG_VERSION"));
     }
 }
