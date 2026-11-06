@@ -33,15 +33,20 @@ pub async fn put_settings(
     State(state): State<AppState>,
     Json(patch): Json<SettingsPatch>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    // Compute candidate under the read lock, upgrade to write.
-    let candidate = {
-        let cur = state.settings.read().await;
-        patch.merge(&cur)
-    };
+    let _config_guard = state.config_update_lock.lock().await;
+    let old_config = state.config.read().await.clone();
+    let mut candidate_config = old_config.clone();
+    let candidate = patch.merge(&candidate_config.display);
     candidate
         .validate()
         .map_err(|e| ApiError::InvalidSettings(e.to_string()))?;
 
+    candidate_config.display = candidate.clone();
+    // display.rotation_interval is authoritative after an API edit. Clear
+    // the legacy defaults override so it cannot undo this value on restart.
+    candidate_config.defaults.rotation_interval = None;
+    candidate_config.validate()?;
+    state.persist_config(&candidate_config)?;
     let old = {
         let mut s = state.settings.write().await;
         std::mem::replace(&mut *s, candidate.clone())
@@ -56,7 +61,13 @@ pub async fn put_settings(
             "settings changed — recompositing"
         );
         if !crate::http_api::state::is_paused_now().await {
-            state.manager.recomposite().await?;
+            if let Err(error) = state.manager.recomposite().await {
+                *state.settings.write().await = old.clone();
+                state.persist_config(&old_config).map_err(|rollback| {
+                    ApiError::Internal(format!("settings apply failed ({error}) and config rollback failed: {rollback}"))
+                })?;
+                return Err(error.into());
+            }
         }
     }
     if old.pause_off_screen != candidate.pause_off_screen {
@@ -71,6 +82,7 @@ pub async fn put_settings(
         info!("timer settings updated — effective for upcoming ticks");
     }
 
+    state.publish_config(candidate_config).await;
     let _ = state
         .command_tx
         .send(WallCommand::UpdateSettings(candidate))
