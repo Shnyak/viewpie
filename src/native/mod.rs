@@ -2931,6 +2931,14 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_interrupts_decoder_backoff_independently_of_pause_state() {
+        let source = Source::new("camera");
+        let shutdown = AtomicBool::new(true);
+        assert!(source.wanted.load(Ordering::Relaxed));
+        assert!(!nap(&source, Duration::from_secs(30), &shutdown));
+    }
+
+    #[test]
     fn backoff_doubles_up_to_a_ceiling() {
         let mut b = Backoff::new();
         let mut waits = Vec::new();
