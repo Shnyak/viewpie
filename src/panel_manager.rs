@@ -159,6 +159,11 @@ impl PanelManager {
             .ok_or_else(|| PanelError::NotFound(id.to_string()))?;
         let active = self.active_id().await == id;
         let old_slots = self.slot_feed.read().await.clone();
+        let old_feeds: HashSet<String> = old_panel.feed_names().into_iter().collect();
+        let new_feeds: HashSet<String> = panel.feed_names().into_iter().collect();
+        if active {
+            self.pool.apply_switch(&old_feeds, &new_feeds).await?;
+        }
 
         self.panels.write().await.insert(id.to_string(), panel.clone());
         if active {
@@ -175,12 +180,18 @@ impl PanelManager {
                 Err(error) => {
                     self.panels.write().await.insert(id.to_string(), old_panel);
                     *self.slot_feed.write().await = old_slots;
+                    if active {
+                        self.pool.apply_switch(&new_feeds, &old_feeds).await?;
+                    }
                     return Err(error);
                 }
             };
             if let Err(error) = self.backend.commit(&frame).await {
                 self.panels.write().await.insert(id.to_string(), old_panel);
                 *self.slot_feed.write().await = old_slots;
+                if active {
+                    self.pool.apply_switch(&new_feeds, &old_feeds).await?;
+                }
                 return Err(error.into());
             }
             info!(panel = id, "updated active panel in place");
