@@ -4,7 +4,7 @@
 #
 #   docker run -d --restart unless-stopped \
 #       --device /dev/dri --device /dev/video10 \
-#       -v /etc/viewpie:/etc/viewpie:ro viewpie
+#       -v /etc/viewpie:/etc/viewpie viewpie
 #
 # Device nodes and nothing else: the screen, and the decoder for each codec
 # the board has a block for. The numbers differ per board, and compose.yaml
