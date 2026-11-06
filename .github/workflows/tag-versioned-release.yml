@@ -1,5 +1,5 @@
 name: Tag versioned release
-# Re-run after lowercase GHCR image reference fix
+# Create a version tag from the package metadata on main.
 
 on:
   push:
@@ -26,15 +26,17 @@ jobs:
         run: |
           cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           changelog_version=$(sed -n '1s/^viewpie (\(.*\)) unstable;.*/\1/p' debian/changelog)
-          if [ "$cargo_version" != "0.2.5-fork" ] || [ "$changelog_version" != "0.2.5-fork-1" ]; then
+          expected_changelog="$cargo_version-1"
+          if [ "$changelog_version" != "$expected_changelog" ]; then
             echo "Unexpected release versions: Cargo=$cargo_version changelog=$changelog_version" >&2
             exit 1
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/v0.2.5-fork"; then
+          tag="v$cargo_version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag"; then
             echo "Tag already exists"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a v0.2.5-fork -m "Viewpie v0.2.5-fork"
-          git push origin refs/tags/v0.2.5-fork
+          git tag -a "$tag" -m "Viewpie $tag"
+          git push origin "refs/tags/$tag"
