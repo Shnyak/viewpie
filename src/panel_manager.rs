@@ -215,7 +215,7 @@ impl PanelManager {
             let fallback = if was_active {
                 let mut keys: Vec<&String> = panels.keys().filter(|key| key.as_str() != id).collect();
                 keys.sort();
-                keys.first().map(|key| (*key).clone())
+                keys.first().map(|key| key.as_str().to_owned())
             } else {
                 None
             };
