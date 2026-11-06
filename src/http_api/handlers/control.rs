@@ -112,6 +112,7 @@ pub async fn fullscreen(
 
 /// `POST /api/reload` — re-read the YAML config and apply without restart.
 pub async fn reload(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
+    let _config_guard = state.config_update_lock.lock().await;
     let path = state.config_path.as_str().to_string();
     let cfg = load_config_async(&path)
         .await
@@ -156,6 +157,7 @@ pub async fn reload(State(state): State<AppState>) -> Result<Json<OkResponse>, A
         .manager
         .reload_from(cfg.panels.clone(), Some(cfg.initial_panel()))
         .await?;
+    state.publish_config(cfg).await;
     info!(path, "configuration reloaded");
     let _ = state.command_tx.send(WallCommand::ReloadConfig).await;
     Ok(Json(OkResponse::ok()))
