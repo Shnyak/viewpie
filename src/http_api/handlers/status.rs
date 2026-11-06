@@ -43,6 +43,7 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
     .unwrap_or((None, None, None));
 
     Ok(Json(StatusResponse {
+        software_version: env!("CARGO_PKG_VERSION"),
         paused,
         pause_off_screen: settings.pause_off_screen,
         screen_off: !screen_on,
