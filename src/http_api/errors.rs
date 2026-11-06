@@ -15,6 +15,10 @@ pub enum ApiError {
     BadRequest(String),
     #[error("resource not found: {0}")]
     NotFound(String),
+    #[error("unauthorized")]
+    Unauthorized,
+    #[error("service unavailable: {0}")]
+    Unavailable(String),
     #[error("conflict: {0}")]
     Conflict(String),
     #[error("camera is not part of the active panel")]
@@ -63,6 +67,8 @@ impl IntoResponse for ApiError {
         let (status, message) = match &self {
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m.clone()),
+            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "invalid restart token".into()),
+            ApiError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             ApiError::CameraNotInActivePanel => {
                 (StatusCode::UNPROCESSABLE_ENTITY, self.to_string())
