@@ -35,6 +35,11 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
+# Grant only the kernel capability needed for the reboot(2) syscall.
+# This avoids sudo and works without disabling NoNewPrivileges.
+CapabilityBoundingSet=CAP_SYS_BOOT
+AmbientCapabilities=CAP_SYS_BOOT
+EnvironmentFile=-/etc/viewpie/restart.env
 ReadWritePaths=/etc/viewpie
 DeviceAllow=char-drm rw
 DeviceAllow=char-video4linux rw
