@@ -73,6 +73,7 @@ pub async fn update_camera(
     if state.feeds_pool.get(&name).await.is_none() {
         return Err(ApiError::not_found(format!("camera {name:?} not found")));
     }
+    let users = state.manager.panels_using_camera(&name).await;
     let old_config = state.config.read().await.clone();
     let mut candidate = old_config.clone();
     candidate.feeds.insert(name.clone(), dto.to_feed_config());
@@ -89,6 +90,10 @@ pub async fn update_camera(
         return Err(error.into());
     }
     state.publish_config(candidate).await;
+    if !users.is_empty() {
+        let active = state.manager.active_id().await;
+        let _ = state.command_tx.send(crate::http_api::state::WallCommand::SwitchPanel(active)).await;
+    }
     // If fullscreen was active for this camera, restart main stream too.
     if crate::http_api::state::current_fullscreen()
         .await
