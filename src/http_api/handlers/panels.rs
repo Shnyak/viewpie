@@ -78,12 +78,25 @@ pub async fn create_panel(
     if id.is_empty() {
         return Err(ApiError::bad_request("cannot derive panel id"));
     }
+    let _config_guard = state.config_update_lock.lock().await;
     let mut dto = panel;
     dto.id = None;
-    state
-        .manager
-        .add_panel(id.clone(), dto.into_config())
-        .await?;
+    let panel_config = dto.into_config();
+    let old_config = state.config.read().await.clone();
+    let mut candidate = old_config.clone();
+    if candidate.panels.contains_key(&id) {
+        return Err(ApiError::conflict(format!("panel {id:?} already exists")));
+    }
+    candidate.panels.insert(id.clone(), panel_config.clone());
+    candidate.validate()?;
+    state.persist_config(&candidate)?;
+    if let Err(error) = state.manager.add_panel(id.clone(), panel_config).await {
+        state.persist_config(&old_config).map_err(|rollback| {
+            ApiError::Internal(format!("panel creation failed ({error}) and config rollback failed: {rollback}"))
+        })?;
+        return Err(error.into());
+    }
+    state.publish_config(candidate).await;
     let mut g = state.panels.write().await;
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
@@ -99,9 +112,29 @@ pub async fn update_panel(
     Path(id): Path<String>,
     Json(panel): Json<PanelDto>,
 ) -> Result<Json<OkResponse>, ApiError> {
+    let _config_guard = state.config_update_lock.lock().await;
     let mut dto = panel;
     dto.id = Some(id.clone());
-    state.manager.update_panel(&id, dto.into_config()).await?;
+    let new_panel = dto.into_config();
+    let old_config = state.config.read().await.clone();
+    let old_panel = old_config.panels.get(&id).cloned()
+        .ok_or_else(|| ApiError::not_found(format!("panel {id:?} not found")))?;
+    let mut candidate = old_config.clone();
+    candidate.panels.insert(id.clone(), new_panel.clone());
+    candidate.validate()?;
+    state.persist_config(&candidate)?;
+    if let Err(error) = state.manager.update_panel(&id, new_panel).await {
+        let runtime_rollback = state.manager.update_panel(&id, old_panel).await;
+        let disk_rollback = state.persist_config(&old_config);
+        if let Err(rollback) = runtime_rollback {
+            return Err(ApiError::Internal(format!("panel update failed ({error}); runtime rollback failed: {rollback}")));
+        }
+        if let Err(rollback) = disk_rollback {
+            return Err(ApiError::Internal(format!("panel update failed ({error}); config rollback failed: {rollback}")));
+        }
+        return Err(error.into());
+    }
+    state.publish_config(candidate).await;
     let mut g = state.panels.write().await;
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
@@ -114,7 +147,28 @@ pub async fn delete_panel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    state.manager.delete_panel(&id).await?;
+    let _config_guard = state.config_update_lock.lock().await;
+    let old_config = state.config.read().await.clone();
+    let removed = old_config.panels.get(&id).cloned()
+        .ok_or_else(|| ApiError::not_found(format!("panel {id:?} not found")))?;
+    let mut candidate = old_config.clone();
+    candidate.panels.remove(&id);
+    if candidate.panels.is_empty() {
+        return Err(ApiError::LastPanel);
+    }
+    if candidate.defaults.panel.as_deref() == Some(id.as_str()) {
+        candidate.defaults.panel = None;
+    }
+    candidate.validate()?;
+    state.persist_config(&candidate)?;
+    if let Err(error) = state.manager.delete_panel(&id).await {
+        state.persist_config(&old_config).map_err(|rollback| {
+            ApiError::Internal(format!("panel deletion failed ({error}) and config rollback failed: {rollback}"))
+        })?;
+        return Err(error.into());
+    }
+    state.publish_config(candidate).await;
+    let _ = removed;
     let mut g = state.panels.write().await;
     g.remove(&id);
     let active = state.manager.active_id().await;
