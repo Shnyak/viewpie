@@ -736,8 +736,12 @@ fn run(config: &Config) -> Result<(), String> {
                 break;
             };
             match line.trim() {
-                "OFF" => { let _ = input_tx.send(RendererCommand::DisplayPower(false)); }
-                "ON" => { let _ = input_tx.send(RendererCommand::DisplayPower(true)); }
+                "OFF" => {
+                    let _ = input_tx.send(RendererCommand::DisplayPower(false));
+                }
+                "ON" => {
+                    let _ = input_tx.send(RendererCommand::DisplayPower(true));
+                }
                 "STOP" => {
                     input_shutdown.store(true, Ordering::Release);
                     let _ = input_tx.send(RendererCommand::Stop);
@@ -895,10 +899,7 @@ enum RendererCommand {
 /// container the wall is process 1, which the kernel does not let SIGTERM
 /// kill while it has the default disposition, so `docker stop` waited out
 /// its ten seconds and sent SIGKILL instead. A blocked signal is kept for sigwait rather than ignored.
-fn stop_cleanly(
-    commands: std::sync::mpsc::Sender<RendererCommand>,
-    shutdown: Arc<AtomicBool>,
-) {
+fn stop_cleanly(commands: std::sync::mpsc::Sender<RendererCommand>, shutdown: Arc<AtomicBool>) {
     let set = unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
@@ -1828,9 +1829,7 @@ fn feed_thread(
         // Not connected at all while nobody is watching: an open session
         // costs the camera a stream and the network its bitrate, decoded or
         // not.
-        while !source.wanted.load(Ordering::Relaxed)
-            && !shutdown.load(Ordering::Acquire)
-        {
+        while !source.wanted.load(Ordering::Relaxed) && !shutdown.load(Ordering::Acquire) {
             std::thread::sleep(PAUSE_POLL);
         }
         if shutdown.load(Ordering::Acquire) {
