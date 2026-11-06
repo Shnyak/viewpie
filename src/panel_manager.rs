@@ -604,11 +604,37 @@ defaults:
     }
 
     #[tokio::test]
-    async fn delete_active_panel_falls_back() {
-        let (mgr, _pool, _be) = make_mgr().await;
+    async fn delete_active_panel_falls_back_and_releases_old_feeds() {
+        let (mgr, pool, _be) = make_mgr().await;
         mgr.delete_panel("p1").await.unwrap();
         assert_eq!(mgr.active_id().await, "p2");
         assert_eq!(mgr.count().await, 1);
+        assert_eq!(pool.ref_count("a").await, Some(0));
+        assert_eq!(pool.ref_count("b").await, Some(1));
+        assert_eq!(pool.ref_count("c").await, Some(1));
+    }
+
+    #[tokio::test]
+    async fn updating_active_panel_adjusts_decoder_references() {
+        let (mgr, pool, _be) = make_mgr().await;
+        let replacement = PanelConfig {
+            name: "P1 updated".into(),
+            spacing: None,
+            layout: "c".into(),
+            viewports: vec![ViewportConfig {
+                slot: "c".into(),
+                feeds: vec!["c".into()],
+            }],
+        };
+
+        mgr.update_panel("p1", replacement).await.unwrap();
+
+        assert_eq!(pool.ref_count("a").await, Some(0));
+        assert_eq!(pool.ref_count("b").await, Some(0));
+        assert_eq!(pool.ref_count("c").await, Some(1));
+        assert!(!pool.is_running("a").await);
+        assert!(!pool.is_running("b").await);
+        assert!(pool.is_running("c").await);
     }
 
     #[tokio::test]
