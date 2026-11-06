@@ -12,6 +12,12 @@ configure)
                 --home /nonexistent --shell /usr/sbin/nologin \
                 --gecos "Viewpie camera wall" "$VP_USER"
     fi
+    # The service unit uses viewpie as its primary group too. Repair an
+    # account created by an older/manual install that lacks that group.
+    if ! getent group "$VP_USER" >/dev/null; then
+        addgroup --system "$VP_USER"
+    fi
+    usermod --gid "$VP_USER" "$VP_USER"
     for grp in video render; do
         if getent group "$grp" >/dev/null; then
             adduser "$VP_USER" "$grp" >/dev/null 2>&1 || true
@@ -24,9 +30,34 @@ configure)
     # a shell can complete the file's name for them. Set again on every
     # upgrade, which is what opens up the 0750 earlier versions made it.
     install -d -m 0755 -o "$VP_USER" -g "$VP_USER" /etc/viewpie
-    if [ ! -e /etc/viewpie/viewpie.yaml ]; then
+    VP_CONFIG=/etc/viewpie/viewpie.yaml
+    # Never follow a config symlink when repairing ownership: doing so
+    # could change permissions on a file outside /etc/viewpie.
+    if [ -L "$VP_CONFIG" ]; then
+        echo "viewpie: refusing symlink configuration at $VP_CONFIG" >&2
+        exit 1
+    fi
+    if [ ! -e "$VP_CONFIG" ]; then
         install -m 0600 -o "$VP_USER" -g "$VP_USER" \
-            /usr/share/viewpie/viewpie.yaml /etc/viewpie/viewpie.yaml
+            /usr/share/viewpie/viewpie.yaml "$VP_CONFIG"
+    else
+        # API writes use an atomic rename by the viewpie service account.
+        # Repair older root-owned or overly-permissive configs only after a
+        # root-only backup, and never replace the user's YAML contents.
+        VP_CONFIG_META=$(stat -c '%U:%G:%a' "$VP_CONFIG")
+        if [ "$VP_CONFIG_META" != "$VP_USER:$VP_USER:600" ]; then
+            VP_BACKUP_DIR=/var/backups/viewpie
+            install -d -m 0700 -o root -g root "$VP_BACKUP_DIR"
+            VP_BACKUP="$VP_BACKUP_DIR/viewpie.yaml.$(date +%Y%m%d%H%M%S)"
+            VP_SUFFIX=0
+            while [ -e "$VP_BACKUP" ]; do
+                VP_SUFFIX=$((VP_SUFFIX + 1))
+                VP_BACKUP="$VP_BACKUP_DIR/viewpie.yaml.$(date +%Y%m%d%H%M%S).$VP_SUFFIX"
+            done
+            cp -a -- "$VP_CONFIG" "$VP_BACKUP"
+            chown "$VP_USER:$VP_USER" "$VP_CONFIG"
+            chmod 0600 "$VP_CONFIG"
+        fi
     fi
 
     # debhelper enables and starts the service below, as Debian expects of a

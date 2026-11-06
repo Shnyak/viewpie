@@ -144,61 +144,94 @@ impl PanelManager {
     }
 
     /// Update (or replace) a panel. If it is active, re-commit the layout.
+    /// Runtime state is restored if the display rejects the new frame.
     pub async fn update_panel(&self, id: &str, panel: PanelConfig) -> Result<(), PanelError> {
         let known: Vec<String> = self.pool.list().await.into_iter().map(|f| f.name).collect();
         panel
             .validate(&known)
             .map_err(|e| PanelError::Validation(e.to_string()))?;
-        {
-            let g = self.panels.read().await;
-            if !g.contains_key(id) {
-                return Err(PanelError::NotFound(id.to_string()));
-            }
+        let old_panel = self
+            .panels
+            .read()
+            .await
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PanelError::NotFound(id.to_string()))?;
+        let active = self.active_id().await == id;
+        let old_slots = self.slot_feed.read().await.clone();
+        let old_feeds: HashSet<String> = old_panel.feed_names().into_iter().collect();
+        let new_feeds: HashSet<String> = panel.feed_names().into_iter().collect();
+        if active {
+            self.pool.apply_switch(&old_feeds, &new_feeds).await?;
         }
-        self.panels.write().await.insert(id.to_string(), panel);
-        if self.active_id().await == id {
-            // Active panel changed → recompute refs & commit immediately.
-            let current_feeds = self.feeds_of(id).await;
+
+        self.panels
+            .write()
+            .await
+            .insert(id.to_string(), panel.clone());
+        if active {
             let mut slot_map = HashMap::new();
-            for vp in &self.get_panel(id).await.unwrap().viewports {
-                if let Some(f) = vp.feeds.first() {
-                    slot_map.insert(vp.slot.clone(), f.clone());
+            for vp in &panel.viewports {
+                if let Some(feed) = vp.feeds.first() {
+                    slot_map.insert(vp.slot.clone(), feed.clone());
                 }
             }
             *self.slot_feed.write().await = slot_map;
-            self.backend
-                .commit(&self.build_grid_frame(id).await?)
-                .await?;
+
+            let frame = match self.build_grid_frame(id).await {
+                Ok(frame) => frame,
+                Err(error) => {
+                    self.panels.write().await.insert(id.to_string(), old_panel);
+                    *self.slot_feed.write().await = old_slots;
+                    if active {
+                        self.pool.apply_switch(&new_feeds, &old_feeds).await?;
+                    }
+                    return Err(error);
+                }
+            };
+            if let Err(error) = self.backend.commit(&frame).await {
+                self.panels.write().await.insert(id.to_string(), old_panel);
+                *self.slot_feed.write().await = old_slots;
+                if active {
+                    self.pool.apply_switch(&new_feeds, &old_feeds).await?;
+                }
+                return Err(error.into());
+            }
             info!(panel = id, "updated active panel in place");
-            let _ = current_feeds;
         }
         Ok(())
     }
 
-    /// Delete a panel. Refuses to remove the last one or the active one's
-    /// only alternative — when deleting the active panel, another panel is
-    /// activated first.
+    /// Delete a panel. Refuses to remove the last one. When deleting the
+    /// active panel, switch away while its feed set is still available so
+    /// reference counts are released correctly.
     pub async fn delete_panel(&self, id: &str) -> Result<(), PanelError> {
-        let mut g = self.panels.write().await;
-        if !g.contains_key(id) {
-            return Err(PanelError::NotFound(id.to_string()));
-        }
-        if g.len() == 1 {
-            return Err(PanelError::LastPanel);
-        }
-        let was_active = *self.active.read().await == *id;
-        g.remove(id);
-        drop(g);
-        if was_active {
-            let fallback = {
-                let g = self.panels.read().await;
-                let mut keys: Vec<&String> = g.keys().collect();
+        let (was_active, fallback) = {
+            let panels = self.panels.read().await;
+            if !panels.contains_key(id) {
+                return Err(PanelError::NotFound(id.to_string()));
+            }
+            if panels.len() == 1 {
+                return Err(PanelError::LastPanel);
+            }
+            let was_active = self.active_id().await == id;
+            let fallback = if was_active {
+                let mut keys: Vec<&String> =
+                    panels.keys().filter(|key| key.as_str() != id).collect();
                 keys.sort();
-                keys[0].clone()
+                keys.first().map(|key| key.as_str().to_owned())
+            } else {
+                None
             };
+            (was_active, fallback)
+        };
+
+        if was_active {
+            let fallback = fallback.expect("an alternative panel was checked above");
             info!(new_active = %fallback, "active panel deleted — activating fallback");
             self.switch_to(&fallback).await?;
         }
+        self.panels.write().await.remove(id);
         Ok(())
     }
 
@@ -224,6 +257,23 @@ impl PanelManager {
         Ok(wall::grid_frame(panel, spacing, &bg, &slots))
     }
 
+    /// Undo a failed panel switch, including feed references and fullscreen.
+    async fn rollback_switch(
+        &self,
+        leaving: &HashSet<String>,
+        entering: &HashSet<String>,
+        old_slots: HashMap<String, String>,
+        fullscreen: Option<String>,
+    ) -> Result<(), PanelError> {
+        self.pool.apply_switch(entering, leaving).await?;
+        *self.slot_feed.write().await = old_slots;
+        if let Some(camera) = fullscreen {
+            let _ = crate::http_api::state::set_fullscreen_state(Some(camera.clone())).await;
+            self.pool.start_fullscreen(&camera).await?;
+        }
+        Ok(())
+    }
+
     /// Switch the active panel gracefully using reference counting.
     pub async fn switch_to(&self, new_id: &str) -> Result<(), PanelError> {
         let old_displayed = self.displayed.read().await.clone();
@@ -243,13 +293,15 @@ impl PanelManager {
         };
         let entering = self.feeds_of(new_id).await;
 
+        let old_slots = self.slot_feed.read().await.clone();
+
         // 1..5 — reference-counted diff on the shared decoder pool.
         self.pool.apply_switch(&leaving, &entering).await?;
 
         // 6 — reset fullscreen before committing the new grid.
         let fs = crate::http_api::state::clear_fullscreen_state().await;
-        if let Some(cam) = fs {
-            self.pool.stop_fullscreen(&cam).await;
+        if let Some(cam) = fs.as_ref() {
+            self.pool.stop_fullscreen(cam).await;
         }
 
         // Recompute slot→feed map for the new panel.
@@ -265,8 +317,16 @@ impl PanelManager {
             *self.slot_feed.write().await = m;
         }
 
-        // 7 — submit the new layout to the display backend.
-        let frame = self.build_grid_frame(new_id).await?;
+        // 7 — submit the new layout to the display backend. Any failure
+        // restores the previous decoder set and fullscreen stream.
+        let frame = match self.build_grid_frame(new_id).await {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.rollback_switch(&leaving, &entering, old_slots, fs)
+                    .await?;
+                return Err(error);
+            }
+        };
         info!(
             panel = %new_id,
             resolution_width = self.resolution.width,
@@ -279,6 +339,8 @@ impl PanelManager {
         );
         if let Err(err) = self.backend.commit(&frame).await {
             warn!(panel = %new_id, error = %err, "display backend rejected panel frame");
+            self.rollback_switch(&leaving, &entering, old_slots, fs)
+                .await?;
             return Err(err.into());
         }
 
@@ -548,11 +610,37 @@ defaults:
     }
 
     #[tokio::test]
-    async fn delete_active_panel_falls_back() {
-        let (mgr, _pool, _be) = make_mgr().await;
+    async fn delete_active_panel_falls_back_and_releases_old_feeds() {
+        let (mgr, pool, _be) = make_mgr().await;
         mgr.delete_panel("p1").await.unwrap();
         assert_eq!(mgr.active_id().await, "p2");
         assert_eq!(mgr.count().await, 1);
+        assert_eq!(pool.ref_count("a").await, Some(0));
+        assert_eq!(pool.ref_count("b").await, Some(1));
+        assert_eq!(pool.ref_count("c").await, Some(1));
+    }
+
+    #[tokio::test]
+    async fn updating_active_panel_adjusts_decoder_references() {
+        let (mgr, pool, _be) = make_mgr().await;
+        let replacement = PanelConfig {
+            name: "P1 updated".into(),
+            spacing: None,
+            layout: "c".into(),
+            viewports: vec![ViewportConfig {
+                slot: "c".into(),
+                feeds: vec!["c".into()],
+            }],
+        };
+
+        mgr.update_panel("p1", replacement).await.unwrap();
+
+        assert_eq!(pool.ref_count("a").await, Some(0));
+        assert_eq!(pool.ref_count("b").await, Some(0));
+        assert_eq!(pool.ref_count("c").await, Some(1));
+        assert!(!pool.is_running("a").await);
+        assert!(!pool.is_running("b").await);
+        assert!(pool.is_running("c").await);
     }
 
     #[tokio::test]

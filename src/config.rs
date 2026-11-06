@@ -35,6 +35,10 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -311,6 +315,59 @@ impl Config {
         Self::from_yaml(&src)
     }
 
+    /// Persist this validated configuration without exposing a partially written YAML file.
+    ///
+    /// The temporary file is created beside the destination so rename is atomic
+    /// on the same filesystem. It is private because feed URLs may contain credentials.
+    pub fn save_atomic(&self, path: &str) -> Result<(), ConfigError> {
+        self.validate()?;
+        let yaml = serde_yaml::to_string(self)?;
+        let destination = Path::new(path);
+        let parent = destination
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let file_name = destination
+            .file_name()
+            .ok_or_else(|| ConfigError::Validation(format!("invalid config path: {path}")))?
+            .to_string_lossy();
+        static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let temporary: PathBuf = parent.join(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
+
+        let write_result = (|| -> std::io::Result<()> {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temporary)?;
+            file.write_all(yaml.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temporary, destination)?;
+            // Persist the directory entry as well as the file contents.
+            let dir = fs::File::open(parent)?;
+            dir.sync_all()?;
+            Ok(())
+        })();
+
+        if let Err(source) = write_result {
+            let _ = fs::remove_file(&temporary);
+            return Err(ConfigError::Io {
+                path: path.to_string(),
+                source,
+            });
+        }
+        Ok(())
+    }
+
     /// Validate cross-references between panels and feeds.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.panels.is_empty() {
@@ -522,5 +579,44 @@ panels:
         let cfg = Config::from_yaml(minimal).unwrap();
         assert_eq!(cfg.display, DisplaySettings::default());
         assert_eq!(cfg.initial_panel(), "p");
+    }
+
+    #[test]
+    fn atomic_save_round_trips_and_keeps_credentials_private() {
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        cfg.save_atomic(path.to_str().unwrap()).unwrap();
+
+        let loaded = Config::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded, cfg);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn atomic_save_rejects_invalid_config_without_replacing_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("viewpie.yaml");
+        std::fs::write(&path, "keep this file").unwrap();
+
+        let mut cfg = Config::from_yaml(SAMPLE).unwrap();
+        cfg.panels.clear();
+        assert!(cfg.save_atomic(path.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "keep this file");
+    }
+
+    #[test]
+    fn atomic_save_does_not_leave_temporary_file_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_parent = dir.path().join("missing").join("viewpie.yaml");
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        assert!(cfg.save_atomic(missing_parent.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 }

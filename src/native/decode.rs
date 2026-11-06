@@ -8,7 +8,7 @@
 use super::ffi::*;
 use std::ffi::CString;
 use std::os::raw::c_int;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -288,7 +288,7 @@ impl Decoder {
     /// buffer back to the decoder. Do it while the buffer is still being
     /// scanned out and the viewport tears or shows another feed's pixels, so a
     /// frame has to outlive the flip that replaced it.
-    pub fn next_frame(&mut self) -> Option<Frame> {
+    pub fn next_frame(&mut self, shutdown: &AtomicBool) -> Option<Frame> {
         unsafe {
             // A packet held back because the decoder's input queue was full.
             // Dropping it instead loses a frame, and on a stream with few
@@ -296,6 +296,9 @@ impl Decoder {
             let mut pending = false;
 
             loop {
+                if shutdown.load(Ordering::Acquire) {
+                    return None;
+                }
                 let frame = av_frame_alloc();
                 if frame.is_null() {
                     self.stats.errors.fetch_add(1, Ordering::Relaxed);

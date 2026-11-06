@@ -21,7 +21,7 @@
 - Встроенный HTTP REST API на axum (порт 8080) для интеграции с Home Assistant
 - Поддержка нескольких панелей (сцен) с graceful-переключением
 - Динамическое изменение `spacing` / `pause_off_screen` / `background` /
-  `rotation_interval` / `fullscreen_timeout` без перезапуска
+  `rotation_interval` / `fullscreen_timeout` с сохранением в YAML
 - Reference counting RTSP-декодеров: общие камеры не переподключаются при
   переключении панелей
 - Автостоп декодеров при выключенном мониторе (DPMS через sysfs — работает без CEC)
@@ -58,7 +58,7 @@ cargo run --release --features native-pipeline --bin viewpie-native -- /etc/view
 | Метод | Путь | Описание |
 |---|---|---|
 | GET | `/api/settings` | Текущие DisplaySettings |
-| PUT | `/api/settings` | Частичное обновление (`spacing`, `background`, `pause_off_screen`, `rotation_interval`, `fullscreen_timeout`) — применяется на лету |
+| PUT | `/api/settings` | Частичное обновление (`spacing`, `background`, `pause_off_screen`, `rotation_interval`, `fullscreen_timeout`) — сохраняется в YAML и применяется на лету |
 
 ### Панели
 
@@ -67,9 +67,9 @@ cargo run --release --features native-pipeline --bin viewpie-native -- /etc/view
 | GET | `/api/panels` | Список панелей + активная |
 | GET | `/api/panels/active` | Активная панель |
 | GET | `/api/panels/{id}` | Полная структура панели |
-| POST | `/api/panels` | Создать панель (валидация: уникальный id, квадратная сетка 3×3–8×8, существующие камеры) |
-| PUT | `/api/panels/{id}` | Обновить (активная — немедленно) |
-| DELETE | `/api/panels/{id}` | Удалить (нельзя удалить последнюю) |
+| POST | `/api/panels` | Создать панель и сохранить её в YAML (валидация: уникальный id, квадратная сетка 3×3–8×8, существующие камеры) |
+| PUT | `/api/panels/{id}` | Обновить и сохранить в YAML (активная — немедленно) |
+| DELETE | `/api/panels/{id}` | Удалить из памяти и YAML (нельзя удалить последнюю) |
 | POST | `/api/panels/{id}/activate` | Переключить панель (diff ref_count + atomic KMS commit) |
 
 ### Камеры
@@ -77,9 +77,9 @@ cargo run --release --features native-pipeline --bin viewpie-native -- /etc/view
 | Метод | Путь | Описание |
 |---|---|---|
 | GET | `/api/cameras` | Список камер с состоянием декодеров/ref_count |
-| POST | `/api/cameras` | Добавить (ref_count = 0, декодер стартует при первом использовании) |
-| PUT | `/api/cameras/{name}` | Обновить URL (при ref_count > 0 — перезапуск декодера) |
-| DELETE | `/api/cameras/{name}` | Удалить; `409 Conflict`, если камера используется панелью |
+| POST | `/api/cameras` | Добавить и сохранить в YAML (ref_count = 0, декодер стартует при первом использовании) |
+| PUT | `/api/cameras/{name}` | Обновить URL и сохранить в YAML (при ref_count > 0 — перезапуск декодера) |
+| DELETE | `/api/cameras/{name}` | Удалить из памяти и YAML; `409 Conflict`, если камера используется панелью |
 | POST | `/api/cameras/{name}/test` | RTSP OPTIONS-проверка доступности |
 
 ### Статус
@@ -140,7 +140,7 @@ systemctl enable --now viewpie
 ```bash
 docker build -t viewpie .     # Dockerfile (runtime)
 docker run --network host --device /dev/dri/card0 \
-    -v /etc/viewpie:/etc/viewpie:ro viewpie
+    -v /etc/viewpie:/etc/viewpie viewpie
 ```
 
 Готовый `compose.yaml` включён в репозиторий.

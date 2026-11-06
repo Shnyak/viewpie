@@ -717,8 +717,43 @@ impl Wall {
 }
 
 fn run(config: &Config) -> Result<(), String> {
-    // Before any thread starts, so that every one inherits the mask.
-    stop_cleanly();
+    // Block termination signals before spawning any worker, then turn them
+    // into the same orderly STOP command used by the parent API process.
+    let (command_tx, command_rx) = std::sync::mpsc::channel();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    stop_cleanly(command_tx.clone(), shutdown.clone());
+
+    // Start reading control input before display discovery: a renderer waiting
+    // for an unplugged screen must still be stoppable without SIGKILL.
+    let input_tx = command_tx.clone();
+    let input_shutdown = shutdown.clone();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else {
+                input_shutdown.store(true, Ordering::Release);
+                let _ = input_tx.send(RendererCommand::Stop);
+                break;
+            };
+            match line.trim() {
+                "OFF" => {
+                    let _ = input_tx.send(RendererCommand::DisplayPower(false));
+                }
+                "ON" => {
+                    let _ = input_tx.send(RendererCommand::DisplayPower(true));
+                }
+                "STOP" => {
+                    input_shutdown.store(true, Ordering::Release);
+                    let _ = input_tx.send(RendererCommand::Stop);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+    if shutdown.load(Ordering::Acquire) {
+        return Ok(());
+    }
 
     // Only for blocks the board has: a Pi 3 has no HEVC block for any libav
     // to reach, and a Pi 5 no H.264 one. Said rather than refused, since the
@@ -737,14 +772,6 @@ fn run(config: &Config) -> Result<(), String> {
     // the render node, which has no connectors and can never scan out.
     let path = present::detect_card();
     let card = Arc::new(Card::open(&path)?);
-    // The card's number, which is how a CEC adapter says which card its
-    // connector is on.
-    let card_no: u32 = path
-        .rsplit(|c: char| !c.is_ascii_digit())
-        .next()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(0);
-
     // The overlay planes are one pool shared by every display, not a set per
     // crtc: on a vc4 each plane's possible_crtcs names all of them, so asking
     // per display would hand the same planes out twice and the two walls
@@ -775,7 +802,7 @@ fn run(config: &Config) -> Result<(), String> {
     let mut walls = Vec::new();
     for display in &config.displays {
         let taken: Vec<crtc::Handle> = walls.iter().map(|w: &Wall| w.out.crtc).collect();
-        let mut wall = build(
+        let mut wall = match build(
             &card,
             &sources,
             &fullscreen,
@@ -783,7 +810,16 @@ fn run(config: &Config) -> Result<(), String> {
             &taken,
             &mut spare,
             &mut claimed,
-        )?;
+            &shutdown,
+        ) {
+            Ok(wall) => wall,
+            Err(_) if shutdown.load(Ordering::Acquire) => {
+                drop(walls);
+                cec::release();
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         // HDMI-CEC is owned by the parent API process in this fork. Opening a
         // second CEC listener here would make both processes consume the same
         // remote events and issue duplicate commands.
@@ -800,6 +836,7 @@ fn run(config: &Config) -> Result<(), String> {
     // Started once every wall is built, since until then nothing could show
     // what they decode: a second display that is still off would otherwise
     // have the first display's cameras decoding for nobody while it waited.
+    let mut feed_threads = Vec::new();
     for (i, (feed, source)) in config.feeds.iter().zip(&sources).enumerate() {
         // How many displays show this feed decides how many of its frames
         // can be held at once, and so how many buffers a software-decoded
@@ -817,7 +854,10 @@ fn run(config: &Config) -> Result<(), String> {
             let url = url.clone();
             let card = card.clone();
             let source = source.clone();
-            std::thread::spawn(move || feed_thread(&url, card, source, displays));
+            let stop = shutdown.clone();
+            feed_threads.push(std::thread::spawn(move || {
+                feed_thread(&url, card, source, displays, stop)
+            }));
         }
     }
 
@@ -827,30 +867,28 @@ fn run(config: &Config) -> Result<(), String> {
         .into_iter()
         .chain(fullscreen.into_iter().flatten())
         .collect();
-    // Read display power commands from the parent API process.
-    let (display_tx, display_rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let stdin = std::io::stdin();
-        for line in stdin.lock().lines() {
-            let Ok(line) = line else {
-                break;
-            };
-            match line.trim() {
-                "OFF" => {
-                    let _ = display_tx.send(false);
-                }
-                "ON" => {
-                    let _ = display_tx.send(true);
-                }
-                _ => {}
-            }
-        }
-    });
-
-    run_walls(&card, &sources, &mut walls, display_rx)
+    let result = run_walls(
+        &card,
+        &sources,
+        &mut walls,
+        command_rx,
+        shutdown,
+        feed_threads,
+    );
+    // The renderer has detached every plane and joined every decoder before
+    // releasing the CEC ownership held by the API process.
+    drop(walls);
+    drop(sources);
+    cec::release();
+    result
 }
 
-/// Exit when told to stop, handing back any CEC address first.
+enum RendererCommand {
+    DisplayPower(bool),
+    Stop,
+}
+
+/// Exit when told to stop, handing the request back to the render loop.
 ///
 /// Waited for on a thread of its own rather than handled: a handler can do
 /// almost nothing safely, and releasing an address is an ioctl that waits on
@@ -861,7 +899,7 @@ fn run(config: &Config) -> Result<(), String> {
 /// container the wall is process 1, which the kernel does not let SIGTERM
 /// kill while it has the default disposition, so `docker stop` waited out
 /// its ten seconds and sent SIGKILL instead. A blocked signal is kept for sigwait rather than ignored.
-fn stop_cleanly() {
+fn stop_cleanly(commands: std::sync::mpsc::Sender<RendererCommand>, shutdown: Arc<AtomicBool>) {
     let set = unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
@@ -872,9 +910,10 @@ fn stop_cleanly() {
     };
     std::thread::spawn(move || {
         let mut signal = 0;
-        unsafe { libc::sigwait(&set, &mut signal) };
-        cec::release();
-        std::process::exit(0);
+        if unsafe { libc::sigwait(&set, &mut signal) } == 0 {
+            shutdown.store(true, Ordering::Release);
+            let _ = commands.send(RendererCommand::Stop);
+        }
     });
 }
 
@@ -921,6 +960,7 @@ fn build(
     taken: &[crtc::Handle],
     spare: &mut Vec<plane::Handle>,
     claimed: &mut Vec<plane::Handle>,
+    shutdown: &AtomicBool,
 ) -> Result<Wall, String> {
     // A screen that is off, or unplugged, or still waking up is a wall that
     // is not ready rather than a wall that is misconfigured, so wait for it
@@ -931,6 +971,9 @@ fn build(
     // fills the journal without telling anyone anything new.
     let mut said = false;
     let out = loop {
+        if shutdown.load(Ordering::Acquire) {
+            return Err("shutdown requested while waiting for a display".into());
+        }
         match first_connected(card, display.connector.as_deref(), taken) {
             Ok(out) => break out,
             Err(e) => {
@@ -938,7 +981,13 @@ fn build(
                     eprintln!("{e}; waiting for one");
                     said = true;
                 }
-                std::thread::sleep(DISPLAY_POLL);
+                let until = Instant::now() + DISPLAY_POLL;
+                while Instant::now() < until {
+                    if shutdown.load(Ordering::Acquire) {
+                        return Err("shutdown requested while waiting for a display".into());
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
             }
         }
     };
@@ -1154,7 +1203,9 @@ fn run_walls(
     card: &Arc<Card>,
     sources: &[Arc<Source>],
     walls: &mut [Wall],
-    display_commands: std::sync::mpsc::Receiver<bool>,
+    commands: std::sync::mpsc::Receiver<RendererCommand>,
+    shutdown: Arc<AtomicBool>,
+    feed_threads: Vec<std::thread::JoinHandle<()>>,
 ) -> Result<(), String> {
     // What every rotation is timed from. One for the whole process, so
     // viewports on different displays switch together too.
@@ -1173,12 +1224,22 @@ fn run_walls(
     let mut commit_gripe = Throttle::new();
     let mut display_requested_on = true;
     let mut display_on = true;
+    let mut stopping = false;
 
-    loop {
+    while !stopping {
         // Keep the latest requested state. OFF waits for outstanding flips
         // before changing DPMS, but prevents any further commits immediately.
-        while let Ok(on) = display_commands.try_recv() {
-            display_requested_on = on;
+        while let Ok(command) = commands.try_recv() {
+            match command {
+                RendererCommand::DisplayPower(on) => display_requested_on = on,
+                RendererCommand::Stop => {
+                    stopping = true;
+                    break;
+                }
+            }
+        }
+        if stopping {
+            break;
         }
 
         if !display_requested_on && display_on && walls.iter().all(|wall| wall.in_flight.is_none())
@@ -1316,6 +1377,63 @@ fn run_walls(
             report(sources, walls, &mut marks, clock);
         }
     }
+
+    // Stop admitting frames first. Each decoder observes this independently
+    // of the pause/wanted state, which may become true again during runtime.
+    shutdown.store(true, Ordering::Release);
+    for source in sources {
+        source.wanted.store(false, Ordering::Release);
+    }
+
+    // Drain every accepted page flip, then detach all planes and wait for
+    // those detach commits to flip before releasing any frame or decoder.
+    loop {
+        let mut all_clear = true;
+        for wall in walls.iter_mut() {
+            if wall.in_flight.is_none() && wall.on_screen.iter().any(Option::is_some) {
+                let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
+                let ready = let_go(&wall.viewports, showing, 0);
+                let request = ready.iter().map(|(_, viewport, _)| (*viewport, None));
+                match card.commit(wall.out.crtc, wall.crtc_active, request) {
+                    Ok(()) => {
+                        wall.in_flight = Some(InFlight {
+                            at: Instant::now(),
+                            overdue_said: false,
+                            named: ready.into_iter().map(|(i, _, shown)| (i, shown)).collect(),
+                        });
+                    }
+                    Err(error) => commit_gripe.say(format_args!(
+                        "shutdown detach on {}: {error}",
+                        wall.out.name
+                    )),
+                }
+            }
+            if wall.in_flight.is_some() || wall.on_screen.iter().any(Option::is_some) {
+                all_clear = false;
+            }
+        }
+        if all_clear {
+            break;
+        }
+        match card.next_flips(Duration::from_millis(100)) {
+            Ok(flipped) => {
+                for wall in walls.iter_mut().filter(|w| flipped.contains(&w.out.crtc)) {
+                    wall.flipped();
+                }
+            }
+            Err(error) => commit_gripe.say(format_args!("shutdown waiting for page flip: {error}")),
+        }
+    }
+
+    for handle in feed_threads {
+        if handle.join().is_err() {
+            eprintln!("a decoder thread panicked during shutdown");
+        }
+    }
+    for source in sources {
+        source.shown.lock().unwrap().take();
+    }
+    Ok(())
 }
 
 /// How long a commit may go without its flip before that is worth saying.
@@ -1687,7 +1805,13 @@ impl Throttle {
 ///
 /// `displays` is how many displays show the feed, which bounds how many of
 /// its frames can be held at once (see Scanout).
-fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize) {
+fn feed_thread(
+    url: &str,
+    card: Arc<Card>,
+    source: Arc<Source>,
+    displays: usize,
+    shutdown: Arc<AtomicBool>,
+) {
     let mut backoff = Backoff::new();
     let name = &source.name;
     // Nothing is refused for its size if the card will not say what fits:
@@ -1699,15 +1823,24 @@ fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize)
     let mut too_large = false;
 
     loop {
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         // Not connected at all while nobody is watching: an open session
         // costs the camera a stream and the network its bitrate, decoded or
         // not.
-        while !source.wanted.load(Ordering::Relaxed) {
+        while !source.wanted.load(Ordering::Relaxed) && !shutdown.load(Ordering::Acquire) {
             std::thread::sleep(PAUSE_POLL);
         }
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         let started = Instant::now();
-        let result = feed_session(url, &card, &source, displays, limit);
+        let result = feed_session(url, &card, &source, displays, limit, &shutdown);
         let paused = !source.wanted.load(Ordering::Relaxed);
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         match result {
             // Ended for the pause, which the display has said.
             Ok(()) if paused => {}
@@ -1755,6 +1888,9 @@ fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize)
         source.shown.lock().unwrap().take();
         // Back as soon as someone is watching again, which is no reflection
         // on the camera.
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
         if paused {
             backoff.reset();
             too_large = false;
@@ -1769,20 +1905,26 @@ fn feed_thread(url: &str, card: Arc<Card>, source: Arc<Source>, displays: usize)
         }
         // Cut short when nobody wants the feed any more, like a pause: the
         // next try waits for someone to, and then goes at once.
-        if !nap(&source, backoff.next()) {
+        if !nap(&source, backoff.next(), &shutdown) {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
             backoff.reset();
             too_large = false;
             continue;
         }
         backoff.advance();
     }
+    // The last published frame is no longer needed once the render loop has
+    // drained all page flips; the source is cleared again by the owner too.
+    source.shown.lock().unwrap().take();
 }
 
-/// Sleep for `d`, or until nobody wants the feed any more, and say whether
-/// anyone still does.
-fn nap(source: &Source, d: Duration) -> bool {
+/// Sleep for `d`, or until nobody wants the feed any more, shutdown is
+/// requested, and say whether the feed is still wanted.
+fn nap(source: &Source, d: Duration, shutdown: &AtomicBool) -> bool {
     let until = Instant::now() + d;
-    while source.wanted.load(Ordering::Relaxed) {
+    while source.wanted.load(Ordering::Relaxed) && !shutdown.load(Ordering::Acquire) {
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return true;
@@ -1844,6 +1986,7 @@ fn feed_session(
     source: &Source,
     displays: usize,
     limit: (u32, u32),
+    shutdown: &AtomicBool,
 ) -> Result<(), Refused> {
     let name = &source.name;
     let mut dec = Decoder::open(url, source.stats.clone(), limit, frames_held(displays))?;
@@ -1872,7 +2015,13 @@ fn feed_session(
     // a session runs, since a different codec means a different stream.
     let codec = dec.codec();
 
-    while let Some(frame) = dec.next_frame() {
+    while !shutdown.load(Ordering::Acquire) {
+        let Some(frame) = dec.next_frame(shutdown) else {
+            break;
+        };
+        if shutdown.load(Ordering::Acquire) {
+            return Ok(());
+        }
         if !source.wanted.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -2778,6 +2927,14 @@ mod tests {
         feeds.step(1, Duration::from_millis(5000));
         assert_eq!(feeds.active(Duration::from_millis(5000)), 0);
         assert_eq!(feeds.since, Duration::ZERO);
+    }
+
+    #[test]
+    fn shutdown_interrupts_decoder_backoff_independently_of_pause_state() {
+        let source = Source::new("camera");
+        let shutdown = AtomicBool::new(true);
+        assert!(source.wanted.load(Ordering::Relaxed));
+        assert!(!nap(&source, Duration::from_secs(30), &shutdown));
     }
 
     #[test]

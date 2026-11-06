@@ -1,3 +1,16 @@
+viewpie (0.2.6-fork-1) unstable; urgency=medium
+
+  * Persist camera, panel and display-setting API changes with validated atomic
+    YAML writes, serialized updates and rollback on runtime errors.
+  * Repair the dedicated service account and private configuration permissions
+    on package upgrades without overwriting the user's configuration.
+  * Stop native decoder threads gracefully, drain KMS page flips and wait for
+    renderer cleanup before starting a replacement process.
+  * Keep active-panel feed references consistent when panels are edited or
+    removed.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 06 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.5-fork-1) unstable; urgency=medium
 
   * Restore the native FFmpeg/libav decoder and DRM/KMS renderer in the fork.
