@@ -92,7 +92,9 @@ pub async fn create_panel(
     state.persist_config(&candidate)?;
     if let Err(error) = state.manager.add_panel(id.clone(), panel_config).await {
         state.persist_config(&old_config).map_err(|rollback| {
-            ApiError::Internal(format!("panel creation failed ({error}) and config rollback failed: {rollback}"))
+            ApiError::Internal(format!(
+                "panel creation failed ({error}) and config rollback failed: {rollback}"
+            ))
         })?;
         return Err(error.into());
     }
@@ -119,7 +121,10 @@ pub async fn update_panel(
     dto.id = Some(id.clone());
     let new_panel = dto.into_config();
     let old_config = state.config.read().await.clone();
-    let old_panel = old_config.panels.get(&id).cloned()
+    let old_panel = old_config
+        .panels
+        .get(&id)
+        .cloned()
         .ok_or_else(|| ApiError::not_found(format!("panel {id:?} not found")))?;
     let mut candidate = old_config.clone();
     candidate.panels.insert(id.clone(), new_panel.clone());
@@ -129,10 +134,14 @@ pub async fn update_panel(
         let runtime_rollback = state.manager.update_panel(&id, old_panel).await;
         let disk_rollback = state.persist_config(&old_config);
         if let Err(rollback) = runtime_rollback {
-            return Err(ApiError::Internal(format!("panel update failed ({error}); runtime rollback failed: {rollback}")));
+            return Err(ApiError::Internal(format!(
+                "panel update failed ({error}); runtime rollback failed: {rollback}"
+            )));
         }
         if let Err(rollback) = disk_rollback {
-            return Err(ApiError::Internal(format!("panel update failed ({error}); config rollback failed: {rollback}")));
+            return Err(ApiError::Internal(format!(
+                "panel update failed ({error}); config rollback failed: {rollback}"
+            )));
         }
         return Err(error.into());
     }
@@ -143,7 +152,10 @@ pub async fn update_panel(
     }
     drop(g);
     if updates_active {
-        let _ = state.command_tx.send(WallCommand::SwitchPanel(active_panel)).await;
+        let _ = state
+            .command_tx
+            .send(WallCommand::SwitchPanel(active_panel))
+            .await;
     }
     Ok(Json(OkResponse::ok()))
 }
@@ -155,7 +167,10 @@ pub async fn delete_panel(
 ) -> Result<Json<OkResponse>, ApiError> {
     let _config_guard = state.config_update_lock.lock().await;
     let old_config = state.config.read().await.clone();
-    let removed = old_config.panels.get(&id).cloned()
+    let removed = old_config
+        .panels
+        .get(&id)
+        .cloned()
         .ok_or_else(|| ApiError::not_found(format!("panel {id:?} not found")))?;
     let mut candidate = old_config.clone();
     candidate.panels.remove(&id);
@@ -169,7 +184,9 @@ pub async fn delete_panel(
     state.persist_config(&candidate)?;
     if let Err(error) = state.manager.delete_panel(&id).await {
         state.persist_config(&old_config).map_err(|rollback| {
-            ApiError::Internal(format!("panel deletion failed ({error}) and config rollback failed: {rollback}"))
+            ApiError::Internal(format!(
+                "panel deletion failed ({error}) and config rollback failed: {rollback}"
+            ))
         })?;
         return Err(error.into());
     }
