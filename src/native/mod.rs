@@ -768,14 +768,6 @@ fn run(config: &Config) -> Result<(), String> {
     // the render node, which has no connectors and can never scan out.
     let path = present::detect_card();
     let card = Arc::new(Card::open(&path)?);
-    // The card's number, which is how a CEC adapter says which card its
-    // connector is on.
-    let card_no: u32 = path
-        .rsplit(|c: char| !c.is_ascii_digit())
-        .next()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(0);
-
     // The overlay planes are one pool shared by every display, not a set per
     // crtc: on a vc4 each plane's possible_crtcs names all of them, so asking
     // per display would hand the same planes out twice and the two walls
