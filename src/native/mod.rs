@@ -720,7 +720,36 @@ fn run(config: &Config) -> Result<(), String> {
     // Block termination signals before spawning any worker, then turn them
     // into the same orderly STOP command used by the parent API process.
     let (command_tx, command_rx) = std::sync::mpsc::channel();
-    stop_cleanly(command_tx.clone());
+    let shutdown = Arc::new(AtomicBool::new(false));
+    stop_cleanly(command_tx.clone(), shutdown.clone());
+
+    // Start reading control input before display discovery: a renderer waiting
+    // for an unplugged screen must still be stoppable without SIGKILL.
+    let input_tx = command_tx.clone();
+    let input_shutdown = shutdown.clone();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else {
+                input_shutdown.store(true, Ordering::Release);
+                let _ = input_tx.send(RendererCommand::Stop);
+                break;
+            };
+            match line.trim() {
+                "OFF" => { let _ = input_tx.send(RendererCommand::DisplayPower(false)); }
+                "ON" => { let _ = input_tx.send(RendererCommand::DisplayPower(true)); }
+                "STOP" => {
+                    input_shutdown.store(true, Ordering::Release);
+                    let _ = input_tx.send(RendererCommand::Stop);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+    if shutdown.load(Ordering::Acquire) {
+        return Ok(());
+    }
 
     // Only for blocks the board has: a Pi 3 has no HEVC block for any libav
     // to reach, and a Pi 5 no H.264 one. Said rather than refused, since the
@@ -785,7 +814,16 @@ fn run(config: &Config) -> Result<(), String> {
             &taken,
             &mut spare,
             &mut claimed,
-        )?;
+            &shutdown,
+        ) {
+            Ok(wall) => wall,
+            Err(_) if shutdown.load(Ordering::Acquire) => {
+                drop(walls);
+                cec::release();
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         // HDMI-CEC is owned by the parent API process in this fork. Opening a
         // second CEC listener here would make both processes consume the same
         // remote events and issue duplicate commands.
@@ -802,7 +840,6 @@ fn run(config: &Config) -> Result<(), String> {
     // Started once every wall is built, since until then nothing could show
     // what they decode: a second display that is still off would otherwise
     // have the first display's cameras decoding for nobody while it waited.
-    let shutdown = Arc::new(AtomicBool::new(false));
     let mut feed_threads = Vec::new();
     for (i, (feed, source)) in config.feeds.iter().zip(&sources).enumerate() {
         // How many displays show this feed decides how many of its frames
@@ -834,28 +871,6 @@ fn run(config: &Config) -> Result<(), String> {
         .into_iter()
         .chain(fullscreen.into_iter().flatten())
         .collect();
-    // Read display power and STOP commands from the parent API process.
-    // EOF is also a stop request: an orphaned renderer must not keep decoding.
-    let input_tx = command_tx.clone();
-    std::thread::spawn(move || {
-        let stdin = std::io::stdin();
-        for line in stdin.lock().lines() {
-            let Ok(line) = line else {
-                let _ = input_tx.send(RendererCommand::Stop);
-                break;
-            };
-            match line.trim() {
-                "OFF" => { let _ = input_tx.send(RendererCommand::DisplayPower(false)); }
-                "ON" => { let _ = input_tx.send(RendererCommand::DisplayPower(true)); }
-                "STOP" => {
-                    let _ = input_tx.send(RendererCommand::Stop);
-                    break;
-                }
-                _ => {}
-            }
-        }
-    });
-
     let result = run_walls(
         &card,
         &sources,
@@ -888,7 +903,10 @@ enum RendererCommand {
 /// container the wall is process 1, which the kernel does not let SIGTERM
 /// kill while it has the default disposition, so `docker stop` waited out
 /// its ten seconds and sent SIGKILL instead. A blocked signal is kept for sigwait rather than ignored.
-fn stop_cleanly(commands: std::sync::mpsc::Sender<RendererCommand>) {
+fn stop_cleanly(
+    commands: std::sync::mpsc::Sender<RendererCommand>,
+    shutdown: Arc<AtomicBool>,
+) {
     let set = unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
@@ -900,6 +918,7 @@ fn stop_cleanly(commands: std::sync::mpsc::Sender<RendererCommand>) {
     std::thread::spawn(move || {
         let mut signal = 0;
         if unsafe { libc::sigwait(&set, &mut signal) } == 0 {
+            shutdown.store(true, Ordering::Release);
             let _ = commands.send(RendererCommand::Stop);
         }
     });
@@ -948,6 +967,7 @@ fn build(
     taken: &[crtc::Handle],
     spare: &mut Vec<plane::Handle>,
     claimed: &mut Vec<plane::Handle>,
+    shutdown: &AtomicBool,
 ) -> Result<Wall, String> {
     // A screen that is off, or unplugged, or still waking up is a wall that
     // is not ready rather than a wall that is misconfigured, so wait for it
@@ -958,6 +978,9 @@ fn build(
     // fills the journal without telling anyone anything new.
     let mut said = false;
     let out = loop {
+        if shutdown.load(Ordering::Acquire) {
+            return Err("shutdown requested while waiting for a display".into());
+        }
         match first_connected(card, display.connector.as_deref(), taken) {
             Ok(out) => break out,
             Err(e) => {
@@ -965,7 +988,13 @@ fn build(
                     eprintln!("{e}; waiting for one");
                     said = true;
                 }
-                std::thread::sleep(DISPLAY_POLL);
+                let until = Instant::now() + DISPLAY_POLL;
+                while Instant::now() < until {
+                    if shutdown.load(Ordering::Acquire) {
+                        return Err("shutdown requested while waiting for a display".into());
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
             }
         }
     };
