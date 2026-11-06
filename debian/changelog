@@ -1,3 +1,13 @@
+viewpie (0.2.10-fork-1) unstable; urgency=medium
+
+  * Add a token-protected POST /api/restart endpoint.
+  * Grant the unprivileged Viewpie service only CAP_SYS_BOOT through systemd
+    ambient capabilities; no sudoers rule or broad root command is required.
+  * Report restart availability only when both the restart token and kernel
+    capability are present.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 06 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.9-fork-1) unstable; urgency=medium
 
   * Build ARMHF and ARM64 packages against Debian 12 / Raspberry Pi OS
