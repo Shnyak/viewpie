@@ -144,61 +144,79 @@ impl PanelManager {
     }
 
     /// Update (or replace) a panel. If it is active, re-commit the layout.
+    /// Runtime state is restored if the display rejects the new frame.
     pub async fn update_panel(&self, id: &str, panel: PanelConfig) -> Result<(), PanelError> {
         let known: Vec<String> = self.pool.list().await.into_iter().map(|f| f.name).collect();
         panel
             .validate(&known)
             .map_err(|e| PanelError::Validation(e.to_string()))?;
-        {
-            let g = self.panels.read().await;
-            if !g.contains_key(id) {
-                return Err(PanelError::NotFound(id.to_string()));
-            }
-        }
-        self.panels.write().await.insert(id.to_string(), panel);
-        if self.active_id().await == id {
-            // Active panel changed → recompute refs & commit immediately.
-            let current_feeds = self.feeds_of(id).await;
+        let old_panel = self
+            .panels
+            .read()
+            .await
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PanelError::NotFound(id.to_string()))?;
+        let active = self.active_id().await == id;
+        let old_slots = self.slot_feed.read().await.clone();
+
+        self.panels.write().await.insert(id.to_string(), panel.clone());
+        if active {
             let mut slot_map = HashMap::new();
-            for vp in &self.get_panel(id).await.unwrap().viewports {
-                if let Some(f) = vp.feeds.first() {
-                    slot_map.insert(vp.slot.clone(), f.clone());
+            for vp in &panel.viewports {
+                if let Some(feed) = vp.feeds.first() {
+                    slot_map.insert(vp.slot.clone(), feed.clone());
                 }
             }
             *self.slot_feed.write().await = slot_map;
-            self.backend
-                .commit(&self.build_grid_frame(id).await?)
-                .await?;
+
+            let frame = match self.build_grid_frame(id).await {
+                Ok(frame) => frame,
+                Err(error) => {
+                    self.panels.write().await.insert(id.to_string(), old_panel);
+                    *self.slot_feed.write().await = old_slots;
+                    return Err(error);
+                }
+            };
+            if let Err(error) = self.backend.commit(&frame).await {
+                self.panels.write().await.insert(id.to_string(), old_panel);
+                *self.slot_feed.write().await = old_slots;
+                return Err(error.into());
+            }
             info!(panel = id, "updated active panel in place");
-            let _ = current_feeds;
         }
         Ok(())
     }
 
-    /// Delete a panel. Refuses to remove the last one or the active one's
-    /// only alternative — when deleting the active panel, another panel is
-    /// activated first.
+    /// Delete a panel. Refuses to remove the last one. When deleting the
+    /// active panel, switch away while its feed set is still available so
+    /// reference counts are released correctly.
     pub async fn delete_panel(&self, id: &str) -> Result<(), PanelError> {
-        let mut g = self.panels.write().await;
-        if !g.contains_key(id) {
-            return Err(PanelError::NotFound(id.to_string()));
-        }
-        if g.len() == 1 {
-            return Err(PanelError::LastPanel);
-        }
-        let was_active = *self.active.read().await == *id;
-        g.remove(id);
-        drop(g);
-        if was_active {
-            let fallback = {
-                let g = self.panels.read().await;
-                let mut keys: Vec<&String> = g.keys().collect();
+        let (was_active, fallback) = {
+            let panels = self.panels.read().await;
+            if !panels.contains_key(id) {
+                return Err(PanelError::NotFound(id.to_string()));
+            }
+            if panels.len() == 1 {
+                return Err(PanelError::LastPanel);
+            }
+            let was_active = self.active_id().await == id;
+            let fallback = if was_active {
+                let mut keys: Vec<&String> = panels.keys().filter(|key| key.as_str() != id).collect();
                 keys.sort();
-                keys[0].clone()
+                keys.first().map(|key| (*key).clone())
+            } else {
+                None
             };
+            (was_active, fallback)
+        };
+
+        if was_active {
+            let fallback = fallback.expect("an alternative panel was checked above");
             info!(new_active = %fallback, "active panel deleted — activating fallback");
             self.switch_to(&fallback).await?;
         }
+        self.panels.write().await.remove(id);
         Ok(())
     }
 
