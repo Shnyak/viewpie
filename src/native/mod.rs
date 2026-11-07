@@ -422,6 +422,7 @@ struct Wall {
     fullscreen_sources: Vec<Option<Arc<Source>>>,
     current_panel: Option<String>,
     pending_panel: Option<String>,
+    pending_since: Option<Instant>,
     pending_fullscreen: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
     feeds: Vec<Feeds>,
@@ -1005,6 +1006,9 @@ fn claim_planes(
 
 /// How long to wait between looks for a display that is not there yet.
 const DISPLAY_POLL: Duration = Duration::from_secs(5);
+/// Give the incoming panel's first camera in each viewport time to publish.
+/// A dead camera must not hold the old panel forever.
+const PANEL_PREWARM_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Bring up one display, and describe the viewports it will show.
 fn build(
@@ -1168,6 +1172,7 @@ fn build(
         fullscreen_sources: fullscreen.to_vec(),
         current_panel: active_panel,
         pending_panel: None,
+        pending_since: None,
         pending_fullscreen: None,
         feeds,
         commits: 0,
@@ -1309,12 +1314,29 @@ fn run_walls(
                         if wall.panel_scenes.contains_key(&panel) {
                             wall.pending_fullscreen = None;
                             if wall.current_panel.as_deref() == Some(panel.as_str()) {
-                                wall.pending_panel = None;
+                                let had_pending = wall.pending_panel.take().is_some();
+                                wall.pending_since = None;
                                 let was = wall.mode;
                                 wall.show(Mode::Grid);
-                                panel_changed |= was != wall.mode;
+                                panel_changed |= had_pending || was != wall.mode;
                             } else {
-                                wall.pending_panel = Some(panel);
+                                wall.pending_panel = Some(panel.clone());
+                                wall.pending_since = Some(Instant::now());
+                                // Prewarm only the first feed of each viewport:
+                                // no more than the number of visible panes, even
+                                // when a panel rotates through many cameras.
+                                let scene = &wall.panel_scenes[&panel];
+                                let first_feeds: Vec<usize> = scene
+                                    .viewports
+                                    .iter()
+                                    .filter_map(|viewport| viewport.feeds.first().copied())
+                                    .collect();
+                                let feed_count = wall.fullscreen_sources.len();
+                                for (index, source) in sources.iter().take(feed_count).enumerate() {
+                                    let current = wall.watched && wall.shows(source);
+                                    let incoming = wall.watched && first_feeds.contains(&index);
+                                    source.wanted.store(current || incoming, Ordering::Relaxed);
+                                }
                             }
                         } else {
                             eprintln!("unknown panel requested: {panel}");
@@ -1400,11 +1422,43 @@ fn run_walls(
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let mut ready = Vec::new();
                 if let Some(panel) = wall.pending_panel.clone() {
-                    // Keep the old scene's framebuffer references until its
-                    // detach commit has flipped. Only then may viewport indices
-                    // and their backing vectors be replaced.
-                    ready = let_go(&wall.viewports, showing, 0);
-                    if ready.is_empty() {
+                    let scene = wall.panel_scenes[&panel].clone();
+                    let first_feeds_ready = scene
+                        .viewports
+                        .iter()
+                        .filter_map(|viewport| viewport.feeds.first().copied())
+                        .all(|feed| sources.get(feed).is_some_and(|source| source.frame().0.is_some()));
+                    let timed_out = wall
+                        .pending_since
+                        .is_some_and(|since| since.elapsed() >= PANEL_PREWARM_TIMEOUT);
+                    if first_feeds_ready || timed_out || !wall.watched {
+                        // Keep the old scene's framebuffer references until its
+                        // detach commit has flipped. Only then may viewport indices
+                        // and their backing vectors be replaced.
+                        ready = let_go(&wall.viewports, showing, 0);
+                    } else {
+                        // Keep presenting the old scene while the incoming panel
+                        // warms up, so the user does not stare at a blank screen.
+                        ready = match wall.mode {
+                            Mode::Grid => collect_ready(
+                                &mut wall.feeds,
+                                &wall.viewports,
+                                showing,
+                                clock,
+                            ),
+                            Mode::Fullscreen(at) => collect_fullscreen(
+                                &wall.viewports,
+                                showing,
+                                &wall.cameras[at],
+                                wall.size,
+                                &mut wall.fullscreen_tap,
+                                clock,
+                            ),
+                        };
+                    }
+                    if ready.is_empty()
+                        && (first_feeds_ready || timed_out || !wall.watched)
+                    {
                         drop(showing);
                         let scene = wall.panel_scenes[&panel].clone();
                         let feed_count = wall.fullscreen_sources.len();
@@ -1422,6 +1476,7 @@ fn run_walls(
                         wall.on_screen = vec![None; wall.viewports.len()];
                         wall.current_panel = Some(panel.clone());
                         wall.pending_panel = None;
+                        wall.pending_since = None;
                         wall.mode = Mode::Grid;
                         if let Some(camera) = wall.pending_fullscreen.take() {
                             if let Some(at) = wall
