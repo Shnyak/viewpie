@@ -235,11 +235,10 @@ impl Config {
             }
         }
         for (i, feed) in config.feeds.iter().enumerate() {
-            // A feed no viewport names is a camera connected to and decoded
-            // for nobody, or more likely a name misspelled on one side or the
-            // other. Either way the wall would come up without it and say
-            // nothing.
-            if config.displays_showing(i) == 0 {
+            // A panels-based adapter may pass the complete camera registry,
+            // including cameras not assigned to a panel yet. Legacy static
+            // display configs still reject an unreferenced feed as a typo.
+            if config.panels.is_empty() && config.displays_showing(i) == 0 {
                 return Err(format!("no viewport shows the feed '{}'", feed.name));
             }
         }
@@ -621,6 +620,29 @@ panels:
         assert!(Config::parse(&not_in_panel)
             .unwrap_err()
             .contains("active_fullscreen camera 'a' is not used"));
+    }
+
+    #[test]
+    fn panels_config_may_keep_cameras_not_assigned_to_a_panel_yet() {
+        let config = Config::parse(
+            r#"
+feeds:
+  a: rtsp://a
+  spare: rtsp://spare
+active_panel: yard
+panels:
+  yard:
+    layout: |
+      a .
+      . .
+    viewports:
+      - {slot: a, feeds: [a]}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.feeds.len(), 2);
+        assert_eq!(config.displays_showing(1), 0);
     }
 
     #[test]
