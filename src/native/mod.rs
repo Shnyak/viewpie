@@ -814,6 +814,7 @@ fn run(config: &Config) -> Result<(), String> {
         .collect();
 
     let mut walls = Vec::new();
+    let empty_panel_scenes: HashMap<String, config::Display> = HashMap::new();
     for (display_index, display) in config.displays.iter().enumerate() {
         let taken: Vec<crtc::Handle> = walls.iter().map(|w: &Wall| w.out.crtc).collect();
         let mut wall = match build(
@@ -821,7 +822,7 @@ fn run(config: &Config) -> Result<(), String> {
             &sources,
             &fullscreen,
             display,
-            if display_index == 0 { &config.panels } else { &HashMap::new() },
+            if display_index == 0 { &config.panels } else { &empty_panel_scenes },
             if display_index == 0 { config.active_panel.clone() } else { None },
             &taken,
             &mut spare,
