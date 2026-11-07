@@ -1110,7 +1110,7 @@ fn build(
     })?;
 
     let (viewports, feeds, cameras) =
-        scene_parts(&card, sources, display, &planes, (mode_w, mode_h))?;
+        scene_parts(&card, sources, fullscreen, display, &planes, (mode_w, mode_h))?;
     let crtc_active = card.crtc_active(out.crtc)?;
 
     Ok(Wall {
@@ -1148,6 +1148,7 @@ fn build(
 fn scene_parts(
     card: &Card,
     sources: &[Arc<Source>],
+    fullscreen: &[Option<Arc<Source>>],
     display: &config::Display,
     planes: &[plane::Handle],
     (mode_w, mode_h): (u32, u32),
@@ -1210,7 +1211,7 @@ fn scene_parts(
         .into_iter()
         .map(|f| Camera {
             feed: sources[f].clone(),
-            fullscreen: None,
+            fullscreen: fullscreen[f].clone(),
         })
         .collect();
     Ok((viewports, feeds, cameras))
