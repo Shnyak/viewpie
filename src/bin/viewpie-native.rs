@@ -12,6 +12,7 @@ struct NativeConfig<'a> {
     background: &'a str,
     pause_off_screen: bool,
     feeds: &'a HashMap<String, FeedConfig>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     displays: Vec<NativeDisplay<'a>>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     panels: HashMap<String, NativeDisplay<'a>>,
