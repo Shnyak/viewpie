@@ -32,6 +32,7 @@ use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle};
 use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
 };
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -414,6 +415,12 @@ struct Wall {
     out: Output,
     /// Geometry, one per viewport, in the order the display lists them.
     viewports: Vec<Viewport>,
+    /// All overlay planes reserved for this output, sized for its largest panel.
+    plane_pool: Vec<plane::Handle>,
+    /// Alternative panel layouts sharing the same decoded Source objects.
+    panel_scenes: HashMap<String, config::Display>,
+    current_panel: Option<String>,
+    pending_panel: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
     feeds: Vec<Feeds>,
     /// The crtc's ACTIVE property, looked up once so every commit can name
@@ -747,6 +754,12 @@ fn run(config: &Config) -> Result<(), String> {
                     let _ = input_tx.send(RendererCommand::Stop);
                     break;
                 }
+                command if command.starts_with("PANEL ") => {
+                    let panel = command[6..].trim();
+                    if !panel.is_empty() {
+                        let _ = input_tx.send(RendererCommand::SelectPanel(panel.to_string()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -800,13 +813,15 @@ fn run(config: &Config) -> Result<(), String> {
         .collect();
 
     let mut walls = Vec::new();
-    for display in &config.displays {
+    for (display_index, display) in config.displays.iter().enumerate() {
         let taken: Vec<crtc::Handle> = walls.iter().map(|w: &Wall| w.out.crtc).collect();
         let mut wall = match build(
             &card,
             &sources,
             &fullscreen,
             display,
+            if display_index == 0 { &config.panels } else { &HashMap::new() },
+            if display_index == 0 { config.active_panel.clone() } else { None },
             &taken,
             &mut spare,
             &mut claimed,
@@ -885,6 +900,7 @@ fn run(config: &Config) -> Result<(), String> {
 
 enum RendererCommand {
     DisplayPower(bool),
+    SelectPanel(String),
     Stop,
 }
 
@@ -1232,6 +1248,15 @@ fn run_walls(
         while let Ok(command) = commands.try_recv() {
             match command {
                 RendererCommand::DisplayPower(on) => display_requested_on = on,
+                RendererCommand::SelectPanel(panel) => {
+                    if let Some(wall) = walls.first_mut() {
+                        if wall.panel_scenes.contains_key(&panel) {
+                            wall.pending_panel = Some(panel);
+                        } else {
+                            eprintln!("unknown panel requested: {panel}");
+                        }
+                    }
+                }
                 RendererCommand::Stop => {
                     stopping = true;
                     break;
