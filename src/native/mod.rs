@@ -829,8 +829,16 @@ fn run(config: &Config) -> Result<(), String> {
             &sources,
             &fullscreen,
             display,
-            if display_index == 0 { &config.panels } else { &empty_panel_scenes },
-            if display_index == 0 { config.active_panel.clone() } else { None },
+            if display_index == 0 {
+                &config.panels
+            } else {
+                &empty_panel_scenes
+            },
+            if display_index == 0 {
+                config.active_panel.clone()
+            } else {
+                None
+            },
             &taken,
             &mut spare,
             &mut claimed,
@@ -850,7 +858,9 @@ fn run(config: &Config) -> Result<(), String> {
                     .cameras
                     .iter()
                     .position(|entry| entry.feed.name == *camera)
-                    .ok_or_else(|| format!("fullscreen camera '{camera}' is not in the active panel"))?;
+                    .ok_or_else(|| {
+                        format!("fullscreen camera '{camera}' is not in the active panel")
+                    })?;
                 wall.mode = Mode::Fullscreen(at);
             }
         }
@@ -1121,24 +1131,25 @@ fn build(
         .chain(std::iter::once(display.viewports.len()))
         .max()
         .unwrap_or(display.viewports.len());
-    let planes = claim_planes(
-        &card.overlay_planes(out.crtc)?,
-        plane_count,
-        spare,
-        claimed,
-    )
-    .ok_or_else(|| {
-        format!(
-            "{} viewports on {} but only {} overlay planes left; \
-             the wall's displays share one pool of them",
-            display.viewports.len(),
-            out.name,
-            spare.len()
-        )
-    })?;
+    let planes = claim_planes(&card.overlay_planes(out.crtc)?, plane_count, spare, claimed)
+        .ok_or_else(|| {
+            format!(
+                "{} viewports on {} but only {} overlay planes left; \
+                 the wall's displays share one pool of them",
+                display.viewports.len(),
+                out.name,
+                spare.len()
+            )
+        })?;
 
-    let (viewports, feeds, cameras) =
-        scene_parts(&card, sources, fullscreen, display, &planes, (mode_w, mode_h))?;
+    let (viewports, feeds, cameras) = scene_parts(
+        &card,
+        sources,
+        fullscreen,
+        display,
+        &planes,
+        (mode_w, mode_h),
+    )?;
     let crtc_active = card.crtc_active(out.crtc)?;
 
     Ok(Wall {
