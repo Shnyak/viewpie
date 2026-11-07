@@ -552,6 +552,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn panels_only_config_keeps_all_scenes_and_starts_selected_panel() {
+        let config = Config::parse(
+            r#"
+feeds:
+  a: rtsp://a
+  b: rtsp://b
+  c: rtsp://c
+active_panel: yard
+panels:
+  yard:
+    layout: |
+      a b
+      . .
+    viewports:
+      - {slot: a, feeds: [a]}
+      - {slot: b, feeds: [b]}
+  all:
+    layout: |
+      a b
+      c .
+    viewports:
+      - {slot: a, feeds: [a]}
+      - {slot: b, feeds: [b]}
+      - {slot: c, feeds: [c]}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.panels.len(), 2);
+        assert_eq!(config.active_panel.as_deref(), Some("yard"));
+        assert_eq!(config.displays.len(), 1);
+        assert_eq!(config.displays[0].viewports.len(), 2);
+        assert_eq!(config.displays_showing(2), 1);
+    }
+
+    #[test]
     fn a_wall_needs_only_its_feeds() {
         let c = Config::parse(
             r#"
