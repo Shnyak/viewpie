@@ -236,12 +236,18 @@ struct Feeds {
 
 impl Feeds {
     fn new(taps: Vec<Tap>, interval: Duration) -> Self {
+        Self::new_at(taps, interval, Duration::ZERO)
+    }
+
+    /// Start a freshly selected panel's rotations from its first feed now,
+    /// rather than letting the renderer's uptime choose an arbitrary camera.
+    fn new_at(taps: Vec<Tap>, interval: Duration, since: Duration) -> Self {
         Feeds {
             credited: vec![Duration::ZERO; taps.len()],
             taps,
             last_active: None,
             interval: millis(interval),
-            since: Duration::ZERO,
+            since,
             first: 0,
         }
     }
@@ -1154,6 +1160,7 @@ fn build(
         display,
         &planes,
         (mode_w, mode_h),
+        Duration::ZERO,
     )?;
     let crtc_active = card.crtc_active(out.crtc)?;
 
@@ -1199,6 +1206,7 @@ fn scene_parts(
     display: &config::Display,
     planes: &[plane::Handle],
     (mode_w, mode_h): (u32, u32),
+    clock: Duration,
 ) -> Result<(Vec<Viewport>, Vec<Feeds>, Vec<Camera>), String> {
     if display.viewports.len() > planes.len() {
         return Err(format!(
@@ -1238,13 +1246,14 @@ fn scene_parts(
             src_w: 0,
             src_h: 0,
         });
-        feeds.push(Feeds::new(
+        feeds.push(Feeds::new_at(
             viewport
                 .feeds
                 .iter()
                 .map(|&f| Tap::new(sources[f].clone()))
                 .collect(),
             viewport.rotation_interval,
+            clock,
         ));
     }
 
@@ -1489,6 +1498,7 @@ fn run_walls(
                             &scene,
                             &wall.plane_pool,
                             wall.size,
+                            clock,
                         )?;
                         wall.viewports = viewports;
                         wall.feeds = feeds;
