@@ -41,6 +41,13 @@ impl NativeRendererController {
         }
         let _operation = self.operation.lock().await;
         let mut guard = self.child.lock().await;
+        let exited = match guard.as_mut() {
+            Some(running) => running.child.try_wait()?.is_some(),
+            None => false,
+        };
+        if exited {
+            guard.take();
+        }
         if let Some(running) = guard.as_mut() {
             let command = format!("PANEL {panel}\n");
             running.stdin.write_all(command.as_bytes()).await?;
@@ -48,8 +55,8 @@ impl NativeRendererController {
             return Ok(());
         }
         drop(guard);
-        // The first selection during service startup has no child yet; start
-        // it once with the requested scene. Subsequent selections are IPC.
+        // The first selection during service startup, or recovery after an
+        // unexpected renderer exit, starts the child. Later changes are IPC.
         self.start_inner(panel, None).await
     }
 
