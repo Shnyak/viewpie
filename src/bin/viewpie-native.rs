@@ -13,6 +13,10 @@ struct NativeConfig<'a> {
     pause_off_screen: bool,
     feeds: &'a HashMap<String, FeedConfig>,
     displays: Vec<NativeDisplay<'a>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    panels: HashMap<String, NativeDisplay<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_panel: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -34,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get(&panel_id)
         .ok_or_else(|| format!("panel {panel_id:?} does not exist"))?;
 
-    let (layout, viewports, feeds, spacing) =
+    let (feeds, displays, panels, active_panel) =
         if let Ok(camera) = std::env::var("VIEWPIE_FULLSCREEN") {
             let source = cfg
                 .feeds
@@ -55,19 +59,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 slot: "fullscreen".to_string(),
                 feeds: vec![camera],
             }];
-            ("fullscreen".to_string(), viewports, feeds, 0)
+            let display = NativeDisplay {
+                spacing: 0,
+                background: &cfg.display.background,
+                layout: "fullscreen".to_string(),
+                viewports: &viewports,
+            };
+            // Keep the fullscreen viewport alive until serialization below.
+            let native_cfg = NativeConfig {
+                rotation_interval: cfg.display.rotation_interval,
+                spacing: cfg.display.spacing,
+                background: &cfg.display.background,
+                pause_off_screen: cfg.display.pause_off_screen,
+                feeds: &feeds,
+                displays: vec![display],
+                panels: HashMap::new(),
+                active_panel: None,
+            };
+            let yaml = serde_yaml::to_string(&native_cfg)?;
+            eprintln!(
+                "viewpie-native: panel={panel_id:?}, fullscreen={:?}; starting upstream FFmpeg/DRM renderer",
+                std::env::var("VIEWPIE_FULLSCREEN").ok()
+            );
+            viewpie::native::run_from_config_text(&yaml).map_err(anyhow::Error::msg)?;
+            return Ok(());
         } else {
-            let feeds: HashMap<String, FeedConfig> = panel
-                .feed_names()
-                .into_iter()
-                .filter_map(|name| cfg.feeds.get(&name).cloned().map(|feed| (name, feed)))
-                .collect();
-            (
-                square_layout(panel)?,
-                panel.viewports.clone(),
-                feeds,
-                panel.spacing.unwrap_or(cfg.display.spacing),
-            )
+            let feeds = cfg.feeds.clone();
+            let panels = cfg
+                .panels
+                .iter()
+                .map(|(id, panel)| {
+                    Ok((
+                        id.clone(),
+                        NativeDisplay {
+                            spacing: panel.spacing.unwrap_or(cfg.display.spacing),
+                            background: &cfg.display.background,
+                            layout: square_layout(panel)?,
+                            viewports: &panel.viewports,
+                        },
+                    ))
+                })
+                .collect::<Result<HashMap<_, _>, Box<dyn std::error::Error>>>()?;
+            (feeds, Vec::new(), panels, Some(panel_id.clone()))
         };
 
     let native_cfg = NativeConfig {
@@ -76,12 +109,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         background: &cfg.display.background,
         pause_off_screen: cfg.display.pause_off_screen,
         feeds: &feeds,
-        displays: vec![NativeDisplay {
-            spacing,
-            background: &cfg.display.background,
-            layout,
-            viewports: &viewports,
-        }],
+        displays,
+        panels,
+        active_panel,
     };
     let yaml = serde_yaml::to_string(&native_cfg)?;
     eprintln!(
