@@ -223,6 +223,11 @@ impl Config {
                     "active_fullscreen camera '{camera}' is not used by the active panel"
                 ));
             }
+            if config.feeds[feed].fullscreen_url.is_none() {
+                return Err(format!(
+                    "active_fullscreen camera '{camera}' has no fullscreen_url"
+                ));
+            }
         }
         for (i, feed) in config.feeds.iter().enumerate() {
             // A feed no viewport names is a camera connected to and decoded
