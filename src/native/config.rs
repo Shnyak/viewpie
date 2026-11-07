@@ -22,6 +22,8 @@ pub struct Config {
     pub panels: HashMap<String, Display>,
     /// The panel to show when the renderer starts.
     pub active_panel: Option<String>,
+    /// Camera initially shown fullscreen, if any.
+    pub active_fullscreen: Option<String>,
     /// Whether to stop decoding for a display nobody is watching: one that
     /// is unplugged, or whose television is off or showing another input.
     pub pause_off_screen: bool,
@@ -105,6 +107,7 @@ impl Config {
                 "displays",
                 "panels",
                 "active_panel",
+                "active_fullscreen",
             ],
         )?;
 
@@ -153,6 +156,12 @@ impl Config {
             _ => return Err("active_panel must be a panel name".into()),
         };
 
+        let active_fullscreen = match &doc["active_fullscreen"] {
+            Yaml::BadValue => None,
+            Yaml::String(name) => Some(name.clone()),
+            _ => return Err("active_fullscreen must be a camera name".into()),
+        };
+
         let mut displays: Vec<Display> = Vec::new();
         if let Some(raw) = doc["displays"].as_vec() {
             if raw.is_empty() {
@@ -196,8 +205,25 @@ impl Config {
             displays,
             panels,
             active_panel,
+            active_fullscreen,
             pause_off_screen,
         };
+        if let Some(camera) = &config.active_fullscreen {
+            let active = config
+                .displays
+                .first()
+                .ok_or("active_fullscreen needs an active display")?;
+            let feed = config
+                .feeds
+                .iter()
+                .position(|f| &f.name == camera)
+                .ok_or_else(|| format!("active_fullscreen camera '{camera}' does not exist"))?;
+            if !active.viewports.iter().any(|v| v.feeds.contains(&feed)) {
+                return Err(format!(
+                    "active_fullscreen camera '{camera}' is not used by the active panel"
+                ));
+            }
+        }
         for (i, feed) in config.feeds.iter().enumerate() {
             // A feed no viewport names is a camera connected to and decoded
             // for nobody, or more likely a name misspelled on one side or the
