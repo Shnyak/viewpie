@@ -137,9 +137,9 @@ impl NativeRendererController {
     async fn stop_inner(&self) {
         if let Some(mut running) = self.child.lock().await.take() {
             // A graceful STOP asks every FFmpeg decoder to drain and join, but
-            // decoder reads can remain blocked on a live RTSP stream. Waiting
-            // for that shutdown made ordinary panel changes take up to 12s
-            // before the fallback kill, often twice when switching panels.
+            // decoder reads can remain blocked on a live RTSP stream. This
+            // path is now reserved for explicit config reloads and fullscreen
+            // startup; ordinary panel changes use the PANEL IPC command.
             // Terminate the renderer directly: its decoder threads are in the
             // same process, and the kernel releases its DRM/FFmpeg resources
             // when the process exits.
