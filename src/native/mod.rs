@@ -3003,6 +3003,18 @@ mod tests {
         )
     }
 
+    #[test]
+    fn a_new_panel_starts_rotation_on_its_first_feed_at_switch_time() {
+        let taps = (0..3)
+            .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}")))))
+            .collect();
+        let start = Duration::from_secs(123);
+        let feeds = Feeds::new_at(taps, Duration::from_secs(8), start);
+        assert_eq!(feeds.active(start), 0);
+        assert_eq!(feeds.active(start + Duration::from_secs(7)), 0);
+        assert_eq!(feeds.active(start + Duration::from_secs(8)), 1);
+    }
+
     /// The turn follows from the clock alone, so two viewports with the same
     /// interval agree on it at any moment, however many feeds each has.
     #[test]
