@@ -578,6 +578,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_fullscreen_must_name_a_camera_in_the_selected_panel() {
+        let valid = r#"
+feeds:
+  a: rtsp://a
+  b: {url: rtsp://b, fullscreen_url: rtsp://b-hd}
+active_panel: yard
+active_fullscreen: b
+panels:
+  yard:
+    layout: |
+      a b
+      . .
+    viewports:
+      - {slot: a, feeds: [a]}
+      - {slot: b, feeds: [b]}
+"#;
+        let config = Config::parse(valid).unwrap();
+        assert_eq!(config.active_fullscreen.as_deref(), Some("b"));
+
+        let invalid = valid.replace("active_fullscreen: b", "active_fullscreen: missing");
+        assert!(Config::parse(&invalid)
+            .unwrap_err()
+            .contains("active_fullscreen camera 'missing' does not exist"));
+
+        let not_in_panel = valid
+            .replace("active_fullscreen: b", "active_fullscreen: a")
+            .replace("      - {slot: b, feeds: [b]}\n", "");
+        assert!(Config::parse(&not_in_panel)
+            .unwrap_err()
+            .contains("active_fullscreen camera 'a' is not used"));
+    }
+
+    #[test]
     fn panels_only_config_keeps_all_scenes_and_starts_selected_panel() {
         let config = Config::parse(
             r#"
