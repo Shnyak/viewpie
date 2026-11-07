@@ -36,7 +36,18 @@ impl NativeRendererController {
     }
 
     pub async fn select_panel(&self, panel: &str) -> anyhow::Result<()> {
-        self.restart(panel, None).await
+        if panel.contains(['\\n', '\\r']) {
+            anyhow::bail!("panel id contains a line break");
+        }
+        let _operation = self.operation.lock().await;
+        let mut guard = self.child.lock().await;
+        let running = guard
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("native renderer is not running"))?;
+        let command = format!("PANEL {panel}\\n");
+        running.stdin.write_all(command.as_bytes()).await?;
+        running.stdin.flush().await?;
+        Ok(())
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
