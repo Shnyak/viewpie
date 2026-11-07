@@ -1147,7 +1147,7 @@ fn build(
             format!(
                 "{} viewports required by the largest panel on {} but only {} overlay planes left; \
                  the wall's displays share one pool of them",
-                display.viewports.len(),
+                plane_count,
                 out.name,
                 spare.len()
             )
