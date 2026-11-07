@@ -837,6 +837,16 @@ fn run(config: &Config) -> Result<(), String> {
             }
             Err(error) => return Err(error),
         };
+        if display_index == 0 {
+            if let Some(camera) = &config.active_fullscreen {
+                let at = wall
+                    .cameras
+                    .iter()
+                    .position(|entry| entry.feed.name == *camera)
+                    .ok_or_else(|| format!("fullscreen camera '{camera}' is not in the active panel"))?;
+                wall.mode = Mode::Fullscreen(at);
+            }
+        }
         // HDMI-CEC is owned by the parent API process in this fork. Opening a
         // second CEC listener here would make both processes consume the same
         // remote events and issue duplicate commands.
@@ -848,6 +858,14 @@ fn run(config: &Config) -> Result<(), String> {
             });
         }
         walls.push(wall);
+    }
+
+    // Only feeds used by the startup panel should connect. Other panel
+    // feeds are already represented by Source objects and will be enabled
+    // when their scene is selected.
+    for source in &sources {
+        let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+        source.wanted.store(wanted, Ordering::Relaxed);
     }
 
     // Started once every wall is built, since until then nothing could show
