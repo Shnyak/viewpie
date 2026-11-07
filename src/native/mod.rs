@@ -1277,6 +1277,7 @@ fn run_walls(
     let mut stopping = false;
 
     while !stopping {
+        let mut panel_changed = false;
         // Keep the latest requested state. OFF waits for outstanding flips
         // before changing DPMS, but prevents any further commits immediately.
         while let Ok(command) = commands.try_recv() {
@@ -1285,7 +1286,13 @@ fn run_walls(
                 RendererCommand::SelectPanel(panel) => {
                     if let Some(wall) = walls.first_mut() {
                         if wall.panel_scenes.contains_key(&panel) {
-                            wall.pending_panel = Some(panel);
+                            if wall.current_panel.as_deref() == Some(panel.as_str()) {
+                                let was = wall.mode;
+                                wall.show(Mode::Grid);
+                                panel_changed |= was != wall.mode;
+                            } else {
+                                wall.pending_panel = Some(panel);
+                            }
                         } else {
                             eprintln!("unknown panel requested: {panel}");
                         }
@@ -1342,7 +1349,6 @@ fn run_walls(
             }
         }
 
-        let mut panel_changed = false;
         if display_on && display_requested_on {
             for wall in walls.iter_mut() {
                 if wall.in_flight.is_some() {
