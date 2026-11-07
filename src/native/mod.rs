@@ -765,7 +765,8 @@ fn run(config: &Config) -> Result<(), String> {
                 command if command.starts_with("FULLSCREEN ") => {
                     let camera = command[11..].trim();
                     if !camera.is_empty() {
-                        let _ = input_tx.send(RendererCommand::SelectFullscreen(camera.to_string()));
+                        let _ =
+                            input_tx.send(RendererCommand::SelectFullscreen(camera.to_string()));
                     }
                 }
                 _ => {}
@@ -1423,7 +1424,11 @@ fn run_walls(
                         wall.pending_panel = None;
                         wall.mode = Mode::Grid;
                         if let Some(camera) = wall.pending_fullscreen.take() {
-                            if let Some(at) = wall.cameras.iter().position(|entry| entry.feed.name == camera) {
+                            if let Some(at) = wall
+                                .cameras
+                                .iter()
+                                .position(|entry| entry.feed.name == camera)
+                            {
                                 wall.show(Mode::Fullscreen(at));
                             } else {
                                 eprintln!("camera is not in panel '{panel}': {camera}");
