@@ -613,7 +613,10 @@ panels:
             .contains("active_fullscreen camera 'missing' does not exist"));
 
         let not_in_panel = valid
-            .replace("  b: {url: rtsp://b, fullscreen_url: rtsp://b-hd}", "  b: {url: rtsp://b, fullscreen_url: rtsp://b-hd}\n  c: rtsp://c")
+            .replace(
+                "  b: {url: rtsp://b, fullscreen_url: rtsp://b-hd}",
+                "  b: {url: rtsp://b, fullscreen_url: rtsp://b-hd}\n  c: rtsp://c",
+            )
             .replace("active_fullscreen: b", "active_fullscreen: c");
         assert!(Config::parse(&not_in_panel)
             .unwrap_err()
