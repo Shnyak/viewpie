@@ -419,6 +419,7 @@ struct Wall {
     plane_pool: Vec<plane::Handle>,
     /// Alternative panel layouts sharing the same decoded Source objects.
     panel_scenes: HashMap<String, config::Display>,
+    fullscreen_sources: Vec<Option<Arc<Source>>>,
     current_panel: Option<String>,
     pending_panel: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
@@ -1125,6 +1126,7 @@ fn build(
         viewports,
         plane_pool: planes,
         panel_scenes: panel_scenes.clone(),
+        fullscreen_sources: fullscreen.to_vec(),
         current_panel: active_panel,
         pending_panel: None,
         feeds,
@@ -1322,6 +1324,7 @@ fn run_walls(
         }
 
         if display_on && display_requested_on {
+            let mut panel_changed = false;
             for wall in walls.iter_mut() {
                 if wall.in_flight.is_some() {
                     continue;
@@ -1332,7 +1335,37 @@ fn run_walls(
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let target = wall.watched.then_some(wall.mode);
                 let mut ready = Vec::new();
-                if wall.laid_out != target {
+                if let Some(panel) = wall.pending_panel.clone() {
+                    // Keep the old scene's framebuffer references until its
+                    // detach commit has flipped. Only then may viewport indices
+                    // and their backing vectors be replaced.
+                    ready = let_go(&wall.viewports, showing, 0);
+                    if ready.is_empty() {
+                        let scene = wall.panel_scenes[&panel].clone();
+                        let feed_count = wall.fullscreen_sources.len();
+                        let (viewports, feeds, cameras) = scene_parts(
+                            card,
+                            &sources[..feed_count],
+                            &wall.fullscreen_sources,
+                            &scene,
+                            &wall.plane_pool,
+                            wall.size,
+                        )?;
+                        wall.viewports = viewports;
+                        wall.feeds = feeds;
+                        wall.cameras = cameras;
+                        wall.on_screen = vec![None; wall.viewports.len()];
+                        wall.current_panel = Some(panel.clone());
+                        wall.pending_panel = None;
+                        wall.mode = Mode::Grid;
+                        wall.laid_out = None;
+                        wall.fullscreen_tap = None;
+                        wall.turns += 1;
+                        panel_changed = true;
+                        println!("{}: panel switched to {panel}", wall.out.name);
+                    }
+                }
+                if wall.pending_panel.is_none() && wall.laid_out != target {
                     // Every plane let go of, once, and whatever comes next laid
                     // out afresh once that has flipped. Paused, that is all until
                     // someone is watching again: the planes would otherwise hold
@@ -1344,7 +1377,7 @@ fn run_walls(
                         wall.fullscreen_tap = None;
                     }
                 }
-                if wall.laid_out == target {
+                if wall.pending_panel.is_none() && wall.laid_out == target {
                     ready = match target {
                         None => continue,
                         Some(Mode::Grid) => {
@@ -1389,6 +1422,13 @@ fn run_walls(
                         commit_gripe.say(format_args!("commit on {}: {e}", wall.out.name));
                     }
                 }
+            }
+        }
+
+        if panel_changed {
+            for source in sources {
+                let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+                source.wanted.store(wanted, Ordering::Relaxed);
             }
         }
 
