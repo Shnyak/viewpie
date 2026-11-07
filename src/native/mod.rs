@@ -1427,7 +1427,11 @@ fn run_walls(
                         .viewports
                         .iter()
                         .filter_map(|viewport| viewport.feeds.first().copied())
-                        .all(|feed| sources.get(feed).is_some_and(|source| source.frame().0.is_some()));
+                        .all(|feed| {
+                            sources
+                                .get(feed)
+                                .is_some_and(|source| source.frame().0.is_some())
+                        });
                     let timed_out = wall
                         .pending_since
                         .is_some_and(|since| since.elapsed() >= PANEL_PREWARM_TIMEOUT);
@@ -1440,12 +1444,9 @@ fn run_walls(
                         // Keep presenting the old scene while the incoming panel
                         // warms up, so the user does not stare at a blank screen.
                         ready = match wall.mode {
-                            Mode::Grid => collect_ready(
-                                &mut wall.feeds,
-                                &wall.viewports,
-                                showing,
-                                clock,
-                            ),
+                            Mode::Grid => {
+                                collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
+                            }
                             Mode::Fullscreen(at) => collect_fullscreen(
                                 &wall.viewports,
                                 showing,
@@ -1456,9 +1457,7 @@ fn run_walls(
                             ),
                         };
                     }
-                    if ready.is_empty()
-                        && (first_feeds_ready || timed_out || !wall.watched)
-                    {
+                    if ready.is_empty() && (first_feeds_ready || timed_out || !wall.watched) {
                         drop(showing);
                         let scene = wall.panel_scenes[&panel].clone();
                         let feed_count = wall.fullscreen_sources.len();
