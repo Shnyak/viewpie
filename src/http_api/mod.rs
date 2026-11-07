@@ -99,11 +99,13 @@ pub async fn run(
                     }
                 }
                 WallCommand::UpdateSettings(_) | WallCommand::ReloadConfig => {
-                    // Already applied synchronously by the originating handler.
+                    // These changes alter the renderer's startup snapshot, not
+                    // merely the active scene. Reload explicitly; ordinary
+                    // panel selection stays in-process and never reconnects feeds.
                     if let Some(renderer) = &command_renderer {
                         let panel = st.manager.active_id().await;
-                        if let Err(e) = renderer.select_panel(&panel).await {
-                            warn!("native renderer failed to apply updated settings: {e}");
+                        if let Err(e) = renderer.reload(&panel).await {
+                            warn!("native renderer failed to reload configuration: {e}");
                         }
                     }
                 }
