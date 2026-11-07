@@ -973,6 +973,8 @@ fn build(
     sources: &[Arc<Source>],
     fullscreen: &[Option<Arc<Source>>],
     display: &config::Display,
+    panel_scenes: &HashMap<String, config::Display>,
+    active_panel: Option<String>,
     taken: &[crtc::Handle],
     spare: &mut Vec<plane::Handle>,
     claimed: &mut Vec<plane::Handle>,
@@ -1085,9 +1087,15 @@ fn build(
     let background = card.background(mode_w, mode_h, display.background)?;
     card.attach(out.crtc, out.connector, mode, Some(background.fb))?;
 
+    let plane_count = panel_scenes
+        .values()
+        .map(|scene| scene.viewports.len())
+        .chain(std::iter::once(display.viewports.len()))
+        .max()
+        .unwrap_or(display.viewports.len());
     let planes = claim_planes(
         &card.overlay_planes(out.crtc)?,
-        display.viewports.len(),
+        plane_count,
         spare,
         claimed,
     )
@@ -1101,77 +1109,9 @@ fn build(
         )
     })?;
 
-    // The grid is square in cells, so a cell is the display divided by the
-    // layout's size. On a 16:9 screen that makes each cell 16:9 too, which is
-    // what a camera wants.
-    let grid = display.layout.size;
-    let cell_w = mode_w / grid;
-    let cell_h = mode_h / grid;
-
-    // A gap wider than the cell it is taken out of would leave a viewport no
-    // pixels at all: crtc_w below is a cell minus the gap, which underflows
-    // and wraps to something near four billion, and the commit is refused
-    // with an EINVAL that says nothing about spacing. Checked against the
-    // real cell size rather than at parse time, because how large a cell is
-    // depends on the mode, which is not known until the display is up.
-    if display.spacing >= cell_w.min(cell_h) {
-        return Err(format!(
-            "a spacing of {} leaves no room in a {cell_w}x{cell_h} cell on {}; \
-             the wall is {grid} cells across a {mode_w}x{mode_h} display",
-            display.spacing, out.name
-        ));
-    }
-
-    let mut feeds: Vec<Feeds> = Vec::new();
-    let mut viewports: Vec<Viewport> = Vec::new();
-
-    for (i, viewport) in display.viewports.iter().enumerate() {
-        let (_, cell) = &display.layout.slots[viewport.slot];
-        let props = card.plane_props(planes[i])?;
-
-        // The gap is taken off the right and bottom of each viewport, so it
-        // falls between neighbours. An edge that meets the display rather than
-        // another viewport keeps its pixels: a border around the wall is not a
-        // seam, and nothing is on the other side of it.
-        let touches_right = cell.col + cell.span == grid;
-        let touches_bottom = cell.row + cell.span == grid;
-        let gap_w = if touches_right { 0 } else { display.spacing };
-        let gap_h = if touches_bottom { 0 } else { display.spacing };
-
-        viewports.push(Viewport {
-            plane: planes[i],
-            props,
-            crtc_x: (cell.col * cell_w) as i32,
-            crtc_y: (cell.row * cell_h) as i32,
-            crtc_w: cell.span * cell_w - gap_w,
-            crtc_h: cell.span * cell_h - gap_h,
-            gap_w,
-            gap_h,
-            // Filled in once the feed's real size is known.
-            src_w: 0,
-            src_h: 0,
-        });
-
-        // Every feed the viewport rotates through, all of them decoding: it
-        // shows whichever the clock says, and the others are ready.
-        feeds.push(Feeds::new(
-            viewport
-                .feeds
-                .iter()
-                .map(|&f| Tap::new(sources[f].clone()))
-                .collect(),
-            viewport.rotation_interval,
-        ));
-    }
-
+    let (viewports, feeds, cameras) =
+        scene_parts(&card, sources, display, &planes, (mode_w, mode_h))?;
     let crtc_active = card.crtc_active(out.crtc)?;
-
-    let mut cameras: Vec<usize> = Vec::new();
-    for &f in display.viewports.iter().flat_map(|v| &v.feeds) {
-        if !cameras.contains(&f) {
-            cameras.push(f);
-        }
-    }
 
     Ok(Wall {
         out,
@@ -1183,25 +1123,97 @@ fn build(
         // first commit has to be made rather than waited for.
         in_flight: None,
         viewports,
+        plane_pool: planes,
+        panel_scenes: panel_scenes.clone(),
+        current_panel: active_panel,
+        pending_panel: None,
         feeds,
         commits: 0,
         watched: true,
         turns: 0,
         watch: None,
         tv: None,
-        cameras: cameras
-            .iter()
-            .map(|&f| Camera {
-                feed: sources[f].clone(),
-                fullscreen: fullscreen[f].clone(),
-            })
-            .collect(),
+        cameras,
         size: (mode_w, mode_h),
         mode: Mode::Grid,
         pressed: Instant::now(),
         laid_out: None,
         fullscreen_tap: None,
     })
+}
+
+/// Build a panel's viewport geometry and its feed taps using already-reserved
+/// planes. Reusing the same plane handles is what lets panels change without
+/// asking DRM for another pool or restarting the renderer.
+fn scene_parts(
+    card: &Card,
+    sources: &[Arc<Source>],
+    display: &config::Display,
+    planes: &[plane::Handle],
+    (mode_w, mode_h): (u32, u32),
+) -> Result<(Vec<Viewport>, Vec<Feeds>, Vec<Camera>), String> {
+    if display.viewports.len() > planes.len() {
+        return Err(format!(
+            "panel needs {} viewports but only {} overlay planes were reserved",
+            display.viewports.len(),
+            planes.len()
+        ));
+    }
+    let grid = display.layout.size;
+    let cell_w = mode_w / grid;
+    let cell_h = mode_h / grid;
+    if display.spacing >= cell_w.min(cell_h) {
+        return Err(format!(
+            "a spacing of {} leaves no room in a {cell_w}x{cell_h} cell",
+            display.spacing
+        ));
+    }
+
+    let mut feeds = Vec::with_capacity(display.viewports.len());
+    let mut viewports = Vec::with_capacity(display.viewports.len());
+    for (i, viewport) in display.viewports.iter().enumerate() {
+        let (_, cell) = &display.layout.slots[viewport.slot];
+        let props = card.plane_props(planes[i])?;
+        let touches_right = cell.col + cell.span == grid;
+        let touches_bottom = cell.row + cell.span == grid;
+        let gap_w = if touches_right { 0 } else { display.spacing };
+        let gap_h = if touches_bottom { 0 } else { display.spacing };
+        viewports.push(Viewport {
+            plane: planes[i],
+            props,
+            crtc_x: (cell.col * cell_w) as i32,
+            crtc_y: (cell.row * cell_h) as i32,
+            crtc_w: cell.span * cell_w - gap_w,
+            crtc_h: cell.span * cell_h - gap_h,
+            gap_w,
+            gap_h,
+            src_w: 0,
+            src_h: 0,
+        });
+        feeds.push(Feeds::new(
+            viewport
+                .feeds
+                .iter()
+                .map(|&f| Tap::new(sources[f].clone()))
+                .collect(),
+            viewport.rotation_interval,
+        ));
+    }
+
+    let mut camera_indices = Vec::new();
+    for &feed in display.viewports.iter().flat_map(|v| &v.feeds) {
+        if !camera_indices.contains(&feed) {
+            camera_indices.push(feed);
+        }
+    }
+    let cameras = camera_indices
+        .into_iter()
+        .map(|f| Camera {
+            feed: sources[f].clone(),
+            fullscreen: None,
+        })
+        .collect();
+    Ok((viewports, feeds, cameras))
 }
 
 /// Drive every display from one loop, each paced by its own flips.
