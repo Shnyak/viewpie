@@ -13,7 +13,7 @@ use tracing::{info, warn};
 
 use crate::http_api::errors::ApiError;
 use crate::http_api::models::{CameraDto, CameraTestResponse, OkResponse};
-use crate::http_api::state::AppState;
+use crate::http_api::state::{AppState, WallCommand};
 
 /// `GET /api/cameras` — list all cameras with runtime info.
 pub async fn list_cameras(State(state): State<AppState>) -> Result<Json<Vec<CameraDto>>, ApiError> {
@@ -123,11 +123,10 @@ pub async fn update_camera(
     }
     state.publish_config(candidate).await;
     if !users.is_empty() {
-        let active = state.manager.active_id().await;
-        let _ = state
-            .command_tx
-            .send(crate::http_api::state::WallCommand::SwitchPanel(active))
-            .await;
+        // The native renderer owns its own feed sources. Refresh its immutable
+        // config snapshot so URL changes reach those sources; a plain panel
+        // IPC command would keep using the old RTSP URL.
+        let _ = state.command_tx.send(WallCommand::ReloadConfig).await;
     }
     // If fullscreen was active for this camera, restart main stream too.
     if crate::http_api::state::current_fullscreen()
@@ -170,6 +169,7 @@ pub async fn delete_camera(
         return Err(error.into());
     }
     state.publish_config(candidate).await;
+    let _ = state.command_tx.send(WallCommand::ReloadConfig).await;
     info!(camera = name, "camera removed");
     Ok(Json(OkResponse::ok()))
 }
