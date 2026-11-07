@@ -1323,8 +1323,8 @@ fn run_walls(
             }
         }
 
+        let mut panel_changed = false;
         if display_on && display_requested_on {
-            let mut panel_changed = false;
             for wall in walls.iter_mut() {
                 if wall.in_flight.is_some() {
                     continue;
@@ -1333,7 +1333,6 @@ fn run_walls(
                 // A display is only due once its last commit has flipped, so
                 // on_screen is what its planes show now.
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
-                let target = wall.watched.then_some(wall.mode);
                 let mut ready = Vec::new();
                 if let Some(panel) = wall.pending_panel.clone() {
                     // Keep the old scene's framebuffer references until its
@@ -1341,6 +1340,7 @@ fn run_walls(
                     // and their backing vectors be replaced.
                     ready = let_go(&wall.viewports, showing, 0);
                     if ready.is_empty() {
+                        drop(showing);
                         let scene = wall.panel_scenes[&panel].clone();
                         let feed_count = wall.fullscreen_sources.len();
                         let (viewports, feeds, cameras) = scene_parts(
@@ -1365,6 +1365,8 @@ fn run_walls(
                         println!("{}: panel switched to {panel}", wall.out.name);
                     }
                 }
+                let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
+                let target = wall.watched.then_some(wall.mode);
                 if wall.pending_panel.is_none() && wall.laid_out != target {
                     // Every plane let go of, once, and whatever comes next laid
                     // out afresh once that has flipped. Paused, that is all until
