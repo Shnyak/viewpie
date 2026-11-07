@@ -422,6 +422,7 @@ struct Wall {
     fullscreen_sources: Vec<Option<Arc<Source>>>,
     current_panel: Option<String>,
     pending_panel: Option<String>,
+    pending_fullscreen: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
     feeds: Vec<Feeds>,
     /// The crtc's ACTIVE property, looked up once so every commit can name
@@ -761,6 +762,12 @@ fn run(config: &Config) -> Result<(), String> {
                         let _ = input_tx.send(RendererCommand::SelectPanel(panel.to_string()));
                     }
                 }
+                command if command.starts_with("FULLSCREEN ") => {
+                    let camera = command[11..].trim();
+                    if !camera.is_empty() {
+                        let _ = input_tx.send(RendererCommand::SelectFullscreen(camera.to_string()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -921,6 +928,7 @@ fn run(config: &Config) -> Result<(), String> {
 enum RendererCommand {
     DisplayPower(bool),
     SelectPanel(String),
+    SelectFullscreen(String),
     Stop,
 }
 
@@ -1148,6 +1156,7 @@ fn build(
         fullscreen_sources: fullscreen.to_vec(),
         current_panel: active_panel,
         pending_panel: None,
+        pending_fullscreen: None,
         feeds,
         commits: 0,
         watched: true,
@@ -1286,7 +1295,9 @@ fn run_walls(
                 RendererCommand::SelectPanel(panel) => {
                     if let Some(wall) = walls.first_mut() {
                         if wall.panel_scenes.contains_key(&panel) {
+                            wall.pending_fullscreen = None;
                             if wall.current_panel.as_deref() == Some(panel.as_str()) {
+                                wall.pending_panel = None;
                                 let was = wall.mode;
                                 wall.show(Mode::Grid);
                                 panel_changed |= was != wall.mode;
@@ -1295,6 +1306,23 @@ fn run_walls(
                             }
                         } else {
                             eprintln!("unknown panel requested: {panel}");
+                        }
+                    }
+                }
+                RendererCommand::SelectFullscreen(camera) => {
+                    if let Some(wall) = walls.first_mut() {
+                        if wall.pending_panel.is_some() {
+                            wall.pending_fullscreen = Some(camera);
+                        } else if let Some(at) = wall
+                            .cameras
+                            .iter()
+                            .position(|entry| entry.feed.name == camera)
+                        {
+                            let was = wall.mode;
+                            wall.show(Mode::Fullscreen(at));
+                            panel_changed |= was != wall.mode;
+                        } else {
+                            eprintln!("camera is not in the active panel: {camera}");
                         }
                     }
                 }
@@ -1383,6 +1411,13 @@ fn run_walls(
                         wall.current_panel = Some(panel.clone());
                         wall.pending_panel = None;
                         wall.mode = Mode::Grid;
+                        if let Some(camera) = wall.pending_fullscreen.take() {
+                            if let Some(at) = wall.cameras.iter().position(|entry| entry.feed.name == camera) {
+                                wall.show(Mode::Fullscreen(at));
+                            } else {
+                                eprintln!("camera is not in panel '{panel}': {camera}");
+                            }
+                        }
                         wall.laid_out = None;
                         wall.fullscreen_tap = None;
                         wall.turns += 1;
