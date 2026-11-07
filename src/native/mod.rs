@@ -1405,7 +1405,28 @@ fn run_walls(
 
             if changed {
                 for source in sources {
-                    let wanted = walls.iter().any(|w| w.watched && w.shows(source));
+                    let wanted = walls.iter().any(|wall| {
+                        if !wall.watched {
+                            return false;
+                        }
+                        if wall.shows(source) {
+                            return true;
+                        }
+                        let Some(panel) = wall.pending_panel.as_ref() else {
+                            return false;
+                        };
+                        let feed_index = sources
+                            .iter()
+                            .take(wall.fullscreen_sources.len())
+                            .position(|candidate| Arc::ptr_eq(candidate, source));
+                        feed_index.is_some_and(|index| {
+                            wall.panel_scenes[panel]
+                                .viewports
+                                .iter()
+                                .filter_map(|viewport| viewport.feeds.first())
+                                .any(|feed| *feed == index)
+                        })
+                    });
                     source.wanted.store(wanted, Ordering::Relaxed);
                 }
             }
