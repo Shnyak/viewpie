@@ -5,6 +5,7 @@
 //! slot rather than a path into a document.
 
 use super::layout::Layout;
+use std::collections::HashMap;
 use std::time::Duration;
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -16,6 +17,11 @@ pub struct Config {
     /// Every camera the wall shows, in the order the file lists them.
     pub feeds: Vec<Feed>,
     pub displays: Vec<Display>,
+    /// Alternative panel layouts. They share the same feed sources and are
+    /// selected at runtime without rebuilding the decoder threads.
+    pub panels: HashMap<String, Display>,
+    /// The panel to show when the renderer starts.
+    pub active_panel: Option<String>,
     /// Whether to stop decoding for a display nobody is watching: one that
     /// is unplugged, or whose television is off or showing another input.
     pub pause_off_screen: bool,
@@ -68,10 +74,14 @@ impl Config {
     /// How many displays show the feed at index `feed`, on any of their
     /// viewports.
     pub fn displays_showing(&self, feed: usize) -> usize {
-        self.displays
-            .iter()
-            .filter(|d| d.viewports.iter().any(|v| v.feeds.contains(&feed)))
-            .count()
+        if !self.panels.is_empty() {
+            usize::from(self.panels.values().any(|d| d.viewports.iter().any(|v| v.feeds.contains(&feed))))
+        } else {
+            self.displays
+                .iter()
+                .filter(|d| d.viewports.iter().any(|v| v.feeds.contains(&feed)))
+                .count()
+        }
     }
 
     pub fn parse(text: &str) -> Result<Config, String> {
@@ -93,6 +103,8 @@ impl Config {
                 "pause_off_screen",
                 "feeds",
                 "displays",
+                "panels",
+                "active_panel",
             ],
         )?;
 
@@ -117,40 +129,73 @@ impl Config {
             _ => return Err("pause_off_screen must be true or false".into()),
         };
 
-        let raw = doc["displays"]
-            .as_vec()
-            .ok_or("the configuration needs a list of displays")?;
-        if raw.is_empty() {
-            return Err("no displays are configured".into());
+        let mut panels = HashMap::new();
+        if let Some(raw_panels) = doc["panels"].as_hash() {
+            for (key, value) in raw_panels {
+                let name = key
+                    .as_str()
+                    .ok_or("panel names must be strings")?
+                    .to_string();
+                let scene = display(value, &feeds, rotation, spacing, background, false)
+                    .map_err(|e| format!("panel '{name}': {e}"))?;
+                panels.insert(name, scene);
+            }
+        } else if !matches!(doc["panels"], Yaml::BadValue) {
+            return Err("panels must be a mapping of panel names to layouts".into());
         }
 
-        let mut displays: Vec<Display> = Vec::new();
-        for (i, d) in raw.iter().enumerate() {
-            let display = display(d, &feeds, rotation, spacing, background, raw.len() > 1)
-                .map_err(|e| format!("display {}: {e}", i + 1))?;
-            // Two walls on one output would each set a mode and claim their
-            // own planes from the pool the displays share, then scan out over
-            // one another: the planes of whichever lost are simply spent, and
-            // the screen shows an interleaving of two walls neither of which
-            // was asked for.
-            if let Some(name) = &display.connector {
-                if let Some(j) = displays
-                    .iter()
-                    .position(|other| other.connector.as_deref() == Some(name.as_str()))
-                {
-                    return Err(format!(
-                        "displays {} and {} both drive {name}",
-                        j + 1,
-                        i + 1
-                    ));
-                }
+        let active_panel = match &doc["active_panel"] {
+            Yaml::BadValue => None,
+            Yaml::String(name) if panels.contains_key(name) => Some(name.clone()),
+            Yaml::String(name) => {
+                return Err(format!("active_panel '{name}' does not exist"));
             }
-            displays.push(display);
+            _ => return Err("active_panel must be a panel name".into()),
+        };
+
+        let mut displays: Vec<Display> = Vec::new();
+        if let Some(raw) = doc["displays"].as_vec() {
+            if raw.is_empty() {
+                return Err("no displays are configured".into());
+            }
+            for (i, d) in raw.iter().enumerate() {
+                let display = display(d, &feeds, rotation, spacing, background, raw.len() > 1)
+                    .map_err(|e| format!("display {}: {e}", i + 1))?;
+                if let Some(name) = &display.connector {
+                    if let Some(j) = displays
+                        .iter()
+                        .position(|other| other.connector.as_deref() == Some(name.as_str()))
+                    {
+                        return Err(format!(
+                            "displays {} and {} both drive {name}",
+                            j + 1,
+                            i + 1
+                        ));
+                    }
+                }
+                displays.push(display);
+            }
+        } else if !matches!(doc["displays"], Yaml::BadValue) {
+            return Err("displays must be a list".into());
+        }
+
+        if displays.is_empty() && panels.is_empty() {
+            return Err("the configuration needs either displays or panels".into());
+        }
+        // A panels-only configuration still starts with one physical wall.
+        // The full panel map stays alongside it for later in-process changes.
+        if displays.is_empty() {
+            let selected = active_panel.clone().or_else(|| {
+                panels.keys().min().cloned()
+            }).ok_or("no panels are configured")?;
+            displays.push(panels[&selected].clone());
         }
 
         let config = Config {
             feeds,
             displays,
+            panels,
+            active_panel,
             pause_off_screen,
         };
         for (i, feed) in config.feeds.iter().enumerate() {
