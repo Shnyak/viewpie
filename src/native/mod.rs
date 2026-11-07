@@ -1145,7 +1145,7 @@ fn build(
     let planes = claim_planes(&card.overlay_planes(out.crtc)?, plane_count, spare, claimed)
         .ok_or_else(|| {
             format!(
-                "{} viewports on {} but only {} overlay planes left; \
+                "{} viewports required by the largest panel on {} but only {} overlay planes left; \
                  the wall's displays share one pool of them",
                 display.viewports.len(),
                 out.name,
@@ -1491,7 +1491,7 @@ fn run_walls(
                         drop(showing);
                         let scene = wall.panel_scenes[&panel].clone();
                         let feed_count = wall.fullscreen_sources.len();
-                        let (viewports, feeds, cameras) = scene_parts(
+                        match scene_parts(
                             card,
                             &sources[..feed_count],
                             &wall.fullscreen_sources,
@@ -1499,31 +1499,47 @@ fn run_walls(
                             &wall.plane_pool,
                             wall.size,
                             clock,
-                        )?;
-                        wall.viewports = viewports;
-                        wall.feeds = feeds;
-                        wall.cameras = cameras;
-                        wall.on_screen = vec![None; wall.viewports.len()];
-                        wall.current_panel = Some(panel.clone());
-                        wall.pending_panel = None;
-                        wall.pending_since = None;
-                        wall.mode = Mode::Grid;
-                        if let Some(camera) = wall.pending_fullscreen.take() {
-                            if let Some(at) = wall
-                                .cameras
-                                .iter()
-                                .position(|entry| entry.feed.name == camera)
-                            {
-                                wall.show(Mode::Fullscreen(at));
-                            } else {
-                                eprintln!("camera is not in panel '{panel}': {camera}");
+                        ) {
+                            Ok((viewports, feeds, cameras)) => {
+                                wall.viewports = viewports;
+                                wall.feeds = feeds;
+                                wall.cameras = cameras;
+                                wall.on_screen = vec![None; wall.viewports.len()];
+                                wall.current_panel = Some(panel.clone());
+                                wall.pending_panel = None;
+                                wall.pending_since = None;
+                                wall.mode = Mode::Grid;
+                                if let Some(camera) = wall.pending_fullscreen.take() {
+                                    if let Some(at) = wall
+                                        .cameras
+                                        .iter()
+                                        .position(|entry| entry.feed.name == camera)
+                                    {
+                                        wall.show(Mode::Fullscreen(at));
+                                    } else {
+                                        eprintln!("camera is not in panel '{panel}': {camera}");
+                                    }
+                                }
+                                wall.laid_out = None;
+                                wall.fullscreen_tap = None;
+                                wall.turns += 1;
+                                panel_changed = true;
+                                println!("{}: panel switched to {panel}", wall.out.name);
+                            }
+                            Err(error) => {
+                                // A malformed or unrenderable panel must not
+                                // take down the renderer. The old scene is
+                                // still intact and can be laid out again.
+                                eprintln!("panel switch to '{panel}' refused: {error}");
+                                wall.pending_panel = None;
+                                wall.pending_since = None;
+                                wall.pending_fullscreen = None;
+                                wall.mode = Mode::Grid;
+                                wall.laid_out = None;
+                                wall.fullscreen_tap = None;
+                                panel_changed = true;
                             }
                         }
-                        wall.laid_out = None;
-                        wall.fullscreen_tap = None;
-                        wall.turns += 1;
-                        panel_changed = true;
-                        println!("{}: panel switched to {panel}", wall.out.name);
                     }
                 }
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
