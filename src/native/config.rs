@@ -77,7 +77,11 @@ impl Config {
     /// viewports.
     pub fn displays_showing(&self, feed: usize) -> usize {
         if !self.panels.is_empty() {
-            usize::from(self.panels.values().any(|d| d.viewports.iter().any(|v| v.feeds.contains(&feed))))
+            usize::from(
+                self.panels
+                    .values()
+                    .any(|d| d.viewports.iter().any(|v| v.feeds.contains(&feed))),
+            )
         } else {
             self.displays
                 .iter()
@@ -194,9 +198,10 @@ impl Config {
         // A panels-only configuration still starts with one physical wall.
         // The full panel map stays alongside it for later in-process changes.
         if displays.is_empty() {
-            let selected = active_panel.clone().or_else(|| {
-                panels.keys().min().cloned()
-            }).ok_or("no panels are configured")?;
+            let selected = active_panel
+                .clone()
+                .or_else(|| panels.keys().min().cloned())
+                .ok_or("no panels are configured")?;
             displays.push(panels[&selected].clone());
         }
 
