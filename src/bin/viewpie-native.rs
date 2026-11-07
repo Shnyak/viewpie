@@ -12,7 +12,14 @@ struct NativeConfig<'a> {
     background: &'a str,
     pause_off_screen: bool,
     feeds: &'a HashMap<String, FeedConfig>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     displays: Vec<NativeDisplay<'a>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    panels: HashMap<String, NativeDisplay<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_panel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_fullscreen: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -29,46 +36,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| viewpie::DEFAULT_CONFIG_PATH.to_string());
     let cfg = Config::load(&path)?;
     let panel_id = std::env::var("VIEWPIE_PANEL").unwrap_or_else(|_| cfg.initial_panel());
-    let panel = cfg
-        .panels
-        .get(&panel_id)
-        .ok_or_else(|| format!("panel {panel_id:?} does not exist"))?;
+    if !cfg.panels.contains_key(&panel_id) {
+        return Err(format!("panel {panel_id:?} does not exist").into());
+    }
 
-    let (layout, viewports, feeds, spacing) =
-        if let Ok(camera) = std::env::var("VIEWPIE_FULLSCREEN") {
-            let source = cfg
-                .feeds
-                .get(&camera)
-                .ok_or_else(|| format!("fullscreen camera {camera:?} does not exist"))?;
-            let url = source
-                .fullscreen_url
-                .clone()
-                .ok_or_else(|| format!("camera {camera:?} has no fullscreen_url"))?;
-            let feeds = HashMap::from([(
-                camera.clone(),
-                FeedConfig {
-                    url,
-                    fullscreen_url: None,
+    // Keep every feed and every panel in the renderer's immutable startup
+    // snapshot. Switching a panel changes only its scene; Source objects and
+    // their FFmpeg decoder threads remain alive across that change.
+    let feeds = cfg.feeds.clone();
+    let panels = cfg
+        .panels
+        .iter()
+        .map(|(id, panel)| {
+            Ok((
+                id.clone(),
+                NativeDisplay {
+                    spacing: panel.spacing.unwrap_or(cfg.display.spacing),
+                    background: &cfg.display.background,
+                    layout: square_layout(panel)?,
+                    viewports: &panel.viewports,
                 },
-            )]);
-            let viewports = vec![ViewportConfig {
-                slot: "fullscreen".to_string(),
-                feeds: vec![camera],
-            }];
-            ("fullscreen".to_string(), viewports, feeds, 0)
-        } else {
-            let feeds: HashMap<String, FeedConfig> = panel
-                .feed_names()
-                .into_iter()
-                .filter_map(|name| cfg.feeds.get(&name).cloned().map(|feed| (name, feed)))
-                .collect();
-            (
-                square_layout(panel)?,
-                panel.viewports.clone(),
-                feeds,
-                panel.spacing.unwrap_or(cfg.display.spacing),
-            )
-        };
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, Box<dyn std::error::Error>>>()?;
+    let active_fullscreen = std::env::var("VIEWPIE_FULLSCREEN").ok();
 
     let native_cfg = NativeConfig {
         rotation_interval: cfg.display.rotation_interval,
@@ -76,17 +67,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         background: &cfg.display.background,
         pause_off_screen: cfg.display.pause_off_screen,
         feeds: &feeds,
-        displays: vec![NativeDisplay {
-            spacing,
-            background: &cfg.display.background,
-            layout,
-            viewports: &viewports,
-        }],
+        displays: Vec::new(),
+        panels,
+        active_panel: Some(panel_id.clone()),
+        active_fullscreen: active_fullscreen.clone(),
     };
     let yaml = serde_yaml::to_string(&native_cfg)?;
     eprintln!(
-        "viewpie-native: panel={panel_id:?}, fullscreen={:?}; starting upstream FFmpeg/DRM renderer",
-        std::env::var("VIEWPIE_FULLSCREEN").ok()
+        "viewpie-native: panel={panel_id:?}, fullscreen={active_fullscreen:?}; starting upstream FFmpeg/DRM renderer"
     );
     viewpie::native::run_from_config_text(&yaml).map_err(anyhow::Error::msg)?;
     Ok(())

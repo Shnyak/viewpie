@@ -1,3 +1,16 @@
+viewpie (0.2.12-fork-1) unstable; urgency=medium
+
+  * Switch panels and fullscreen cameras in-process without restarting the
+    native FFmpeg/DRM renderer or reconnecting feeds shared by both scenes.
+  * Prewarm the first camera of each incoming viewport while the current panel
+    remains visible; cap the wait at three seconds.
+  * Reserve overlay planes for the largest panel, safely detach and reuse them,
+    and restart camera rotation from the first feed after switching.
+  * Reload the native renderer after camera, panel or display configuration
+    changes.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Sat, 07 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.11-fork-1) unstable; urgency=medium
 
   * Restore immediate native renderer termination when switching panels,

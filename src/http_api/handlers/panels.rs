@@ -103,6 +103,8 @@ pub async fn create_panel(
     if let Ok(c) = state.manager.get_panel(&id).await {
         g.insert(id.clone(), c);
     }
+    drop(g);
+    let _ = state.command_tx.send(WallCommand::ReloadConfig).await;
     info!(panel = id, "panel created");
     Ok((StatusCode::CREATED, Json(OkResponse::ok())))
 }
@@ -115,8 +117,6 @@ pub async fn update_panel(
     Json(panel): Json<PanelDto>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let _config_guard = state.config_update_lock.lock().await;
-    let active_panel = state.manager.active_id().await;
-    let updates_active = active_panel == id;
     let mut dto = panel;
     dto.id = Some(id.clone());
     let new_panel = dto.into_config();
@@ -151,12 +151,7 @@ pub async fn update_panel(
         g.insert(id.clone(), c);
     }
     drop(g);
-    if updates_active {
-        let _ = state
-            .command_tx
-            .send(WallCommand::SwitchPanel(active_panel))
-            .await;
-    }
+    let _ = state.command_tx.send(WallCommand::ReloadConfig).await;
     Ok(Json(OkResponse::ok()))
 }
 
@@ -196,10 +191,7 @@ pub async fn delete_panel(
     g.remove(&id);
     let active = state.manager.active_id().await;
     *state.active_panel.write().await = active.clone();
-    let _ = state
-        .command_tx
-        .send(WallCommand::SwitchPanel(active))
-        .await;
+    let _ = state.command_tx.send(WallCommand::ReloadConfig).await;
     info!(panel = id, "panel deleted");
     Ok(Json(OkResponse::ok()))
 }

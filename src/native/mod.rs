@@ -32,6 +32,7 @@ use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle};
 use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
 };
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -235,12 +236,18 @@ struct Feeds {
 
 impl Feeds {
     fn new(taps: Vec<Tap>, interval: Duration) -> Self {
+        Self::new_at(taps, interval, Duration::ZERO)
+    }
+
+    /// Start a freshly selected panel's rotations from its first feed now,
+    /// rather than letting the renderer's uptime choose an arbitrary camera.
+    fn new_at(taps: Vec<Tap>, interval: Duration, since: Duration) -> Self {
         Feeds {
             credited: vec![Duration::ZERO; taps.len()],
             taps,
             last_active: None,
             interval: millis(interval),
-            since: Duration::ZERO,
+            since,
             first: 0,
         }
     }
@@ -414,6 +421,15 @@ struct Wall {
     out: Output,
     /// Geometry, one per viewport, in the order the display lists them.
     viewports: Vec<Viewport>,
+    /// All overlay planes reserved for this output, sized for its largest panel.
+    plane_pool: Vec<plane::Handle>,
+    /// Alternative panel layouts sharing the same decoded Source objects.
+    panel_scenes: HashMap<String, config::Display>,
+    fullscreen_sources: Vec<Option<Arc<Source>>>,
+    current_panel: Option<String>,
+    pending_panel: Option<String>,
+    pending_since: Option<Instant>,
+    pending_fullscreen: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
     feeds: Vec<Feeds>,
     /// The crtc's ACTIVE property, looked up once so every commit can name
@@ -747,6 +763,19 @@ fn run(config: &Config) -> Result<(), String> {
                     let _ = input_tx.send(RendererCommand::Stop);
                     break;
                 }
+                command if command.starts_with("PANEL ") => {
+                    let panel = command[6..].trim();
+                    if !panel.is_empty() {
+                        let _ = input_tx.send(RendererCommand::SelectPanel(panel.to_string()));
+                    }
+                }
+                command if command.starts_with("FULLSCREEN ") => {
+                    let camera = command[11..].trim();
+                    if !camera.is_empty() {
+                        let _ =
+                            input_tx.send(RendererCommand::SelectFullscreen(camera.to_string()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -800,13 +829,24 @@ fn run(config: &Config) -> Result<(), String> {
         .collect();
 
     let mut walls = Vec::new();
-    for display in &config.displays {
+    let empty_panel_scenes: HashMap<String, config::Display> = HashMap::new();
+    for (display_index, display) in config.displays.iter().enumerate() {
         let taken: Vec<crtc::Handle> = walls.iter().map(|w: &Wall| w.out.crtc).collect();
         let mut wall = match build(
             &card,
             &sources,
             &fullscreen,
             display,
+            if display_index == 0 {
+                &config.panels
+            } else {
+                &empty_panel_scenes
+            },
+            if display_index == 0 {
+                config.active_panel.clone()
+            } else {
+                None
+            },
             &taken,
             &mut spare,
             &mut claimed,
@@ -820,6 +860,18 @@ fn run(config: &Config) -> Result<(), String> {
             }
             Err(error) => return Err(error),
         };
+        if display_index == 0 {
+            if let Some(camera) = &config.active_fullscreen {
+                let at = wall
+                    .cameras
+                    .iter()
+                    .position(|entry| entry.feed.name == *camera)
+                    .ok_or_else(|| {
+                        format!("fullscreen camera '{camera}' is not in the active panel")
+                    })?;
+                wall.mode = Mode::Fullscreen(at);
+            }
+        }
         // HDMI-CEC is owned by the parent API process in this fork. Opening a
         // second CEC listener here would make both processes consume the same
         // remote events and issue duplicate commands.
@@ -831,6 +883,14 @@ fn run(config: &Config) -> Result<(), String> {
             });
         }
         walls.push(wall);
+    }
+
+    // Only feeds used by the startup panel should connect. Other panel
+    // feeds are already represented by Source objects and will be enabled
+    // when their scene is selected.
+    for source in &sources {
+        let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+        source.wanted.store(wanted, Ordering::Relaxed);
     }
 
     // Started once every wall is built, since until then nothing could show
@@ -885,6 +945,8 @@ fn run(config: &Config) -> Result<(), String> {
 
 enum RendererCommand {
     DisplayPower(bool),
+    SelectPanel(String),
+    SelectFullscreen(String),
     Stop,
 }
 
@@ -950,6 +1012,9 @@ fn claim_planes(
 
 /// How long to wait between looks for a display that is not there yet.
 const DISPLAY_POLL: Duration = Duration::from_secs(5);
+/// Give the incoming panel's first camera in each viewport time to publish.
+/// A dead camera must not hold the old panel forever.
+const PANEL_PREWARM_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Bring up one display, and describe the viewports it will show.
 fn build(
@@ -957,6 +1022,8 @@ fn build(
     sources: &[Arc<Source>],
     fullscreen: &[Option<Arc<Source>>],
     display: &config::Display,
+    panel_scenes: &HashMap<String, config::Display>,
+    active_panel: Option<String>,
     taken: &[crtc::Handle],
     spare: &mut Vec<plane::Handle>,
     claimed: &mut Vec<plane::Handle>,
@@ -1069,93 +1136,33 @@ fn build(
     let background = card.background(mode_w, mode_h, display.background)?;
     card.attach(out.crtc, out.connector, mode, Some(background.fb))?;
 
-    let planes = claim_planes(
-        &card.overlay_planes(out.crtc)?,
-        display.viewports.len(),
-        spare,
-        claimed,
-    )
-    .ok_or_else(|| {
-        format!(
-            "{} viewports on {} but only {} overlay planes left; \
-             the wall's displays share one pool of them",
-            display.viewports.len(),
-            out.name,
-            spare.len()
-        )
-    })?;
+    let plane_count = panel_scenes
+        .values()
+        .map(|scene| scene.viewports.len())
+        .chain(std::iter::once(display.viewports.len()))
+        .max()
+        .unwrap_or(display.viewports.len());
+    let planes = claim_planes(&card.overlay_planes(out.crtc)?, plane_count, spare, claimed)
+        .ok_or_else(|| {
+            format!(
+                "{} viewports required by the largest panel on {} but only {} overlay planes left; \
+                 the wall's displays share one pool of them",
+                plane_count,
+                out.name,
+                spare.len()
+            )
+        })?;
 
-    // The grid is square in cells, so a cell is the display divided by the
-    // layout's size. On a 16:9 screen that makes each cell 16:9 too, which is
-    // what a camera wants.
-    let grid = display.layout.size;
-    let cell_w = mode_w / grid;
-    let cell_h = mode_h / grid;
-
-    // A gap wider than the cell it is taken out of would leave a viewport no
-    // pixels at all: crtc_w below is a cell minus the gap, which underflows
-    // and wraps to something near four billion, and the commit is refused
-    // with an EINVAL that says nothing about spacing. Checked against the
-    // real cell size rather than at parse time, because how large a cell is
-    // depends on the mode, which is not known until the display is up.
-    if display.spacing >= cell_w.min(cell_h) {
-        return Err(format!(
-            "a spacing of {} leaves no room in a {cell_w}x{cell_h} cell on {}; \
-             the wall is {grid} cells across a {mode_w}x{mode_h} display",
-            display.spacing, out.name
-        ));
-    }
-
-    let mut feeds: Vec<Feeds> = Vec::new();
-    let mut viewports: Vec<Viewport> = Vec::new();
-
-    for (i, viewport) in display.viewports.iter().enumerate() {
-        let (_, cell) = &display.layout.slots[viewport.slot];
-        let props = card.plane_props(planes[i])?;
-
-        // The gap is taken off the right and bottom of each viewport, so it
-        // falls between neighbours. An edge that meets the display rather than
-        // another viewport keeps its pixels: a border around the wall is not a
-        // seam, and nothing is on the other side of it.
-        let touches_right = cell.col + cell.span == grid;
-        let touches_bottom = cell.row + cell.span == grid;
-        let gap_w = if touches_right { 0 } else { display.spacing };
-        let gap_h = if touches_bottom { 0 } else { display.spacing };
-
-        viewports.push(Viewport {
-            plane: planes[i],
-            props,
-            crtc_x: (cell.col * cell_w) as i32,
-            crtc_y: (cell.row * cell_h) as i32,
-            crtc_w: cell.span * cell_w - gap_w,
-            crtc_h: cell.span * cell_h - gap_h,
-            gap_w,
-            gap_h,
-            // Filled in once the feed's real size is known.
-            src_w: 0,
-            src_h: 0,
-        });
-
-        // Every feed the viewport rotates through, all of them decoding: it
-        // shows whichever the clock says, and the others are ready.
-        feeds.push(Feeds::new(
-            viewport
-                .feeds
-                .iter()
-                .map(|&f| Tap::new(sources[f].clone()))
-                .collect(),
-            viewport.rotation_interval,
-        ));
-    }
-
+    let (viewports, feeds, cameras) = scene_parts(
+        &card,
+        sources,
+        fullscreen,
+        display,
+        &planes,
+        (mode_w, mode_h),
+        Duration::ZERO,
+    )?;
     let crtc_active = card.crtc_active(out.crtc)?;
-
-    let mut cameras: Vec<usize> = Vec::new();
-    for &f in display.viewports.iter().flat_map(|v| &v.feeds) {
-        if !cameras.contains(&f) {
-            cameras.push(f);
-        }
-    }
 
     Ok(Wall {
         out,
@@ -1167,25 +1174,103 @@ fn build(
         // first commit has to be made rather than waited for.
         in_flight: None,
         viewports,
+        plane_pool: planes,
+        panel_scenes: panel_scenes.clone(),
+        fullscreen_sources: fullscreen.to_vec(),
+        current_panel: active_panel,
+        pending_panel: None,
+        pending_since: None,
+        pending_fullscreen: None,
         feeds,
         commits: 0,
         watched: true,
         turns: 0,
         watch: None,
         tv: None,
-        cameras: cameras
-            .iter()
-            .map(|&f| Camera {
-                feed: sources[f].clone(),
-                fullscreen: fullscreen[f].clone(),
-            })
-            .collect(),
+        cameras,
         size: (mode_w, mode_h),
         mode: Mode::Grid,
         pressed: Instant::now(),
         laid_out: None,
         fullscreen_tap: None,
     })
+}
+
+/// Build a panel's viewport geometry and its feed taps using already-reserved
+/// planes. Reusing the same plane handles is what lets panels change without
+/// asking DRM for another pool or restarting the renderer.
+fn scene_parts(
+    card: &Card,
+    sources: &[Arc<Source>],
+    fullscreen: &[Option<Arc<Source>>],
+    display: &config::Display,
+    planes: &[plane::Handle],
+    (mode_w, mode_h): (u32, u32),
+    clock: Duration,
+) -> Result<(Vec<Viewport>, Vec<Feeds>, Vec<Camera>), String> {
+    if display.viewports.len() > planes.len() {
+        return Err(format!(
+            "panel needs {} viewports but only {} overlay planes were reserved",
+            display.viewports.len(),
+            planes.len()
+        ));
+    }
+    let grid = display.layout.size;
+    let cell_w = mode_w / grid;
+    let cell_h = mode_h / grid;
+    if display.spacing >= cell_w.min(cell_h) {
+        return Err(format!(
+            "a spacing of {} leaves no room in a {cell_w}x{cell_h} cell",
+            display.spacing
+        ));
+    }
+
+    let mut feeds = Vec::with_capacity(display.viewports.len());
+    let mut viewports = Vec::with_capacity(display.viewports.len());
+    for (i, viewport) in display.viewports.iter().enumerate() {
+        let (_, cell) = &display.layout.slots[viewport.slot];
+        let props = card.plane_props(planes[i])?;
+        let touches_right = cell.col + cell.span == grid;
+        let touches_bottom = cell.row + cell.span == grid;
+        let gap_w = if touches_right { 0 } else { display.spacing };
+        let gap_h = if touches_bottom { 0 } else { display.spacing };
+        viewports.push(Viewport {
+            plane: planes[i],
+            props,
+            crtc_x: (cell.col * cell_w) as i32,
+            crtc_y: (cell.row * cell_h) as i32,
+            crtc_w: cell.span * cell_w - gap_w,
+            crtc_h: cell.span * cell_h - gap_h,
+            gap_w,
+            gap_h,
+            src_w: 0,
+            src_h: 0,
+        });
+        feeds.push(Feeds::new_at(
+            viewport
+                .feeds
+                .iter()
+                .map(|&f| Tap::new(sources[f].clone()))
+                .collect(),
+            viewport.rotation_interval,
+            clock,
+        ));
+    }
+
+    let mut camera_indices = Vec::new();
+    for &feed in display.viewports.iter().flat_map(|v| &v.feeds) {
+        if !camera_indices.contains(&feed) {
+            camera_indices.push(feed);
+        }
+    }
+    let cameras = camera_indices
+        .into_iter()
+        .map(|f| Camera {
+            feed: sources[f].clone(),
+            fullscreen: fullscreen[f].clone(),
+        })
+        .collect();
+    Ok((viewports, feeds, cameras))
 }
 
 /// Drive every display from one loop, each paced by its own flips.
@@ -1227,11 +1312,63 @@ fn run_walls(
     let mut stopping = false;
 
     while !stopping {
+        let mut panel_changed = false;
         // Keep the latest requested state. OFF waits for outstanding flips
         // before changing DPMS, but prevents any further commits immediately.
         while let Ok(command) = commands.try_recv() {
             match command {
                 RendererCommand::DisplayPower(on) => display_requested_on = on,
+                RendererCommand::SelectPanel(panel) => {
+                    if let Some(wall) = walls.first_mut() {
+                        if wall.panel_scenes.contains_key(&panel) {
+                            wall.pending_fullscreen = None;
+                            if wall.current_panel.as_deref() == Some(panel.as_str()) {
+                                let had_pending = wall.pending_panel.take().is_some();
+                                wall.pending_since = None;
+                                let was = wall.mode;
+                                wall.show(Mode::Grid);
+                                panel_changed |= had_pending || was != wall.mode;
+                            } else {
+                                wall.pending_panel = Some(panel.clone());
+                                wall.pending_since = Some(Instant::now());
+                                // Prewarm only the first feed of each viewport:
+                                // no more than the number of visible panes, even
+                                // when a panel rotates through many cameras.
+                                let scene = &wall.panel_scenes[&panel];
+                                let first_feeds: Vec<usize> = scene
+                                    .viewports
+                                    .iter()
+                                    .filter_map(|viewport| viewport.feeds.first().copied())
+                                    .collect();
+                                let feed_count = wall.fullscreen_sources.len();
+                                for (index, source) in sources.iter().take(feed_count).enumerate() {
+                                    let current = wall.watched && wall.shows(source);
+                                    let incoming = wall.watched && first_feeds.contains(&index);
+                                    source.wanted.store(current || incoming, Ordering::Relaxed);
+                                }
+                            }
+                        } else {
+                            eprintln!("unknown panel requested: {panel}");
+                        }
+                    }
+                }
+                RendererCommand::SelectFullscreen(camera) => {
+                    if let Some(wall) = walls.first_mut() {
+                        if wall.pending_panel.is_some() {
+                            wall.pending_fullscreen = Some(camera);
+                        } else if let Some(at) = wall
+                            .cameras
+                            .iter()
+                            .position(|entry| entry.feed.name == camera)
+                        {
+                            let was = wall.mode;
+                            wall.show(Mode::Fullscreen(at));
+                            panel_changed |= was != wall.mode;
+                        } else {
+                            eprintln!("camera is not in the active panel: {camera}");
+                        }
+                    }
+                }
                 RendererCommand::Stop => {
                     stopping = true;
                     break;
@@ -1277,7 +1414,28 @@ fn run_walls(
 
             if changed {
                 for source in sources {
-                    let wanted = walls.iter().any(|w| w.watched && w.shows(source));
+                    let wanted = walls.iter().any(|wall| {
+                        if !wall.watched {
+                            return false;
+                        }
+                        if wall.shows(source) {
+                            return true;
+                        }
+                        let Some(panel) = wall.pending_panel.as_ref() else {
+                            return false;
+                        };
+                        let feed_index = sources
+                            .iter()
+                            .take(wall.fullscreen_sources.len())
+                            .position(|candidate| Arc::ptr_eq(candidate, source));
+                        feed_index.is_some_and(|index| {
+                            wall.panel_scenes[panel]
+                                .viewports
+                                .iter()
+                                .filter_map(|viewport| viewport.feeds.first())
+                                .any(|feed| *feed == index)
+                        })
+                    });
                     source.wanted.store(wanted, Ordering::Relaxed);
                 }
             }
@@ -1292,9 +1450,101 @@ fn run_walls(
                 // A display is only due once its last commit has flipped, so
                 // on_screen is what its planes show now.
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
-                let target = wall.watched.then_some(wall.mode);
                 let mut ready = Vec::new();
-                if wall.laid_out != target {
+                if let Some(panel) = wall.pending_panel.clone() {
+                    let scene = wall.panel_scenes[&panel].clone();
+                    let first_feeds_ready = scene
+                        .viewports
+                        .iter()
+                        .filter_map(|viewport| viewport.feeds.first().copied())
+                        .all(|feed| {
+                            sources
+                                .get(feed)
+                                .is_some_and(|source| source.frame().0.is_some())
+                        });
+                    let timed_out = wall
+                        .pending_since
+                        .is_some_and(|since| since.elapsed() >= PANEL_PREWARM_TIMEOUT);
+                    if first_feeds_ready || timed_out || !wall.watched {
+                        // Keep the old scene's framebuffer references until its
+                        // detach commit has flipped. Only then may viewport indices
+                        // and their backing vectors be replaced.
+                        ready = let_go(&wall.viewports, showing, 0);
+                    } else {
+                        // Keep presenting the old scene while the incoming panel
+                        // warms up, so the user does not stare at a blank screen.
+                        ready = match wall.mode {
+                            Mode::Grid => {
+                                collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
+                            }
+                            Mode::Fullscreen(at) => collect_fullscreen(
+                                &wall.viewports,
+                                showing,
+                                &wall.cameras[at],
+                                wall.size,
+                                &mut wall.fullscreen_tap,
+                                clock,
+                            ),
+                        };
+                    }
+                    if ready.is_empty() && (first_feeds_ready || timed_out || !wall.watched) {
+                        drop(showing);
+                        let scene = wall.panel_scenes[&panel].clone();
+                        let feed_count = wall.fullscreen_sources.len();
+                        match scene_parts(
+                            card,
+                            &sources[..feed_count],
+                            &wall.fullscreen_sources,
+                            &scene,
+                            &wall.plane_pool,
+                            wall.size,
+                            clock,
+                        ) {
+                            Ok((viewports, feeds, cameras)) => {
+                                wall.viewports = viewports;
+                                wall.feeds = feeds;
+                                wall.cameras = cameras;
+                                wall.on_screen = vec![None; wall.viewports.len()];
+                                wall.current_panel = Some(panel.clone());
+                                wall.pending_panel = None;
+                                wall.pending_since = None;
+                                wall.mode = Mode::Grid;
+                                if let Some(camera) = wall.pending_fullscreen.take() {
+                                    if let Some(at) = wall
+                                        .cameras
+                                        .iter()
+                                        .position(|entry| entry.feed.name == camera)
+                                    {
+                                        wall.show(Mode::Fullscreen(at));
+                                    } else {
+                                        eprintln!("camera is not in panel '{panel}': {camera}");
+                                    }
+                                }
+                                wall.laid_out = None;
+                                wall.fullscreen_tap = None;
+                                wall.turns += 1;
+                                panel_changed = true;
+                                println!("{}: panel switched to {panel}", wall.out.name);
+                            }
+                            Err(error) => {
+                                // A malformed or unrenderable panel must not
+                                // take down the renderer. The old scene is
+                                // still intact and can be laid out again.
+                                eprintln!("panel switch to '{panel}' refused: {error}");
+                                wall.pending_panel = None;
+                                wall.pending_since = None;
+                                wall.pending_fullscreen = None;
+                                wall.mode = Mode::Grid;
+                                wall.laid_out = None;
+                                wall.fullscreen_tap = None;
+                                panel_changed = true;
+                            }
+                        }
+                    }
+                }
+                let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
+                let target = wall.watched.then_some(wall.mode);
+                if wall.pending_panel.is_none() && wall.laid_out != target {
                     // Every plane let go of, once, and whatever comes next laid
                     // out afresh once that has flipped. Paused, that is all until
                     // someone is watching again: the planes would otherwise hold
@@ -1306,7 +1556,7 @@ fn run_walls(
                         wall.fullscreen_tap = None;
                     }
                 }
-                if wall.laid_out == target {
+                if wall.pending_panel.is_none() && wall.laid_out == target {
                     ready = match target {
                         None => continue,
                         Some(Mode::Grid) => {
@@ -1351,6 +1601,13 @@ fn run_walls(
                         commit_gripe.say(format_args!("commit on {}: {e}", wall.out.name));
                     }
                 }
+            }
+        }
+
+        if panel_changed {
+            for source in sources {
+                let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+                source.wanted.store(wanted, Ordering::Relaxed);
             }
         }
 
@@ -2760,6 +3017,18 @@ mod tests {
                 .collect(),
             Duration::from_millis(interval_ms),
         )
+    }
+
+    #[test]
+    fn a_new_panel_starts_rotation_on_its_first_feed_at_switch_time() {
+        let taps = (0..3)
+            .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}")))))
+            .collect();
+        let start = Duration::from_secs(123);
+        let feeds = Feeds::new_at(taps, Duration::from_secs(8), start);
+        assert_eq!(feeds.active(start), 0);
+        assert_eq!(feeds.active(start + Duration::from_secs(7)), 0);
+        assert_eq!(feeds.active(start + Duration::from_secs(8)), 1);
     }
 
     /// The turn follows from the clock alone, so two viewports with the same

@@ -36,11 +36,62 @@ impl NativeRendererController {
     }
 
     pub async fn select_panel(&self, panel: &str) -> anyhow::Result<()> {
+        if panel.contains('\n') || panel.contains('\r') {
+            anyhow::bail!("panel id contains a line break");
+        }
+        let _operation = self.operation.lock().await;
+        let mut guard = self.child.lock().await;
+        let exited = match guard.as_mut() {
+            Some(running) => running.child.try_wait()?.is_some(),
+            None => false,
+        };
+        if exited {
+            guard.take();
+        }
+        if let Some(running) = guard.as_mut() {
+            let command = format!("PANEL {panel}\n");
+            running.stdin.write_all(command.as_bytes()).await?;
+            running.stdin.flush().await?;
+            return Ok(());
+        }
+        drop(guard);
+        // The first selection during service startup, or recovery after an
+        // unexpected renderer exit, starts the child. Later changes are IPC.
+        self.start_inner(panel, None).await
+    }
+
+    /// Reload the YAML-backed scene set after a configuration mutation.
+    /// Unlike ordinary panel selection, this intentionally restarts the
+    /// renderer so newly added cameras, panel definitions and settings are read.
+    pub async fn reload(&self, panel: &str) -> anyhow::Result<()> {
         self.restart(panel, None).await
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
-        self.restart(panel, Some(camera)).await
+        if panel.contains('\n')
+            || panel.contains('\r')
+            || camera.contains('\n')
+            || camera.contains('\r')
+        {
+            anyhow::bail!("panel or camera id contains a line break");
+        }
+        let _operation = self.operation.lock().await;
+        let mut guard = self.child.lock().await;
+        let exited = match guard.as_mut() {
+            Some(running) => running.child.try_wait()?.is_some(),
+            None => false,
+        };
+        if exited {
+            guard.take();
+        }
+        if let Some(running) = guard.as_mut() {
+            let commands = format!("FULLSCREEN {camera}\n");
+            running.stdin.write_all(commands.as_bytes()).await?;
+            running.stdin.flush().await?;
+            return Ok(());
+        }
+        drop(guard);
+        self.start_inner(panel, Some(camera)).await
     }
 
     pub async fn set_display_power(&self, on: bool) -> anyhow::Result<()> {
@@ -61,7 +112,10 @@ impl NativeRendererController {
     async fn restart(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
         let _operation = self.operation.lock().await;
         self.stop_inner().await;
+        self.start_inner(panel, fullscreen).await
+    }
 
+    async fn start_inner(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
         let mut command = Command::new(&self.binary_path);
         command
             .arg(&self.config_path)
@@ -105,11 +159,10 @@ impl NativeRendererController {
 
     async fn stop_inner(&self) {
         if let Some(mut running) = self.child.lock().await.take() {
-            // Panel selection starts a fresh renderer for the selected panel.
             // A graceful STOP asks every FFmpeg decoder to drain and join, but
-            // decoder reads can remain blocked on a live RTSP stream. Waiting
-            // for that shutdown made ordinary panel changes take up to 12s
-            // before the fallback kill, often twice when switching panels.
+            // decoder reads can remain blocked on a live RTSP stream. This
+            // path is now reserved for explicit config reloads and fullscreen
+            // startup; ordinary panel changes use the PANEL IPC command.
             // Terminate the renderer directly: its decoder threads are in the
             // same process, and the kernel releases its DRM/FFmpeg resources
             // when the process exits.
