@@ -41,13 +41,16 @@ impl NativeRendererController {
         }
         let _operation = self.operation.lock().await;
         let mut guard = self.child.lock().await;
-        let running = guard
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("native renderer is not running"))?;
-        let command = format!("PANEL {panel}\n");
-        running.stdin.write_all(command.as_bytes()).await?;
-        running.stdin.flush().await?;
-        Ok(())
+        if let Some(running) = guard.as_mut() {
+            let command = format!("PANEL {panel}\n");
+            running.stdin.write_all(command.as_bytes()).await?;
+            running.stdin.flush().await?;
+            return Ok(());
+        }
+        drop(guard);
+        // The first selection during service startup has no child yet; start
+        // it once with the requested scene. Subsequent selections are IPC.
+        self.start_inner(panel, None).await
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
@@ -72,7 +75,10 @@ impl NativeRendererController {
     async fn restart(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
         let _operation = self.operation.lock().await;
         self.stop_inner().await;
+        self.start_inner(panel, fullscreen).await
+    }
 
+    async fn start_inner(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
         let mut command = Command::new(&self.binary_path);
         command
             .arg(&self.config_path)
@@ -116,7 +122,6 @@ impl NativeRendererController {
 
     async fn stop_inner(&self) {
         if let Some(mut running) = self.child.lock().await.take() {
-            // Panel selection starts a fresh renderer for the selected panel.
             // A graceful STOP asks every FFmpeg decoder to drain and join, but
             // decoder reads can remain blocked on a live RTSP stream. Waiting
             // for that shutdown made ordinary panel changes take up to 12s
