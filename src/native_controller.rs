@@ -53,6 +53,13 @@ impl NativeRendererController {
         self.start_inner(panel, None).await
     }
 
+    /// Reload the YAML-backed scene set after a configuration mutation.
+    /// Unlike ordinary panel selection, this intentionally restarts the
+    /// renderer so newly added cameras, panel definitions and settings are read.
+    pub async fn reload(&self, panel: &str) -> anyhow::Result<()> {
+        self.restart(panel, None).await
+    }
+
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
         self.restart(panel, Some(camera)).await
     }
