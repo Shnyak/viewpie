@@ -68,9 +68,7 @@ impl NativeRendererController {
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
-        if panel.contains('
-') || panel.contains('') || camera.contains('
-') || camera.contains('') {
+        if panel.contains('\n') || panel.contains('\r') || camera.contains('\n') || camera.contains('\r') {
             anyhow::bail!("panel or camera id contains a line break");
         }
         let _operation = self.operation.lock().await;
@@ -83,9 +81,7 @@ impl NativeRendererController {
             guard.take();
         }
         if let Some(running) = guard.as_mut() {
-            let commands = format!("PANEL {panel}
-FULLSCREEN {camera}
-");
+            let commands = format!("PANEL {panel}\nFULLSCREEN {camera}\n");
             running.stdin.write_all(commands.as_bytes()).await?;
             running.stdin.flush().await?;
             return Ok(());
