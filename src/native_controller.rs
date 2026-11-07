@@ -85,7 +85,7 @@ impl NativeRendererController {
             guard.take();
         }
         if let Some(running) = guard.as_mut() {
-            let commands = format!("PANEL {panel}\nFULLSCREEN {camera}\n");
+            let commands = format!("FULLSCREEN {camera}\n");
             running.stdin.write_all(commands.as_bytes()).await?;
             running.stdin.flush().await?;
             return Ok(());
