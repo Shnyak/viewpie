@@ -68,7 +68,30 @@ impl NativeRendererController {
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
-        self.restart(panel, Some(camera)).await
+        if panel.contains('
+') || panel.contains('') || camera.contains('
+') || camera.contains('') {
+            anyhow::bail!("panel or camera id contains a line break");
+        }
+        let _operation = self.operation.lock().await;
+        let mut guard = self.child.lock().await;
+        let exited = match guard.as_mut() {
+            Some(running) => running.child.try_wait()?.is_some(),
+            None => false,
+        };
+        if exited {
+            guard.take();
+        }
+        if let Some(running) = guard.as_mut() {
+            let commands = format!("PANEL {panel}
+FULLSCREEN {camera}
+");
+            running.stdin.write_all(commands.as_bytes()).await?;
+            running.stdin.flush().await?;
+            return Ok(());
+        }
+        drop(guard);
+        self.start_inner(panel, Some(camera)).await
     }
 
     pub async fn set_display_power(&self, on: bool) -> anyhow::Result<()> {
