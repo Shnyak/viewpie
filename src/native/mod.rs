@@ -2247,6 +2247,10 @@ fn feed_session(
 ) -> Result<(), Refused> {
     let name = &source.name;
     let mut dec = Decoder::open(url, source.stats.clone(), limit, frames_held(displays))?;
+    eprintln!("{name}: selected decoder {}", dec.decoder_name);
+    if let Some(reason) = &dec.hardware_fallback {
+        eprintln!("{name}: hardware decoder fallback to software: {reason}");
+    }
     if let Some(unused) = &dec.unused {
         eprintln!("{name}: {unused}");
     }
