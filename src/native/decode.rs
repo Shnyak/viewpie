@@ -249,31 +249,25 @@ impl Decoder {
             // The hardware decoder may refuse the stream: too many sessions,
             // or one it cannot handle. A viewport showing a software-decoded
             // picture beats a viewport showing nothing.
-            let (mut codec_ctx, hardware_fallback) = match open_codec(
-                codec,
-                par,
-                true,
-                held,
-                &mut unknown,
-            ) {
-                Ok(ctx) => (ctx, None),
-                Err(hw_error) if !software.is_null() && codec != software => {
-                    match open_codec(software, par, false, held, &mut unknown) {
-                        Ok(ctx) => (ctx, Some(hw_error)),
-                        Err(software_error) => {
-                            return Err(close(format!(
-                                "hardware decoder {} failed: {}; software decoder {} failed: {}",
-                                std::ffi::CStr::from_ptr((*codec).name).to_string_lossy(),
-                                hw_error,
-                                std::ffi::CStr::from_ptr((*software).name).to_string_lossy(),
-                                software_error
-                            ))
-                            .into());
+            let (mut codec_ctx, hardware_fallback) =
+                match open_codec(codec, par, true, held, &mut unknown) {
+                    Ok(ctx) => (ctx, None),
+                    Err(hw_error) if !software.is_null() && codec != software => {
+                        match open_codec(software, par, false, held, &mut unknown) {
+                            Ok(ctx) => (ctx, Some(hw_error)),
+                            Err(software_error) => {
+                                return Err(close(format!(
+                                    "hardware decoder {} failed: {}; software decoder {} failed: {}",
+                                    std::ffi::CStr::from_ptr((*codec).name).to_string_lossy(),
+                                    hw_error,
+                                    std::ffi::CStr::from_ptr((*software).name).to_string_lossy(),
+                                    software_error
+                                )).into());
+                            }
                         }
                     }
-                }
-                Err(e) => return Err(close(e).into()),
-            };
+                    Err(e) => return Err(close(e).into()),
+                };
             let selected_codec = if hardware_fallback.is_some() {
                 software
             } else {
