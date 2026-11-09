@@ -1,3 +1,12 @@
+viewpie (0.2.13-fork-1) unstable; urgency=medium
+
+  * Log the actual FFmpeg H.264 decoder selected for each camera feed.
+  * Report the exact reason hardware decoding could not be opened when
+    falling back to the software decoder.
+  * Include both hardware and software decoder errors if neither can start.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Mon, 09 Nov 2026 14:30:00 +0000
+
 viewpie (0.2.12-fork-1) unstable; urgency=medium
 
   * Switch panels and fullscreen cameras in-process without restarting the
