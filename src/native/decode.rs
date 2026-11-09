@@ -249,8 +249,7 @@ impl Decoder {
             // The hardware decoder may refuse the stream: too many sessions,
             // or one it cannot handle. A viewport showing a software-decoded
             // picture beats a viewport showing nothing.
-            let hardware_result =
-                open_codec(codec, par, true, held, &mut unknown);
+            let hardware_result = open_codec(codec, par, true, held, &mut unknown);
             let (mut codec_ctx, hardware_fallback) = match hardware_result {
                 Ok(ctx) => (ctx, None),
                 Err(hw_error) if !software.is_null() && codec != software => {
