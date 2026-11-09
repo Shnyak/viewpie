@@ -101,6 +101,10 @@ pub struct Decoder {
     /// rather than printed here, so the caller can say which feed it was
     /// about in the same words it names every other line.
     pub unused: Option<String>,
+    /// The actual libav decoder implementation selected for this stream.
+    pub decoder_name: String,
+    /// Why the hardware decoder could not be opened, if software was used instead.
+    pub hardware_fallback: Option<String>,
     /// When the decoder last produced a picture, or the session started.
     last_picture: Instant,
     /// Whether next_frame gave up because PICTURE_TIMEOUT passed without a
@@ -245,16 +249,34 @@ impl Decoder {
             // The hardware decoder may refuse the stream: too many sessions,
             // or one it cannot handle. A viewport showing a software-decoded
             // picture beats a viewport showing nothing.
-            let mut codec_ctx = match open_codec(codec, par, true, held, &mut unknown) {
-                Ok(ctx) => ctx,
-                Err(_) if !software.is_null() && codec != software => {
+            let hardware_result = open_codec(codec, par, true, held, &mut unknown);
+            let (mut codec_ctx, hardware_fallback) = match hardware_result {
+                Ok(ctx) => (ctx, None),
+                Err(hw_error) if !software.is_null() && codec != software => {
                     match open_codec(software, par, false, held, &mut unknown) {
-                        Ok(ctx) => ctx,
-                        Err(e) => return Err(close(e).into()),
+                        Ok(ctx) => (ctx, Some(hw_error)),
+                        Err(software_error) => {
+                            return Err(close(format!(
+                                "hardware decoder {} failed: {}; software decoder {} failed: {}",
+                                std::ffi::CStr::from_ptr((*codec).name).to_string_lossy(),
+                                hw_error,
+                                std::ffi::CStr::from_ptr((*software).name).to_string_lossy(),
+                                software_error
+                            ))
+                            .into());
+                        }
                     }
                 }
                 Err(e) => return Err(close(e).into()),
             };
+            let selected_codec = if hardware_fallback.is_some() {
+                software
+            } else {
+                codec
+            };
+            let decoder_name = std::ffi::CStr::from_ptr((*selected_codec).name)
+                .to_string_lossy()
+                .into_owned();
             let unused = (!unknown.is_empty()).then(|| {
                 format!(
                     "this ffmpeg does not know {}; continuing without it",
@@ -270,6 +292,8 @@ impl Decoder {
 
             Ok(Decoder {
                 unused,
+                decoder_name,
+                hardware_fallback,
                 last_picture: Instant::now(),
                 stalled: false,
                 fmt,
