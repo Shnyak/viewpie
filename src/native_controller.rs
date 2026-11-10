@@ -59,6 +59,7 @@ impl NativeRendererController {
         if exited {
             // try_wait reaps an exited child. Only a missing/dead renderer
             // needs a new process; ordinary panel changes stay in-process.
+            self.decoder_status.write().await.clear();
             guard.take();
             drop(guard);
             return self.start_inner(panel, None).await;
