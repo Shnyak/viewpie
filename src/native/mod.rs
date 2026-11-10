@@ -79,6 +79,9 @@ struct Source {
     /// returned and all decoder-owned frames/context have been dropped.
     /// Panel changes use this as a barrier before opening the next panel.
     session_active: AtomicBool,
+    /// Serializes the wanted check with panel changes, so a feed cannot slip
+    /// into Decoder::open after the renderer has observed it as idle.
+    session_gate: Mutex<()>,
     /// Whether it is a camera's stream for fullscreen, connected only while
     /// a display shows it, and not worth a line in the report otherwise.
     on_demand: bool,
@@ -94,8 +97,16 @@ impl Source {
             stats: Arc::default(),
             wanted: AtomicBool::new(true),
             session_active: AtomicBool::new(false),
+            session_gate: Mutex::new(()),
             on_demand: false,
         }
+    }
+
+    /// Change demand under the same gate the feed thread uses before
+    /// opening a decoder. This makes stopping a panel a real barrier.
+    fn set_wanted(&self, wanted: bool) {
+        let _gate = self.session_gate.lock().unwrap();
+        self.wanted.store(wanted, Ordering::Release);
     }
 
     /// Its newest frame, if it has one, and how many it has published by
@@ -905,7 +916,7 @@ fn run(config: &Config) -> Result<(), String> {
     // when their scene is selected.
     for source in &sources {
         let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
-        source.wanted.store(wanted, Ordering::Relaxed);
+        source.set_wanted(wanted);
     }
 
     // Started once every wall is built, since until then nothing could show
@@ -1359,7 +1370,7 @@ fn run_walls(
                         let wanted = walls.iter().any(|wall| {
                             wall.watched && wall.pending_panel.is_none() && wall.shows(source)
                         });
-                        source.wanted.store(wanted, Ordering::Relaxed);
+                        source.set_wanted(wanted);
                     }
                 }
                 RendererCommand::SelectFullscreen(camera) => {
@@ -1430,7 +1441,7 @@ fn run_walls(
                         }
                         wall.pending_panel.is_none() && wall.shows(source)
                     });
-                    source.wanted.store(wanted, Ordering::Relaxed);
+                    source.set_wanted(wanted);
                 }
             }
         }
@@ -1596,7 +1607,7 @@ fn run_walls(
         if panel_changed {
             for source in sources {
                 let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
-                source.wanted.store(wanted, Ordering::Relaxed);
+                source.set_wanted(wanted);
             }
         }
 
@@ -1628,7 +1639,7 @@ fn run_walls(
     // of the pause/wanted state, which may become true again during runtime.
     shutdown.store(true, Ordering::Release);
     for source in sources {
-        source.wanted.store(false, Ordering::Release);
+        source.set_wanted(false);
     }
 
     // Drain every accepted page flip, then detach all planes and wait for
@@ -2073,13 +2084,28 @@ fn feed_thread(
         if shutdown.load(Ordering::Acquire) {
             break;
         }
-        // Not connected at all while nobody is watching: an open session
-        // costs the camera a stream and the network its bitrate, decoded or
-        // not.
-        while !source.wanted.load(Ordering::Relaxed) && !shutdown.load(Ordering::Acquire) {
+        // Claim the session under the same gate used by panel changes. Once
+        // the renderer sets wanted=false, no new decoder can slip past it.
+        loop {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            let start = {
+                let _gate = source.session_gate.lock().unwrap();
+                if source.wanted.load(Ordering::Acquire) {
+                    source.session_active.store(true, Ordering::Release);
+                    true
+                } else {
+                    false
+                }
+            };
+            if start {
+                break;
+            }
             std::thread::sleep(PAUSE_POLL);
         }
         if shutdown.load(Ordering::Acquire) {
+            source.session_active.store(false, Ordering::Release);
             break;
         }
         let started = Instant::now();
@@ -2091,12 +2117,14 @@ fn feed_thread(
             info.fallback_reason = None;
         }
         emit_decoder_status(&source);
-        source.session_active.store(true, Ordering::Release);
         let result = feed_session(url, &card, &source, displays, limit, &shutdown);
         // feed_session's local Decoder and framebuffer cache have been
-        // dropped before this flag goes false. The panel transition can now
-        // safely wait for the old hardware context to be released.
-        source.session_active.store(false, Ordering::Release);
+        // dropped before this flag goes false. Serialize with a panel request
+        // so the renderer cannot miss a session that is just finishing.
+        {
+            let _gate = source.session_gate.lock().unwrap();
+            source.session_active.store(false, Ordering::Release);
+        }
         let paused = !source.wanted.load(Ordering::Relaxed);
         if shutdown.load(Ordering::Acquire) {
             break;
