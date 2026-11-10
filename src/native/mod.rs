@@ -1038,10 +1038,6 @@ fn claim_planes(
 
 /// How long to wait between looks for a display that is not there yet.
 const DISPLAY_POLL: Duration = Duration::from_secs(5);
-/// Give the incoming panel's first camera in each viewport time to publish.
-/// A dead camera must not hold the old panel forever.
-const PANEL_PREWARM_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// Bring up one display, and describe the viewports it will show.
 fn build(
     card: &Arc<Card>,
