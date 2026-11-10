@@ -2143,6 +2143,11 @@ fn feed_thread(
             force_software,
         );
         let paused = !source.wanted.load(Ordering::Relaxed);
+        // A later panel may have fewer simultaneous feeds, so let this camera
+        // try hardware again after it has been deliberately taken off screen.
+        if paused {
+            force_software = false;
+        }
         if shutdown.load(Ordering::Acquire) {
             break;
         }
@@ -2174,7 +2179,8 @@ fn feed_thread(
             }
             Err(Refused::Failed(e)) => {
                 source.stats.errors.fetch_add(1, Ordering::Relaxed);
-                let stalled_hardware = e.starts_with("no picture for ")
+                let stalled_hardware = !paused
+                    && e.starts_with("no picture for ")
                     && source.decoder_info.lock().unwrap().decoder.as_deref()
                         == Some("h264_v4l2m2m");
                 if stalled_hardware && !force_software {
