@@ -312,7 +312,7 @@ impl Decoder {
     /// buffer back to the decoder. Do it while the buffer is still being
     /// scanned out and the viewport tears or shows another feed's pixels, so a
     /// frame has to outlive the flip that replaced it.
-    pub fn next_frame(&mut self, shutdown: &AtomicBool) -> Option<Frame> {
+    pub fn next_frame(&mut self, shutdown: &AtomicBool, wanted: &AtomicBool) -> Option<Frame> {
         unsafe {
             // A packet held back because the decoder's input queue was full.
             // Dropping it instead loses a frame, and on a stream with few
@@ -320,7 +320,7 @@ impl Decoder {
             let mut pending = false;
 
             loop {
-                if shutdown.load(Ordering::Acquire) {
+                if shutdown.load(Ordering::Acquire) || !wanted.load(Ordering::Relaxed) {
                     return None;
                 }
                 let frame = av_frame_alloc();
@@ -360,6 +360,9 @@ impl Decoder {
                 if !pending {
                     av_packet_unref(self.pkt);
                     loop {
+                        if shutdown.load(Ordering::Acquire) || !wanted.load(Ordering::Relaxed) {
+                            return None;
+                        }
                         let r = av_read_frame(self.fmt, self.pkt);
                         if r < 0 {
                             // The demuxer is out of data: the stream ended,

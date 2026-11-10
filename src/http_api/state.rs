@@ -74,6 +74,8 @@ pub struct AppState {
     pub backend: Arc<dyn DisplayBackend>,
     /// True when the native child process owns all camera decoders.
     pub native_pipeline: bool,
+    /// Latest actual decoder state reported by the native renderer child.
+    pub decoder_status: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 // ─────────────────────── process-wide singletons ───────────────────────
@@ -179,6 +181,7 @@ impl AppState {
         resolution: Resolution,
         config_path: &str,
         native_pipeline: bool,
+        decoder_status: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     ) -> (Self, mpsc::Receiver<WallCommand>) {
         let (tx, rx) = mpsc::channel(64);
 
@@ -222,6 +225,7 @@ impl AppState {
             manager,
             backend,
             native_pipeline,
+            decoder_status,
         };
         (state, rx)
     }
@@ -346,6 +350,7 @@ defaults:
             },
             "/tmp/nonexistent.yaml",
             false,
+            Arc::new(RwLock::new(HashMap::new())),
         )
         .await;
         assert_eq!(state.camera_names().await, vec!["a"]);

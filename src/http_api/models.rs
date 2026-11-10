@@ -151,6 +151,9 @@ pub struct StatusResponse {
     pub restart_available: bool,
     pub active_streams: usize,
     pub panels_count: usize,
+    /// Actual per-camera decoder path reported by the native renderer.
+    #[serde(default)]
+    pub decoder_status: Vec<serde_json::Value>,
 }
 
 /// Generic success envelope.
@@ -268,6 +271,7 @@ mod tests {
             restart_available: false,
             active_streams: 0,
             panels_count: 1,
+            decoder_status: vec![],
         };
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json["software_version"], env!("CARGO_PKG_VERSION"));

@@ -33,7 +33,7 @@ use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
 };
 use std::collections::HashMap;
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,9 +45,19 @@ use std::time::{Duration, Instant};
 /// One per feed however many viewports name it: a camera shown twice is
 /// still one connection and one decoder, and both viewports scan out the
 /// same buffer.
+#[derive(Default, Clone)]
+struct DecoderInfo {
+    decoder: Option<String>,
+    mode: Option<String>,
+    state: Option<String>,
+    fallback_reason: Option<String>,
+}
+
 struct Source {
     /// What the logs call this feed, as the configuration names it.
     name: String,
+    /// Actual decoder selected and the frame path it is producing.
+    decoder_info: Mutex<DecoderInfo>,
     /// The newest frame this feed has decoded.
     ///
     /// One lock for the framebuffer and its size together, because they are
@@ -75,6 +85,7 @@ impl Source {
     fn new(name: &str) -> Self {
         Source {
             name: name.to_string(),
+            decoder_info: Mutex::new(DecoderInfo::default()),
             shown: Mutex::new(None),
             stats: Arc::default(),
             wanted: AtomicBool::new(true),
@@ -1945,6 +1956,7 @@ fn report(sources: &[Arc<Source>], walls: &mut [Wall], marks: &mut Marks, clock:
         // No hardware/software here: the feed says so once when it opens,
         // beside the codec that explains it, and repeating it every ten
         // seconds crowds the line without ever changing.
+        emit_decoder_status(source);
         if wanted {
             println!(
                 "  {}: decoded {:.1} fps  errors={e}",
@@ -2093,11 +2105,24 @@ fn feed_thread(
             break;
         }
         let started = Instant::now();
+        {
+            let mut info = source.decoder_info.lock().unwrap();
+            info.decoder = None;
+            info.mode = None;
+            info.state = Some("starting".to_string());
+            info.fallback_reason = None;
+        }
+        emit_decoder_status(&source);
         let result = feed_session(url, &card, &source, displays, limit, &shutdown);
         let paused = !source.wanted.load(Ordering::Relaxed);
         if shutdown.load(Ordering::Acquire) {
             break;
         }
+        {
+            let mut info = source.decoder_info.lock().unwrap();
+            info.state = Some(if paused { "paused" } else { "error" }.to_string());
+        }
+        emit_decoder_status(&source);
         match result {
             // Ended for the pause, which the display has said.
             Ok(()) if paused => {}
@@ -2237,6 +2262,25 @@ impl Backoff {
 ///
 /// `limit` is the largest picture the display can show, and a stream larger
 /// than that is refused before anything decodes it.
+fn emit_decoder_status(source: &Source) {
+    let info = source.decoder_info.lock().unwrap().clone();
+    let wanted = source.wanted.load(Ordering::Relaxed);
+    let status = serde_json::json!({
+        "camera": source.name.clone(),
+        "decoder": info.decoder,
+        "mode": info.mode,
+        "state": if wanted {
+            info.state.unwrap_or_else(|| "unknown".to_string())
+        } else {
+            "paused".to_string()
+        },
+        "fallback_reason": info.fallback_reason,
+    });
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "VIEWPIE_DECODER_STATUS {status}");
+    let _ = stdout.flush();
+}
+
 fn feed_session(
     url: &str,
     card: &Arc<Card>,
@@ -2247,6 +2291,14 @@ fn feed_session(
 ) -> Result<(), Refused> {
     let name = &source.name;
     let mut dec = Decoder::open(url, source.stats.clone(), limit, frames_held(displays))?;
+    {
+        let mut info = source.decoder_info.lock().unwrap();
+        info.decoder = Some(dec.decoder_name.clone());
+        info.mode = None;
+        info.state = Some("starting".to_string());
+        info.fallback_reason = dec.hardware_fallback.clone();
+    }
+    emit_decoder_status(source);
     eprintln!("{name}: selected decoder {}", dec.decoder_name);
     if let Some(reason) = &dec.hardware_fallback {
         eprintln!("{name}: hardware decoder fallback to software: {reason}");
@@ -2277,7 +2329,7 @@ fn feed_session(
     let codec = dec.codec();
 
     while !shutdown.load(Ordering::Acquire) {
-        let Some(frame) = dec.next_frame(shutdown) else {
+        let Some(frame) = dec.next_frame(shutdown, &source.wanted) else {
             break;
         };
         if shutdown.load(Ordering::Acquire) {
@@ -2316,6 +2368,12 @@ fn feed_session(
                 // the path changing rather than about which feed this is.
                 let first = announced.is_none();
                 announced = Some(dmabuf);
+                {
+                    let mut info = source.decoder_info.lock().unwrap();
+                    info.mode = Some(if dmabuf { "hardware" } else { "software" }.to_string());
+                    info.state = Some("active".to_string());
+                }
+                emit_decoder_status(source);
                 eprintln!(
                     "{name}: {}{w}x{h} {codec}, decoded in {}",
                     if first {
