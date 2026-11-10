@@ -2120,6 +2120,7 @@ fn feed_thread(
             info.state = Some("starting".to_string());
             info.fallback_reason = None;
         }
+        emit_decoder_status(&source);
         let result = feed_session(url, &card, &source, displays, limit, &shutdown);
         let paused = !source.wanted.load(Ordering::Relaxed);
         if shutdown.load(Ordering::Acquire) {
@@ -2129,6 +2130,7 @@ fn feed_thread(
             let mut info = source.decoder_info.lock().unwrap();
             info.state = Some(if paused { "paused" } else { "error" }.to_string());
         }
+        emit_decoder_status(&source);
         match result {
             // Ended for the pause, which the display has said.
             Ok(()) if paused => {}
@@ -2268,6 +2270,18 @@ impl Backoff {
 ///
 /// `limit` is the largest picture the display can show, and a stream larger
 /// than that is refused before anything decodes it.
+fn emit_decoder_status(source: &Source) {
+    let info = source.decoder_info.lock().unwrap().clone();
+    let status = serde_json::json!({
+        "camera": source.name.clone(),
+        "decoder": info.decoder,
+        "mode": info.mode,
+        "state": info.state.unwrap_or_else(|| "unknown".to_string()),
+        "fallback_reason": info.fallback_reason,
+    });
+    println!("VIEWPIE_DECODER_STATUS {status}");
+}
+
 fn feed_session(
     url: &str,
     card: &Arc<Card>,
@@ -2285,6 +2299,7 @@ fn feed_session(
         info.state = Some("starting".to_string());
         info.fallback_reason = dec.hardware_fallback.clone();
     }
+    emit_decoder_status(source);
     eprintln!("{name}: selected decoder {}", dec.decoder_name);
     if let Some(reason) = &dec.hardware_fallback {
         eprintln!("{name}: hardware decoder fallback to software: {reason}");
@@ -2359,6 +2374,7 @@ fn feed_session(
                     info.mode = Some(if dmabuf { "hardware" } else { "software" }.to_string());
                     info.state = Some("active".to_string());
                 }
+                emit_decoder_status(source);
                 eprintln!(
                     "{name}: {}{w}x{h} {codec}, decoded in {}",
                     if first {
