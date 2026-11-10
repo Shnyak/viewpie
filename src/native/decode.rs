@@ -312,11 +312,7 @@ impl Decoder {
     /// buffer back to the decoder. Do it while the buffer is still being
     /// scanned out and the viewport tears or shows another feed's pixels, so a
     /// frame has to outlive the flip that replaced it.
-    pub fn next_frame(
-        &mut self,
-        shutdown: &AtomicBool,
-        wanted: &AtomicBool,
-    ) -> Option<Frame> {
+    pub fn next_frame(&mut self, shutdown: &AtomicBool, wanted: &AtomicBool) -> Option<Frame> {
         unsafe {
             // A packet held back because the decoder's input queue was full.
             // Dropping it instead loses a frame, and on a stream with few
