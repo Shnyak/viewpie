@@ -181,7 +181,7 @@ impl Decoder {
             // timeout at all.
             let mut unknown = unused_options(&mut opts, url);
             if r < 0 {
-                return Err(format!("open {url}: {}", av_err(r)).into());
+                return Err(format!("open RTSP stream: {}", av_err(r)).into();
             }
             let r = avformat_find_stream_info(fmt, std::ptr::null_mut());
             if r < 0 {
