@@ -271,6 +271,7 @@ mod tests {
             restart_available: false,
             active_streams: 0,
             panels_count: 1,
+            decoder_status: vec![],
         };
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json["software_version"], env!("CARGO_PKG_VERSION"));
