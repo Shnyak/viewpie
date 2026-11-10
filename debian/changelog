@@ -1,3 +1,12 @@
+viewpie (0.2.14-fork-1) unstable; urgency=medium
+
+  * Serialize panel changes by stopping and reaping the previous native
+    renderer before starting the selected panel renderer.
+  * Release FFmpeg, V4L2 and DRM resources between panels to avoid overlapping
+    H.264 hardware decoder sessions on resource-constrained Raspberry Pi boards.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Tue, 10 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.13-fork-1) unstable; urgency=medium
 
   * Log the actual FFmpeg H.264 decoder selected for each camera feed.
