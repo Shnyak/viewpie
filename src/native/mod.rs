@@ -33,7 +33,7 @@ use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
 };
 use std::collections::HashMap;
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1956,15 +1956,7 @@ fn report(sources: &[Arc<Source>], walls: &mut [Wall], marks: &mut Marks, clock:
         // No hardware/software here: the feed says so once when it opens,
         // beside the codec that explains it, and repeating it every ten
         // seconds crowds the line without ever changing.
-        let info = source.decoder_info.lock().unwrap().clone();
-        let decoder_status = serde_json::json!({
-            "camera": source.name.clone(),
-            "decoder": info.decoder,
-            "mode": info.mode,
-            "state": if wanted { info.state.as_deref().unwrap_or("starting") } else { "paused" },
-            "fallback_reason": info.fallback_reason,
-        });
-        println!("VIEWPIE_DECODER_STATUS {decoder_status}");
+        emit_decoder_status(source);
         if wanted {
             println!(
                 "  {}: decoded {:.1} fps  errors={e}",
@@ -2272,14 +2264,21 @@ impl Backoff {
 /// than that is refused before anything decodes it.
 fn emit_decoder_status(source: &Source) {
     let info = source.decoder_info.lock().unwrap().clone();
+    let wanted = source.wanted.load(Ordering::Relaxed);
     let status = serde_json::json!({
         "camera": source.name.clone(),
         "decoder": info.decoder,
         "mode": info.mode,
-        "state": info.state.unwrap_or_else(|| "unknown".to_string()),
+        "state": if wanted {
+            info.state.unwrap_or_else(|| "unknown".to_string())
+        } else {
+            "paused".to_string()
+        },
         "fallback_reason": info.fallback_reason,
     });
-    println!("VIEWPIE_DECODER_STATUS {status}");
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "VIEWPIE_DECODER_STATUS {status}");
+    let _ = stdout.flush();
 }
 
 fn feed_session(
