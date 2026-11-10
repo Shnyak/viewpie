@@ -1,3 +1,14 @@
+viewpie (0.2.16-fork-1) unstable; urgency=medium
+
+  * Keep the native renderer alive across panel switches and send panel
+    changes to the running process instead of restarting it.
+  * Stop decoder feeds promptly when they are no longer needed by the active
+    panel, avoiding long waits on stale camera reads.
+  * Expose per-camera decoder state, actual hardware/software output mode and
+    hardware fallback reason through the status API.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Tue, 10 Nov 2026 12:00:00 +0000
+
 viewpie (0.2.15-fork-1) unstable; urgency=medium
 
   * Make the native renderer the sole owner of RTSP camera decoders in
