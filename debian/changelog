@@ -1,3 +1,13 @@
+viewpie (0.2.15-fork-1) unstable; urgency=medium
+
+  * Make the native renderer the sole owner of RTSP camera decoders in
+    native-pipeline mode; prevent the API-side FeedPool from opening duplicate
+    streams during startup, panel switching, fullscreen, pause and resume.
+  * Keep the existing FeedPool lifecycle for non-native operation and add a
+    regression test covering native-pipeline decoder ownership.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Tue, 10 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.14-fork-1) unstable; urgency=medium
 
   * Serialize panel changes by stopping and reaping the previous native
