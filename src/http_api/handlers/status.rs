@@ -25,10 +25,17 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
     let active_panel = state.manager.active_id().await;
     let panel = state.manager.get_panel(&active_panel).await.ok();
     let active_panel_name = panel.as_ref().map(|p| p.name.clone()).unwrap_or_default();
-    let layout = panel.map(|p| p.layout).unwrap_or_default();
+    let layout = panel.as_ref().map(|p| p.layout.clone()).unwrap_or_default();
 
     let cameras = state.camera_names().await;
-    let active_streams = state.feeds_pool.active_streams().await.len();
+    // In native-pipeline mode the API process deliberately owns no decoders;
+    // report the configured stream count for the active panel instead of the
+    // empty API-side FeedPool. The child renderer is the sole RTSP owner.
+    let active_streams = if state.native_pipeline {
+        panel.as_ref().map(|p| p.camera_count()).unwrap_or(0)
+    } else {
+        state.feeds_pool.active_streams().await.len()
+    };
     let panels_count = state.manager.count().await;
     let uptime_seconds = chrono::Utc::now()
         .signed_duration_since(state.uptime_started)
