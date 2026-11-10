@@ -151,6 +151,9 @@ pub struct StatusResponse {
     pub restart_available: bool,
     pub active_streams: usize,
     pub panels_count: usize,
+    /// Actual per-camera decoder path reported by the native renderer.
+    #[serde(default)]
+    pub decoder_status: Vec<serde_json::Value>,
 }
 
 /// Generic success envelope.
