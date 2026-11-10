@@ -39,12 +39,28 @@ impl NativeRendererController {
         if panel.contains('\n') || panel.contains('\r') {
             anyhow::bail!("panel id contains a line break");
         }
-        // A panel change starts a fresh native renderer. This deliberately
-        // serializes H.264 decoder sessions: the previous process is killed
-        // and reaped before the new panel opens its RTSP streams. In-process
-        // prewarming briefly ran both panels' V4L2/MMAL decoders together and
-        // caused bcm2835-codec/VCHIQ allocation failures on the Pi 3.
-        self.restart(panel, None).await
+        let _operation = self.operation.lock().await;
+        let mut guard = self.child.lock().await;
+        let exited = match guard.as_mut() {
+            Some(running) => running.child.try_wait()?.is_some(),
+            None => true,
+        };
+        if exited {
+            // try_wait reaps an exited child. Only a missing/dead renderer
+            // needs a new process; ordinary panel changes stay in-process.
+            guard.take();
+            drop(guard);
+            return self.start_inner(panel, None).await;
+        }
+
+        // The native renderer already owns every configured Source and
+        // supports PANEL over stdin. Keep those decoder sessions alive and
+        // let its render loop prewarm only the incoming scene's first feeds.
+        let running = guard.as_mut().expect("live renderer was checked above");
+        let command = format!("PANEL {panel}\\n");
+        running.stdin.write_all(command.as_bytes()).await?;
+        running.stdin.flush().await?;
+        Ok(())
     }
 
     /// Reload the YAML-backed scene set after a configuration mutation.
