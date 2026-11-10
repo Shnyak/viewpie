@@ -2133,7 +2133,15 @@ fn feed_thread(
             info.fallback_reason = None;
         }
         emit_decoder_status(&source);
-        let result = feed_session(url, &card, &source, displays, limit, &shutdown, force_software);
+        let result = feed_session(
+            url,
+            &card,
+            &source,
+            displays,
+            limit,
+            &shutdown,
+            force_software,
+        );
         let paused = !source.wanted.load(Ordering::Relaxed);
         if shutdown.load(Ordering::Acquire) {
             break;
