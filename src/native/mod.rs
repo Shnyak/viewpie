@@ -75,6 +75,13 @@ struct Source {
     /// the wall pauses off screen; while it is not, the feed disconnects and
     /// decodes nothing.
     wanted: AtomicBool,
+    /// True from just before opening a decoder until its session has fully
+    /// returned and all decoder-owned frames/context have been dropped.
+    /// Panel changes use this as a barrier before opening the next panel.
+    session_active: AtomicBool,
+    /// Serializes the wanted check with panel changes, so a feed cannot slip
+    /// into Decoder::open after the renderer has observed it as idle.
+    session_gate: Mutex<()>,
     /// Whether it is a camera's stream for fullscreen, connected only while
     /// a display shows it, and not worth a line in the report otherwise.
     on_demand: bool,
@@ -89,8 +96,17 @@ impl Source {
             shown: Mutex::new(None),
             stats: Arc::default(),
             wanted: AtomicBool::new(true),
+            session_active: AtomicBool::new(false),
+            session_gate: Mutex::new(()),
             on_demand: false,
         }
+    }
+
+    /// Change demand under the same gate the feed thread uses before
+    /// opening a decoder. This makes stopping a panel a real barrier.
+    fn set_wanted(&self, wanted: bool) {
+        let _gate = self.session_gate.lock().unwrap();
+        self.wanted.store(wanted, Ordering::Release);
     }
 
     /// Its newest frame, if it has one, and how many it has published by
@@ -439,7 +455,6 @@ struct Wall {
     fullscreen_sources: Vec<Option<Arc<Source>>>,
     current_panel: Option<String>,
     pending_panel: Option<String>,
-    pending_since: Option<Instant>,
     pending_fullscreen: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
     feeds: Vec<Feeds>,
@@ -901,7 +916,7 @@ fn run(config: &Config) -> Result<(), String> {
     // when their scene is selected.
     for source in &sources {
         let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
-        source.wanted.store(wanted, Ordering::Relaxed);
+        source.set_wanted(wanted);
     }
 
     // Started once every wall is built, since until then nothing could show
@@ -1023,10 +1038,6 @@ fn claim_planes(
 
 /// How long to wait between looks for a display that is not there yet.
 const DISPLAY_POLL: Duration = Duration::from_secs(5);
-/// Give the incoming panel's first camera in each viewport time to publish.
-/// A dead camera must not hold the old panel forever.
-const PANEL_PREWARM_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// Bring up one display, and describe the viewports it will show.
 fn build(
     card: &Arc<Card>,
@@ -1190,7 +1201,6 @@ fn build(
         fullscreen_sources: fullscreen.to_vec(),
         current_panel: active_panel,
         pending_panel: None,
-        pending_since: None,
         pending_fullscreen: None,
         feeds,
         commits: 0,
@@ -1335,32 +1345,28 @@ fn run_walls(
                             wall.pending_fullscreen = None;
                             if wall.current_panel.as_deref() == Some(panel.as_str()) {
                                 let had_pending = wall.pending_panel.take().is_some();
-                                wall.pending_since = None;
                                 let was = wall.mode;
                                 wall.show(Mode::Grid);
                                 panel_changed |= had_pending || was != wall.mode;
                             } else {
+                                // Stop feeds unique to the old panel. Do not
+                                // prewarm the incoming panel: on a Pi 3 that
+                                // overlaps V4L2 decoder contexts and forces the
+                                // new feeds into software decoding.
                                 wall.pending_panel = Some(panel.clone());
-                                wall.pending_since = Some(Instant::now());
-                                // Prewarm only the first feed of each viewport:
-                                // no more than the number of visible panes, even
-                                // when a panel rotates through many cameras.
-                                let scene = &wall.panel_scenes[&panel];
-                                let first_feeds: Vec<usize> = scene
-                                    .viewports
-                                    .iter()
-                                    .filter_map(|viewport| viewport.feeds.first().copied())
-                                    .collect();
-                                let feed_count = wall.fullscreen_sources.len();
-                                for (index, source) in sources.iter().take(feed_count).enumerate() {
-                                    let current = wall.watched && wall.shows(source);
-                                    let incoming = wall.watched && first_feeds.contains(&index);
-                                    source.wanted.store(current || incoming, Ordering::Relaxed);
-                                }
                             }
                         } else {
                             eprintln!("unknown panel requested: {panel}");
                         }
+                    }
+                    // A pending panel owns the transition. Keep feeds required
+                    // by other displays alive, but stop this wall's old-only
+                    // feeds so their decoder contexts can be released.
+                    for source in sources {
+                        let wanted = walls.iter().any(|wall| {
+                            wall.watched && wall.pending_panel.is_none() && wall.shows(source)
+                        });
+                        source.set_wanted(wanted);
                     }
                 }
                 RendererCommand::SelectFullscreen(camera) => {
@@ -1429,25 +1435,9 @@ fn run_walls(
                         if !wall.watched {
                             return false;
                         }
-                        if wall.shows(source) {
-                            return true;
-                        }
-                        let Some(panel) = wall.pending_panel.as_ref() else {
-                            return false;
-                        };
-                        let feed_index = sources
-                            .iter()
-                            .take(wall.fullscreen_sources.len())
-                            .position(|candidate| Arc::ptr_eq(candidate, source));
-                        feed_index.is_some_and(|index| {
-                            wall.panel_scenes[panel]
-                                .viewports
-                                .iter()
-                                .filter_map(|viewport| viewport.feeds.first())
-                                .any(|feed| *feed == index)
-                        })
+                        wall.pending_panel.is_none() && wall.shows(source)
                     });
-                    source.wanted.store(wanted, Ordering::Relaxed);
+                    source.set_wanted(wanted);
                 }
             }
         }
@@ -1464,26 +1454,23 @@ fn run_walls(
                 let mut ready = Vec::new();
                 if let Some(panel) = wall.pending_panel.clone() {
                     let scene = wall.panel_scenes[&panel].clone();
-                    let first_feeds_ready = scene
-                        .viewports
-                        .iter()
-                        .filter_map(|viewport| viewport.feeds.first().copied())
-                        .all(|feed| {
-                            sources
-                                .get(feed)
-                                .is_some_and(|source| source.frame().0.is_some())
-                        });
-                    let timed_out = wall
-                        .pending_since
-                        .is_some_and(|since| since.elapsed() >= PANEL_PREWARM_TIMEOUT);
-                    if first_feeds_ready || timed_out || !wall.watched {
+                    // Do not detach the old scene until every feed it alone
+                    // needed has returned from feed_session. Returning drops
+                    // the Decoder; the old scanout references are then drained
+                    // by the detach flip below before the next panel is enabled.
+                    let outgoing_stopped = sources.iter().all(|source| {
+                        !wall.shows(source)
+                            || source.wanted.load(Ordering::Relaxed)
+                            || !source.session_active.load(Ordering::Acquire)
+                    });
+                    if outgoing_stopped || !wall.watched {
                         // Keep the old scene's framebuffer references until its
                         // detach commit has flipped. Only then may viewport indices
                         // and their backing vectors be replaced.
                         ready = let_go(&wall.viewports, showing, 0);
                     } else {
-                        // Keep presenting the old scene while the incoming panel
-                        // warms up, so the user does not stare at a blank screen.
+                        // Keep presenting the old scene while its decoder
+                        // sessions and scanout references are being released.
                         ready = match wall.mode {
                             Mode::Grid => {
                                 collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
@@ -1498,7 +1485,7 @@ fn run_walls(
                             ),
                         };
                     }
-                    if ready.is_empty() && (first_feeds_ready || timed_out || !wall.watched) {
+                    if ready.is_empty() && (outgoing_stopped || !wall.watched) {
                         drop(showing);
                         let scene = wall.panel_scenes[&panel].clone();
                         let feed_count = wall.fullscreen_sources.len();
@@ -1518,7 +1505,6 @@ fn run_walls(
                                 wall.on_screen = vec![None; wall.viewports.len()];
                                 wall.current_panel = Some(panel.clone());
                                 wall.pending_panel = None;
-                                wall.pending_since = None;
                                 wall.mode = Mode::Grid;
                                 if let Some(camera) = wall.pending_fullscreen.take() {
                                     if let Some(at) = wall
@@ -1543,7 +1529,6 @@ fn run_walls(
                                 // still intact and can be laid out again.
                                 eprintln!("panel switch to '{panel}' refused: {error}");
                                 wall.pending_panel = None;
-                                wall.pending_since = None;
                                 wall.pending_fullscreen = None;
                                 wall.mode = Mode::Grid;
                                 wall.laid_out = None;
@@ -1618,7 +1603,7 @@ fn run_walls(
         if panel_changed {
             for source in sources {
                 let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
-                source.wanted.store(wanted, Ordering::Relaxed);
+                source.set_wanted(wanted);
             }
         }
 
@@ -1650,7 +1635,7 @@ fn run_walls(
     // of the pause/wanted state, which may become true again during runtime.
     shutdown.store(true, Ordering::Release);
     for source in sources {
-        source.wanted.store(false, Ordering::Release);
+        source.set_wanted(false);
     }
 
     // Drain every accepted page flip, then detach all planes and wait for
@@ -2095,13 +2080,28 @@ fn feed_thread(
         if shutdown.load(Ordering::Acquire) {
             break;
         }
-        // Not connected at all while nobody is watching: an open session
-        // costs the camera a stream and the network its bitrate, decoded or
-        // not.
-        while !source.wanted.load(Ordering::Relaxed) && !shutdown.load(Ordering::Acquire) {
+        // Claim the session under the same gate used by panel changes. Once
+        // the renderer sets wanted=false, no new decoder can slip past it.
+        loop {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            let start = {
+                let _gate = source.session_gate.lock().unwrap();
+                if source.wanted.load(Ordering::Acquire) {
+                    source.session_active.store(true, Ordering::Release);
+                    true
+                } else {
+                    false
+                }
+            };
+            if start {
+                break;
+            }
             std::thread::sleep(PAUSE_POLL);
         }
         if shutdown.load(Ordering::Acquire) {
+            source.session_active.store(false, Ordering::Release);
             break;
         }
         let started = Instant::now();
@@ -2168,6 +2168,12 @@ fn feed_thread(
         // each display's flip that blanks them. The next session imports its
         // own.
         source.shown.lock().unwrap().take();
+        // The decoder and its last published frame are both gone now. Only
+        // after this point may the next panel start opening hardware decoders.
+        {
+            let _gate = source.session_gate.lock().unwrap();
+            source.session_active.store(false, Ordering::Release);
+        }
         // Back as soon as someone is watching again, which is no reflection
         // on the camera.
         if shutdown.load(Ordering::Acquire) {
