@@ -1,67 +1,8 @@
 [package]
 name = "viewpie"
-version = "0.2.14-fork"
+version = "0.2.15-fork"
 edition = "2021"
 description = "Fork of snoack/viewpie with HTTP REST API, panels and dynamic configuration (AI-generated modifications)"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/snoack/viewpie"
 default-run = "viewpie"
-
-[[bin]]
-name = "viewpie"
-path = "src/main.rs"
-
-# Headless test binary: same application logic, but without KMS/DRM and
-# FFmpeg hardware decoding. Used by the integration tests in tests/.
-[[bin]]
-name = "viewpie-native"
-path = "src/bin/viewpie-native.rs"
-required-features = ["native-pipeline"]
-
-[[bin]]
-name = "viewpie-headless"
-path = "src/bin/headless.rs"
-
-[dependencies]
-anyhow = "1"
-async-trait = "0.1"
-axum = { version = "0.7", features = ["json", "macros"] }
-chrono = { version = "0.4", features = ["serde"] }
-dashmap = "5"
-futures = "0.3"
-reqwest = { version = "0.11", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
-thiserror = "1"
-tokio = { version = "1", features = ["full", "signal", "sync"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4"] }
-yaml-rust2 = { version = "0.13", optional = true }
-rustix = { version = "1", features = ["event"], optional = true }
-libc = "0.2"
-
-# The native FFmpeg/libav + DRM/KMS pipeline is enabled for ARM release builds
-# with `--features hw`. The optional feature keeps default desktop/headless
-# builds independent of FFmpeg headers and native DRM bindings. The API-side
-# CEC bridge talks to /dev/cec0 directly and does not need libcec-rs.
-[features]
-default = []
-hw = ["dep:drm", "native-pipeline"]
-native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix"]
-
-[dependencies.drm]
-# Версия drm 0.15 соответствует используемому API.
-version = "0.15"
-optional = true
-
-[build-dependencies]
-bindgen = "0.71"
-
-[dev-dependencies]
-tempfile = "3"
-
-[profile.release]
-opt-level = 2
