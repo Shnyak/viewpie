@@ -345,6 +345,7 @@ defaults:
                 height: 480,
             },
             "/tmp/nonexistent.yaml",
+            false,
         )
         .await;
         assert_eq!(state.camera_names().await, vec!["a"]);
