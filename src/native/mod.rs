@@ -2179,14 +2179,14 @@ fn feed_thread(
             }
             Err(Refused::Failed(e)) => {
                 source.stats.errors.fetch_add(1, Ordering::Relaxed);
-                let stalled_hardware = !paused
-                    && e.starts_with("no picture for ")
+                let failed_hardware = !paused
+                    && (e.starts_with("no picture for ") || e.starts_with("decoder failed:"))
                     && source.decoder_info.lock().unwrap().decoder.as_deref()
                         == Some("h264_v4l2m2m");
-                if stalled_hardware && !force_software {
+                if failed_hardware && !force_software {
                     force_software = true;
                     eprintln!(
-                        "{name}: hardware decoder stalled; switching this feed to software decoding"
+                        "{name}: hardware decoder stopped producing usable frames; switching this feed to software decoding"
                     );
                 }
                 // Not "retrying" when paused: it waits for the wall instead.
@@ -2533,6 +2533,9 @@ fn feed_session(
     }
     if dec.stalled {
         return Err(format!("no picture for {}s", decode::PICTURE_TIMEOUT.as_secs()).into());
+    }
+    if dec.decoder_failed {
+        return Err("decoder failed: receive/send operation returned an error".into());
     }
     Ok(())
 }
