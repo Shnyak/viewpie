@@ -2010,6 +2010,22 @@ fn report_wall(wall: &mut Wall, mark: &mut WallMark, secs: f64, clock: Duration)
     }
 }
 
+/// Hide RTSP user information from the journal while retaining the camera address.
+fn safe_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let authority_end = rest
+        .find(|c| c == '/' || c == '?' || c == '#')
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if let Some((_, host)) = authority.rsplit_once('@') {
+        format!("{scheme}://***@{}{}", host, &rest[authority_end..])
+    } else {
+        url.to_string()
+    }
+}
+
 /// Reports a per-frame failure at most once a second.
 ///
 /// Printing every one filled a Pi 3's 371MB /tmp with a single repeated line:
@@ -2068,6 +2084,7 @@ fn feed_thread(
 ) {
     let mut backoff = Backoff::new();
     let name = &source.name;
+    let display_url = safe_url(url);
     // Nothing is refused for its size if the card will not say what fits:
     // the kernel still has the last word when the frame arrives.
     let limit = card.largest_picture().unwrap_or((u32::MAX, u32::MAX));
@@ -2141,7 +2158,7 @@ fn feed_thread(
                 backoff.saturate();
                 if !std::mem::replace(&mut too_large, true) {
                     eprintln!(
-                        "{name} ({url}): {w}x{h} is larger than this display can show, \
+                        "{name} ({display_url}): {w}x{h} is larger than this display can show, \
                          {most_w}x{most_h} at most; trying again every {}s",
                         Backoff::MAX.as_secs()
                     );
@@ -2160,10 +2177,10 @@ fn feed_thread(
                 }
                 // Not "retrying" when paused: it waits for the wall instead.
                 if paused {
-                    eprintln!("{name} ({url}): {e}");
+                    eprintln!("{name} ({display_url}): {e}");
                 } else {
                     eprintln!(
-                        "{name} ({url}): {e}; retrying in {:.1}s",
+                        "{name} ({display_url}): {e}; retrying in {:.1}s",
                         backoff.next().as_secs_f32()
                     );
                 }
@@ -2309,6 +2326,7 @@ fn feed_session(
     force_software: bool,
 ) -> Result<(), Refused> {
     let name = &source.name;
+    let display_url = safe_url(url);
     let mut dec = Decoder::open(
         url,
         source.stats.clone(),
@@ -2402,7 +2420,7 @@ fn feed_session(
                 eprintln!(
                     "{name}: {}{w}x{h} {codec}, decoded in {}",
                     if first {
-                        format!("{url}, ")
+                        format!("{display_url}, ")
                     } else {
                         String::new()
                     },
