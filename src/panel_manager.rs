@@ -634,7 +634,10 @@ defaults:
             cfg.initial_panel(),
             pool.clone(),
             backend_dyn,
-            Resolution { width: 900, height: 600 },
+            Resolution {
+                width: 900,
+                height: 600,
+            },
             false,
         );
 
