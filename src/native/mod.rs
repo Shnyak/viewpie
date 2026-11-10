@@ -45,9 +45,19 @@ use std::time::{Duration, Instant};
 /// One per feed however many viewports name it: a camera shown twice is
 /// still one connection and one decoder, and both viewports scan out the
 /// same buffer.
+#[derive(Default, Clone)]
+struct DecoderInfo {
+    decoder: Option<String>,
+    mode: Option<String>,
+    state: Option<String>,
+    fallback_reason: Option<String>,
+}
+
 struct Source {
     /// What the logs call this feed, as the configuration names it.
     name: String,
+    /// Actual decoder selected and the frame path it is producing.
+    decoder_info: Mutex<DecoderInfo>,
     /// The newest frame this feed has decoded.
     ///
     /// One lock for the framebuffer and its size together, because they are
@@ -75,6 +85,7 @@ impl Source {
     fn new(name: &str) -> Self {
         Source {
             name: name.to_string(),
+            decoder_info: Mutex::new(DecoderInfo::default()),
             shown: Mutex::new(None),
             stats: Arc::default(),
             wanted: AtomicBool::new(true),
@@ -1945,6 +1956,15 @@ fn report(sources: &[Arc<Source>], walls: &mut [Wall], marks: &mut Marks, clock:
         // No hardware/software here: the feed says so once when it opens,
         // beside the codec that explains it, and repeating it every ten
         // seconds crowds the line without ever changing.
+        let info = source.decoder_info.lock().unwrap().clone();
+        let decoder_status = serde_json::json!({
+            "camera": source.name,
+            "decoder": info.decoder,
+            "mode": info.mode,
+            "state": if wanted { info.state.as_deref().unwrap_or("starting") } else { "paused" },
+            "fallback_reason": info.fallback_reason,
+        });
+        println!("VIEWPIE_DECODER_STATUS {decoder_status}");
         if wanted {
             println!(
                 "  {}: decoded {:.1} fps  errors={e}",
@@ -2093,10 +2113,21 @@ fn feed_thread(
             break;
         }
         let started = Instant::now();
+        {
+            let mut info = source.decoder_info.lock().unwrap();
+            info.decoder = None;
+            info.mode = None;
+            info.state = Some("starting".to_string());
+            info.fallback_reason = None;
+        }
         let result = feed_session(url, &card, &source, displays, limit, &shutdown);
         let paused = !source.wanted.load(Ordering::Relaxed);
         if shutdown.load(Ordering::Acquire) {
             break;
+        }
+        {
+            let mut info = source.decoder_info.lock().unwrap();
+            info.state = Some(if paused { "paused" } else { "error" }.to_string());
         }
         match result {
             // Ended for the pause, which the display has said.
@@ -2247,6 +2278,13 @@ fn feed_session(
 ) -> Result<(), Refused> {
     let name = &source.name;
     let mut dec = Decoder::open(url, source.stats.clone(), limit, frames_held(displays))?;
+    {
+        let mut info = source.decoder_info.lock().unwrap();
+        info.decoder = Some(dec.decoder_name.clone());
+        info.mode = None;
+        info.state = Some("starting".to_string());
+        info.fallback_reason = dec.hardware_fallback.clone();
+    }
     eprintln!("{name}: selected decoder {}", dec.decoder_name);
     if let Some(reason) = &dec.hardware_fallback {
         eprintln!("{name}: hardware decoder fallback to software: {reason}");
@@ -2316,6 +2354,11 @@ fn feed_session(
                 // the path changing rather than about which feed this is.
                 let first = announced.is_none();
                 announced = Some(dmabuf);
+                {
+                    let mut info = source.decoder_info.lock().unwrap();
+                    info.mode = Some(if dmabuf { "hardware" } else { "software" }.to_string());
+                    info.state = Some("active".to_string());
+                }
                 eprintln!(
                     "{name}: {}{w}x{h} {codec}, decoded in {}",
                     if first {
