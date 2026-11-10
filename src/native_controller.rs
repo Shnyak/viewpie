@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::io::AsyncWriteExt;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 struct RunningChild {
     child: Child,
@@ -14,6 +16,7 @@ pub struct NativeRendererController {
     binary_path: PathBuf,
     child: Mutex<Option<RunningChild>>,
     operation: Mutex<()>,
+    decoder_status: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 impl NativeRendererController {
@@ -32,7 +35,15 @@ impl NativeRendererController {
             binary_path,
             child: Mutex::new(None),
             operation: Mutex::new(()),
+            decoder_status: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Shared live decoder telemetry consumed by the HTTP status endpoint.
+    pub fn decoder_status_handle(
+        &self,
+    ) -> Arc<RwLock<HashMap<String, serde_json::Value>>> {
+        self.decoder_status.clone()
     }
 
     pub async fn select_panel(&self, panel: &str) -> anyhow::Result<()> {
@@ -114,6 +125,7 @@ impl NativeRendererController {
 
     async fn restart(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
         let _operation = self.operation.lock().await;
+        self.decoder_status.write().await.clear();
         self.stop_inner().await;
         self.start_inner(panel, fullscreen).await
     }
@@ -124,7 +136,7 @@ impl NativeRendererController {
             .arg(&self.config_path)
             .env("VIEWPIE_PANEL", panel)
             .stdin(Stdio::piped())
-            .stdout(Stdio::inherit())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
 
         if let Some(camera) = fullscreen {
@@ -144,6 +156,30 @@ impl NativeRendererController {
             .stdin
             .take()
             .ok_or_else(|| anyhow::anyhow!("failed to open native renderer stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to open native renderer stdout"))?;
+        let decoder_status = self.decoder_status.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(payload) = line.strip_prefix("VIEWPIE_DECODER_STATUS ") {
+                    match serde_json::from_str::<serde_json::Value>(payload) {
+                        Ok(status) => {
+                            if let Some(camera) = status.get("camera").and_then(|v| v.as_str()) {
+                                decoder_status.write().await.insert(camera.to_string(), status);
+                            }
+                        }
+                        Err(error) => tracing::warn!("invalid native decoder status event: {error}"),
+                    }
+                } else {
+                    // Preserve the renderer's existing journal output while
+                    // reserving the prefixed line for machine-readable events.
+                    tracing::info!(target: "viewpie::native", "{}", line);
+                }
+            }
+        });
 
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
