@@ -56,6 +56,9 @@ pub struct PanelManager {
     resolution: Resolution,
     /// Currently displayed feed per viewport slot (for rotation support).
     slot_feed: RwLock<HashMap<String, String>>,
+    /// Whether this manager owns RTSP decoder lifetimes. False when the native
+    /// renderer child is the sole decoder owner.
+    manage_feeds: bool,
 }
 
 impl PanelManager {
@@ -66,9 +69,21 @@ impl PanelManager {
         backend: Arc<dyn DisplayBackend>,
         resolution: Resolution,
     ) -> Self {
-        // Pre-compute the initial slot→feed map *before* constructing the
-        // locks so that `new` never needs `blocking_read/write`, which would
-        // panic when called from inside a tokio runtime (e.g. in tests).
+        Self::new_with_feed_management(panels, active, pool, backend, resolution, true)
+    }
+
+    /// Construct a manager whose renderer owns the camera feeds elsewhere.
+    /// In native-pipeline mode the child process is the sole owner of RTSP
+    /// decoders; the API-side manager only tracks panel metadata and state.
+    pub fn new_with_feed_management(
+        panels: HashMap<String, PanelConfig>,
+        active: String,
+        pool: Arc<FeedPool>,
+        backend: Arc<dyn DisplayBackend>,
+        resolution: Resolution,
+        manage_feeds: bool,
+    ) -> Self {
+        // Pre-compute the initial slot→feed map before constructing the locks.
         let mut slot_map = HashMap::new();
         if let Some(p) = panels.get(&active) {
             for vp in &p.viewports {
@@ -85,6 +100,7 @@ impl PanelManager {
             backend,
             resolution,
             slot_feed: RwLock::new(slot_map),
+            manage_feeds,
         }
     }
 
@@ -161,7 +177,7 @@ impl PanelManager {
         let old_slots = self.slot_feed.read().await.clone();
         let old_feeds: HashSet<String> = old_panel.feed_names().into_iter().collect();
         let new_feeds: HashSet<String> = panel.feed_names().into_iter().collect();
-        if active {
+        if active && self.manage_feeds {
             self.pool.apply_switch(&old_feeds, &new_feeds).await?;
         }
 
@@ -183,7 +199,7 @@ impl PanelManager {
                 Err(error) => {
                     self.panels.write().await.insert(id.to_string(), old_panel);
                     *self.slot_feed.write().await = old_slots;
-                    if active {
+                    if active && self.manage_feeds {
                         self.pool.apply_switch(&new_feeds, &old_feeds).await?;
                     }
                     return Err(error);
@@ -265,11 +281,15 @@ impl PanelManager {
         old_slots: HashMap<String, String>,
         fullscreen: Option<String>,
     ) -> Result<(), PanelError> {
-        self.pool.apply_switch(entering, leaving).await?;
+        if self.manage_feeds {
+            self.pool.apply_switch(entering, leaving).await?;
+        }
         *self.slot_feed.write().await = old_slots;
         if let Some(camera) = fullscreen {
             let _ = crate::http_api::state::set_fullscreen_state(Some(camera.clone())).await;
-            self.pool.start_fullscreen(&camera).await?;
+            if self.manage_feeds {
+                self.pool.start_fullscreen(&camera).await?;
+            }
         }
         Ok(())
     }
@@ -296,12 +316,16 @@ impl PanelManager {
         let old_slots = self.slot_feed.read().await.clone();
 
         // 1..5 — reference-counted diff on the shared decoder pool.
-        self.pool.apply_switch(&leaving, &entering).await?;
+        if self.manage_feeds {
+            self.pool.apply_switch(&leaving, &entering).await?;
+        }
 
         // 6 — reset fullscreen before committing the new grid.
         let fs = crate::http_api::state::clear_fullscreen_state().await;
         if let Some(cam) = fs.as_ref() {
-            self.pool.stop_fullscreen(cam).await;
+            if self.manage_feeds {
+                self.pool.stop_fullscreen(cam).await;
+            }
         }
 
         // Recompute slot→feed map for the new panel.
@@ -404,7 +428,9 @@ impl PanelManager {
             }
         }
         // Switch stream: sub → main.
-        self.pool.start_fullscreen(camera).await?;
+        if self.manage_feeds {
+            self.pool.start_fullscreen(camera).await?;
+        }
         let bg = crate::http_api::state::global_background().await;
         let frame = wall::fullscreen_frame(camera, &bg, 0);
         self.backend.commit(&frame).await?;
@@ -415,7 +441,9 @@ impl PanelManager {
     /// Leave fullscreen back to the grid of the active panel.
     pub async fn leave_fullscreen(&self) -> Result<(), PanelError> {
         if let Some(cam) = crate::http_api::state::clear_fullscreen_state().await {
-            self.pool.stop_fullscreen(&cam).await;
+            if self.manage_feeds {
+                self.pool.stop_fullscreen(&cam).await;
+            }
         }
         self.recomposite().await
     }
@@ -428,7 +456,9 @@ impl PanelManager {
     /// Pause everything: stop decoders, black screen. Pool preserved.
     pub async fn pause(&self) -> Result<(), PanelError> {
         crate::http_api::state::set_paused(true).await;
-        self.pool.pause_all().await;
+        if self.manage_feeds {
+            self.pool.pause_all().await;
+        }
         self.backend.black_screen().await?;
         info!("paused: all decoders stopped, black screen committed");
         Ok(())
@@ -439,7 +469,9 @@ impl PanelManager {
         crate::http_api::state::set_paused(false).await;
         let id = self.active_id().await;
         let feeds = self.feeds_of(&id).await;
-        self.pool.resume_feeds(&feeds).await?;
+        if self.manage_feeds {
+            self.pool.resume_feeds(&feeds).await?;
+        }
         if let Some(cam) = crate::http_api::state::current_fullscreen().await {
             self.pool.start_fullscreen(&cam).await?;
             let bg = crate::http_api::state::global_background().await;
@@ -487,7 +519,9 @@ impl PanelManager {
                 if let Some(p) = g.get(id) {
                     for f in p.feed_names() {
                         // best-effort: ignore feeds already gone from pool
-                        let _ = self.pool.release(&f).await;
+                        if self.manage_feeds {
+                            let _ = self.pool.release(&f).await;
+                        }
                     }
                 }
             }
