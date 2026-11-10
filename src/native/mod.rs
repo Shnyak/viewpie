@@ -1958,7 +1958,7 @@ fn report(sources: &[Arc<Source>], walls: &mut [Wall], marks: &mut Marks, clock:
         // seconds crowds the line without ever changing.
         let info = source.decoder_info.lock().unwrap().clone();
         let decoder_status = serde_json::json!({
-            "camera": source.name,
+            "camera": source.name.clone(),
             "decoder": info.decoder,
             "mode": info.mode,
             "state": if wanted { info.state.as_deref().unwrap_or("starting") } else { "paused" },
