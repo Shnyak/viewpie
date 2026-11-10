@@ -201,15 +201,15 @@ pub async fn activate_panel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    // The serialized command pump is the single owner of panel activation.
-    // Do not switch the manager here and then repeat the same operation in the
-    // pump: in native mode that also delays the HTTP response before the
-    // renderer is asked to change panels.
-    state
-        .command_tx
-        .send(WallCommand::SwitchPanel(id))
-        .await
-        .map_err(|_| ApiError::Internal("panel command queue is unavailable".into()))?;
+    // In native-pipeline mode the serialized command pump is the sole
+    // activation owner. The API-side manager must not start its own RTSP
+    // decoders before the child renderer receives the switch command.
+    // Keep the existing synchronous manager path for the non-native backend.
+    if !state.native_pipeline {
+        state.manager.switch_to(&id).await?;
+        *state.active_panel.write().await = id.clone();
+    }
+    let _ = state.command_tx.send(WallCommand::SwitchPanel(id)).await;
     Ok(Json(OkResponse::ok()))
 }
 
