@@ -203,9 +203,8 @@ impl AppState {
             !native_pipeline,
         ));
 
-        // Acquire refs for the initial panel (starts decoders). The manager
-        // starts in "no panel displayed" state, so this first switch_to is a
-        // full acquire pass rather than an idempotent re-commit.
+        // Register the initial panel. In the native pipeline this updates
+        // metadata only; the child renderer alone opens camera streams.
         let initial = manager.active_id().await;
         manager.switch_to(&initial).await.ok();
 
