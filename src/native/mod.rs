@@ -2884,6 +2884,18 @@ fn first_connected(
 mod tests {
     use super::*;
 
+    #[test]
+    fn rtsp_user_information_is_redacted_from_logs() {
+        assert_eq!(
+            safe_url("rtsp://admin:secret@192.0.2.10:554/stream"),
+            "rtsp://***@192.0.2.10:554/stream"
+        );
+        assert_eq!(
+            safe_url("rtsp://192.0.2.10:554/stream"),
+            "rtsp://192.0.2.10:554/stream"
+        );
+    }
+
     /// The name a configuration writes must be the one sysfs shows. The
     /// crate's enum variant is spelled HDMIA, so Debug would render
     /// "HDMIA-1" and no correctly-spelled connector would ever match, so a
