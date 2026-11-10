@@ -364,6 +364,9 @@ impl Decoder {
                 if !pending {
                     av_packet_unref(self.pkt);
                     loop {
+                        if shutdown.load(Ordering::Acquire) || !wanted.load(Ordering::Relaxed) {
+                            return None;
+                        }
                         let r = av_read_frame(self.fmt, self.pkt);
                         if r < 0 {
                             // The demuxer is out of data: the stream ended,
