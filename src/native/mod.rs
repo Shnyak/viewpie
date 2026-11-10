@@ -2075,6 +2075,9 @@ fn feed_thread(
     // so, since the display last stopped wanting it: once each time a camera
     // is shown fullscreen, not on every try.
     let mut too_large = false;
+    // Once a hardware decoder stalls, keep this feed on software rather than
+    // reopening the same broken V4L2 session on every reconnect.
+    let mut force_software = false;
 
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -2113,7 +2116,7 @@ fn feed_thread(
             info.fallback_reason = None;
         }
         emit_decoder_status(&source);
-        let result = feed_session(url, &card, &source, displays, limit, &shutdown);
+        let result = feed_session(url, &card, &source, displays, limit, &shutdown, force_software);
         let paused = !source.wanted.load(Ordering::Relaxed);
         if shutdown.load(Ordering::Acquire) {
             break;
@@ -2146,6 +2149,15 @@ fn feed_thread(
             }
             Err(Refused::Failed(e)) => {
                 source.stats.errors.fetch_add(1, Ordering::Relaxed);
+                let stalled_hardware = e.starts_with("no picture for ")
+                    && source.decoder_info.lock().unwrap().decoder.as_deref()
+                        == Some("h264_v4l2m2m");
+                if stalled_hardware && !force_software {
+                    force_software = true;
+                    eprintln!(
+                        "{name}: hardware decoder stalled; switching this feed to software decoding"
+                    );
+                }
                 // Not "retrying" when paused: it waits for the wall instead.
                 if paused {
                     eprintln!("{name} ({url}): {e}");
@@ -2294,9 +2306,16 @@ fn feed_session(
     displays: usize,
     limit: (u32, u32),
     shutdown: &AtomicBool,
+    force_software: bool,
 ) -> Result<(), Refused> {
     let name = &source.name;
-    let mut dec = Decoder::open(url, source.stats.clone(), limit, frames_held(displays))?;
+    let mut dec = Decoder::open(
+        url,
+        source.stats.clone(),
+        limit,
+        frames_held(displays),
+        force_software,
+    )?;
     {
         let mut info = source.decoder_info.lock().unwrap();
         info.decoder = Some(dec.decoder_name.clone());
