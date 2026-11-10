@@ -350,6 +350,7 @@ defaults:
             },
             "/tmp/nonexistent.yaml",
             false,
+            Arc::new(RwLock::new(HashMap::new())),
         )
         .await;
         assert_eq!(state.camera_names().await, vec!["a"]);
