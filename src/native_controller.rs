@@ -39,25 +39,12 @@ impl NativeRendererController {
         if panel.contains('\n') || panel.contains('\r') {
             anyhow::bail!("panel id contains a line break");
         }
-        let _operation = self.operation.lock().await;
-        let mut guard = self.child.lock().await;
-        let exited = match guard.as_mut() {
-            Some(running) => running.child.try_wait()?.is_some(),
-            None => false,
-        };
-        if exited {
-            guard.take();
-        }
-        if let Some(running) = guard.as_mut() {
-            let command = format!("PANEL {panel}\n");
-            running.stdin.write_all(command.as_bytes()).await?;
-            running.stdin.flush().await?;
-            return Ok(());
-        }
-        drop(guard);
-        // The first selection during service startup, or recovery after an
-        // unexpected renderer exit, starts the child. Later changes are IPC.
-        self.start_inner(panel, None).await
+        // A panel change starts a fresh native renderer. This deliberately
+        // serializes H.264 decoder sessions: the previous process is killed
+        // and reaped before the new panel opens its RTSP streams. In-process
+        // prewarming briefly ran both panels' V4L2/MMAL decoders together and
+        // caused bcm2835-codec/VCHIQ allocation failures on the Pi 3.
+        self.restart(panel, None).await
     }
 
     /// Reload the YAML-backed scene set after a configuration mutation.
@@ -160,12 +147,12 @@ impl NativeRendererController {
     async fn stop_inner(&self) {
         if let Some(mut running) = self.child.lock().await.take() {
             // A graceful STOP asks every FFmpeg decoder to drain and join, but
-            // decoder reads can remain blocked on a live RTSP stream. This
-            // path is now reserved for explicit config reloads and fullscreen
-            // startup; ordinary panel changes use the PANEL IPC command.
-            // Terminate the renderer directly: its decoder threads are in the
-            // same process, and the kernel releases its DRM/FFmpeg resources
-            // when the process exits.
+            // decoder reads can remain blocked on a live RTSP stream. Terminate
+            // the renderer directly and wait for exit before starting another:
+            // its decoder threads are in the same process, and the kernel
+            // releases its DRM/FFmpeg/V4L2 resources when the process exits.
+            // This is also what prevents overlapping hardware decoder sessions
+            // during a panel change on resource-constrained Raspberry Pi boards.
             let _ = running.child.kill().await;
             let _ = running.child.wait().await;
         }
