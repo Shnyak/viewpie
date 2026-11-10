@@ -34,7 +34,17 @@ jobs:
           fi
           tag="v$cargo_version"
           if git ls-remote --exit-code --tags origin "refs/tags/$tag"; then
-            echo "Tag already exists"
+            current_tag_commit=$(git rev-list -n 1 "$tag")
+            head_commit=$(git rev-parse HEAD)
+            if [ "$current_tag_commit" = "$head_commit" ]; then
+              echo "Tag already points to HEAD"
+              exit 0
+            fi
+            echo "Existing tag points to an older commit; moving it to the verified release commit"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -fa "$tag" -m "Viewpie $tag"
+            git push --force origin "refs/tags/$tag"
             exit 0
           fi
           git config user.name "github-actions[bot]"
