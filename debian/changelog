@@ -1,3 +1,12 @@
+viewpie (0.2.17-fork-1) unstable; urgency=medium
+
+  * Serialize panel transitions so outgoing camera decoder sessions fully
+    release their V4L2 resources before incoming feeds are started.
+  * Avoid overlapping hardware decoder contexts when switching panels,
+    preventing active cameras from falling back to software decoding.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Tue, 10 Nov 2026 13:00:00 +0000
+
 viewpie (0.2.16-fork-1) unstable; urgency=medium
 
   * Keep the native renderer alive across panel switches and send panel
