@@ -1,3 +1,13 @@
+viewpie (0.2.18-fork-1) unstable; urgency=medium
+
+  * Fall back to software decoding for an individual H.264 feed after its
+    hardware decoder opens but produces no picture for the stall timeout.
+  * Keep healthy feeds on the hardware decoder and remember the fallback
+    across reconnects to avoid repeating the same V4L2 stall.
+  * Redact RTSP user information from renderer journal messages.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Tue, 10 Nov 2026 13:20:00 +0000
+
 viewpie (0.2.17-fork-1) unstable; urgency=medium
 
   * Serialize panel transitions so outgoing camera decoder sessions fully
