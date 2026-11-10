@@ -208,7 +208,7 @@ impl PanelManager {
             if let Err(error) = self.backend.commit(&frame).await {
                 self.panels.write().await.insert(id.to_string(), old_panel);
                 *self.slot_feed.write().await = old_slots;
-                if active {
+                if active && self.manage_feeds {
                     self.pool.apply_switch(&new_feeds, &old_feeds).await?;
                 }
                 return Err(error.into());
@@ -423,7 +423,7 @@ impl PanelManager {
         if let Some(prev) =
             crate::http_api::state::set_fullscreen_state(Some(camera.to_string())).await
         {
-            if prev != camera {
+            if prev != camera && self.manage_feeds {
                 self.pool.stop_fullscreen(&prev).await;
             }
         }
@@ -473,7 +473,9 @@ impl PanelManager {
             self.pool.resume_feeds(&feeds).await?;
         }
         if let Some(cam) = crate::http_api::state::current_fullscreen().await {
-            self.pool.start_fullscreen(&cam).await?;
+            if self.manage_feeds {
+                self.pool.start_fullscreen(&cam).await?;
+            }
             let bg = crate::http_api::state::global_background().await;
             self.backend
                 .commit(&wall::fullscreen_frame(&cam, &bg, 0))
@@ -616,6 +618,39 @@ defaults:
         );
         mgr.switch_to("p1").await.unwrap(); // acquire initial refs
         (mgr, pool, backend)
+    }
+
+    #[tokio::test]
+    async fn native_pipeline_manager_never_starts_camera_decoders() {
+        let cfg = Config::from_yaml(SAMPLE).unwrap();
+        let pool = Arc::new(FeedPool::new());
+        for (name, fc) in &cfg.feeds {
+            pool.add_feed(name.clone(), fc.clone()).await;
+        }
+        let backend = Arc::new(HeadlessBackend::new());
+        let backend_dyn: Arc<dyn DisplayBackend> = backend;
+        let mgr = PanelManager::new_with_feed_management(
+            cfg.panels.clone(),
+            cfg.initial_panel(),
+            pool.clone(),
+            backend_dyn,
+            Resolution { width: 900, height: 600 },
+            false,
+        );
+
+        mgr.switch_to("p1").await.unwrap();
+        assert!(!pool.is_running("a").await);
+        assert!(!pool.is_running("b").await);
+        mgr.switch_to("p2").await.unwrap();
+        assert!(!pool.is_running("a").await);
+        assert!(!pool.is_running("b").await);
+        assert!(!pool.is_running("c").await);
+        mgr.enter_fullscreen("c").await.unwrap();
+        assert!(!pool.is_running("c").await);
+        mgr.pause().await.unwrap();
+        mgr.resume().await.unwrap();
+        assert!(!pool.is_running("b").await);
+        assert!(!pool.is_running("c").await);
     }
 
     #[tokio::test]
