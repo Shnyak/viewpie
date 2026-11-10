@@ -42,12 +42,17 @@ pub async fn run(
     bind: SocketAddr,
     native_renderer: Option<Arc<crate::native_controller::NativeRendererController>>,
 ) -> anyhow::Result<AppState> {
+    let decoder_status = native_renderer
+        .as_ref()
+        .map(|renderer| renderer.decoder_status_handle())
+        .unwrap_or_else(|| Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())));
     let (state, mut rx) = AppState::bootstrap(
         cfg,
         backend.clone(),
         resolution,
         config_path,
         native_renderer.is_some(),
+        decoder_status,
     )
     .await;
 
@@ -141,7 +146,9 @@ pub async fn build_app(
     resolution: Resolution,
     config_path: &str,
 ) -> (AppState, axum::Router) {
-    let (state, _rx) = AppState::bootstrap(cfg, backend, resolution, config_path, false).await;
+    let decoder_status = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let (state, _rx) =
+        AppState::bootstrap(cfg, backend, resolution, config_path, false, decoder_status).await;
     let app = routes::router(state.clone()).layer(cors_layer());
     (state, app)
 }
