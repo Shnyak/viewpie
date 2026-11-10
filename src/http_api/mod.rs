@@ -42,7 +42,14 @@ pub async fn run(
     bind: SocketAddr,
     native_renderer: Option<Arc<crate::native_controller::NativeRendererController>>,
 ) -> anyhow::Result<AppState> {
-    let (state, mut rx) = AppState::bootstrap(cfg, backend.clone(), resolution, config_path).await;
+    let (state, mut rx) = AppState::bootstrap(
+        cfg,
+        backend.clone(),
+        resolution,
+        config_path,
+        native_renderer.is_some(),
+    )
+    .await;
 
     // Command pump.
     let st = state.clone();
@@ -134,7 +141,7 @@ pub async fn build_app(
     resolution: Resolution,
     config_path: &str,
 ) -> (AppState, axum::Router) {
-    let (state, _rx) = AppState::bootstrap(cfg, backend, resolution, config_path).await;
+    let (state, _rx) = AppState::bootstrap(cfg, backend, resolution, config_path, false).await;
     let app = routes::router(state.clone()).layer(cors_layer());
     (state, app)
 }

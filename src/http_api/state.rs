@@ -72,6 +72,8 @@ pub struct AppState {
     pub config_update_lock: Arc<Mutex<()>>,
     pub manager: Arc<PanelManager>,
     pub backend: Arc<dyn DisplayBackend>,
+    /// True when the native child process owns all camera decoders.
+    pub native_pipeline: bool,
 }
 
 // ─────────────────────── process-wide singletons ───────────────────────
@@ -176,6 +178,7 @@ impl AppState {
         backend: Arc<dyn DisplayBackend>,
         resolution: Resolution,
         config_path: &str,
+        native_pipeline: bool,
     ) -> (Self, mpsc::Receiver<WallCommand>) {
         let (tx, rx) = mpsc::channel(64);
 
@@ -191,17 +194,17 @@ impl AppState {
         let panels = Arc::new(RwLock::new(cfg.panels.clone()));
         let active_panel = Arc::new(RwLock::new(cfg.initial_panel()));
 
-        let manager = Arc::new(PanelManager::new(
+        let manager = Arc::new(PanelManager::new_with_feed_management(
             cfg.panels.clone(),
             cfg.initial_panel(),
             pool.clone(),
             backend.clone(),
             resolution,
+            !native_pipeline,
         ));
 
-        // Acquire refs for the initial panel (starts decoders). The manager
-        // starts in "no panel displayed" state, so this first switch_to is a
-        // full acquire pass rather than an idempotent re-commit.
+        // Register the initial panel. In the native pipeline this updates
+        // metadata only; the child renderer alone opens camera streams.
         let initial = manager.active_id().await;
         manager.switch_to(&initial).await.ok();
 
@@ -218,6 +221,7 @@ impl AppState {
             config_update_lock: Arc::new(Mutex::new(())),
             manager,
             backend,
+            native_pipeline,
         };
         (state, rx)
     }
@@ -341,6 +345,7 @@ defaults:
                 height: 480,
             },
             "/tmp/nonexistent.yaml",
+            false,
         )
         .await;
         assert_eq!(state.camera_names().await, vec!["a"]);
