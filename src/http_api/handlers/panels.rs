@@ -205,7 +205,11 @@ pub async fn activate_panel(
     // activation owner. The API-side manager must not start its own RTSP
     // decoders before the child renderer receives the switch command.
     // Keep the existing synchronous manager path for the non-native backend.
-    if !state.native_pipeline {
+    if state.native_pipeline {
+        // Preserve the REST contract (unknown panel → 404) without performing
+        // the decoder-owning switch in the request handler.
+        state.manager.get_panel(&id).await?;
+    } else {
         state.manager.switch_to(&id).await?;
         *state.active_panel.write().await = id.clone();
     }
