@@ -2118,13 +2118,6 @@ fn feed_thread(
         }
         emit_decoder_status(&source);
         let result = feed_session(url, &card, &source, displays, limit, &shutdown);
-        // feed_session's local Decoder and framebuffer cache have been
-        // dropped before this flag goes false. Serialize with a panel request
-        // so the renderer cannot miss a session that is just finishing.
-        {
-            let _gate = source.session_gate.lock().unwrap();
-            source.session_active.store(false, Ordering::Release);
-        }
         let paused = !source.wanted.load(Ordering::Relaxed);
         if shutdown.load(Ordering::Acquire) {
             break;
@@ -2179,6 +2172,12 @@ fn feed_thread(
         // each display's flip that blanks them. The next session imports its
         // own.
         source.shown.lock().unwrap().take();
+        // The decoder and its last published frame are both gone now. Only
+        // after this point may the next panel start opening hardware decoders.
+        {
+            let _gate = source.session_gate.lock().unwrap();
+            source.session_active.store(false, Ordering::Release);
+        }
         // Back as soon as someone is watching again, which is no reflection
         // on the camera.
         if shutdown.load(Ordering::Acquire) {
