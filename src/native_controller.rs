@@ -40,9 +40,7 @@ impl NativeRendererController {
     }
 
     /// Shared live decoder telemetry consumed by the HTTP status endpoint.
-    pub fn decoder_status_handle(
-        &self,
-    ) -> Arc<RwLock<HashMap<String, serde_json::Value>>> {
+    pub fn decoder_status_handle(&self) -> Arc<RwLock<HashMap<String, serde_json::Value>>> {
         self.decoder_status.clone()
     }
 
@@ -169,10 +167,15 @@ impl NativeRendererController {
                     match serde_json::from_str::<serde_json::Value>(payload) {
                         Ok(status) => {
                             if let Some(camera) = status.get("camera").and_then(|v| v.as_str()) {
-                                decoder_status.write().await.insert(camera.to_string(), status);
+                                decoder_status
+                                    .write()
+                                    .await
+                                    .insert(camera.to_string(), status);
                             }
                         }
-                        Err(error) => tracing::warn!("invalid native decoder status event: {error}"),
+                        Err(error) => {
+                            tracing::warn!("invalid native decoder status event: {error}")
+                        }
                     }
                 } else {
                     // Preserve the renderer's existing journal output while
