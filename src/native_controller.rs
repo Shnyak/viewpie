@@ -69,7 +69,7 @@ impl NativeRendererController {
         // supports PANEL over stdin. Keep those decoder sessions alive and
         // let its render loop prewarm only the incoming scene's first feeds.
         let running = guard.as_mut().expect("live renderer was checked above");
-        let command = format!("PANEL {panel}\\n");
+        let command = format!("PANEL {panel}\n");
         running.stdin.write_all(command.as_bytes()).await?;
         running.stdin.flush().await?;
         Ok(())
