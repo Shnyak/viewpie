@@ -2010,6 +2010,22 @@ fn report_wall(wall: &mut Wall, mark: &mut WallMark, secs: f64, clock: Duration)
     }
 }
 
+/// Hide RTSP user information from the journal while retaining the camera address.
+fn safe_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let authority_end = rest
+        .find(|c| c == '/' || c == '?' || c == '#')
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if let Some((_, host)) = authority.rsplit_once('@') {
+        format!("{scheme}://***@{}{}", host, &rest[authority_end..])
+    } else {
+        url.to_string()
+    }
+}
+
 /// Reports a per-frame failure at most once a second.
 ///
 /// Printing every one filled a Pi 3's 371MB /tmp with a single repeated line:
@@ -2068,6 +2084,7 @@ fn feed_thread(
 ) {
     let mut backoff = Backoff::new();
     let name = &source.name;
+    let display_url = safe_url(url);
     // Nothing is refused for its size if the card will not say what fits:
     // the kernel still has the last word when the frame arrives.
     let limit = card.largest_picture().unwrap_or((u32::MAX, u32::MAX));
@@ -2075,6 +2092,9 @@ fn feed_thread(
     // so, since the display last stopped wanting it: once each time a camera
     // is shown fullscreen, not on every try.
     let mut too_large = false;
+    // Once a hardware decoder stalls, keep this feed on software rather than
+    // reopening the same broken V4L2 session on every reconnect.
+    let mut force_software = false;
 
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -2113,8 +2133,21 @@ fn feed_thread(
             info.fallback_reason = None;
         }
         emit_decoder_status(&source);
-        let result = feed_session(url, &card, &source, displays, limit, &shutdown);
+        let result = feed_session(
+            url,
+            &card,
+            &source,
+            displays,
+            limit,
+            &shutdown,
+            force_software,
+        );
         let paused = !source.wanted.load(Ordering::Relaxed);
+        // A later panel may have fewer simultaneous feeds, so let this camera
+        // try hardware again after it has been deliberately taken off screen.
+        if paused {
+            force_software = false;
+        }
         if shutdown.load(Ordering::Acquire) {
             break;
         }
@@ -2138,7 +2171,7 @@ fn feed_thread(
                 backoff.saturate();
                 if !std::mem::replace(&mut too_large, true) {
                     eprintln!(
-                        "{name} ({url}): {w}x{h} is larger than this display can show, \
+                        "{name} ({display_url}): {w}x{h} is larger than this display can show, \
                          {most_w}x{most_h} at most; trying again every {}s",
                         Backoff::MAX.as_secs()
                     );
@@ -2146,12 +2179,22 @@ fn feed_thread(
             }
             Err(Refused::Failed(e)) => {
                 source.stats.errors.fetch_add(1, Ordering::Relaxed);
+                let failed_hardware = !paused
+                    && (e.starts_with("no picture for ") || e.starts_with("decoder failed:"))
+                    && source.decoder_info.lock().unwrap().decoder.as_deref()
+                        == Some("h264_v4l2m2m");
+                if failed_hardware && !force_software {
+                    force_software = true;
+                    eprintln!(
+                        "{name}: hardware decoder stopped producing usable frames; switching this feed to software decoding"
+                    );
+                }
                 // Not "retrying" when paused: it waits for the wall instead.
                 if paused {
-                    eprintln!("{name} ({url}): {e}");
+                    eprintln!("{name} ({display_url}): {e}");
                 } else {
                     eprintln!(
-                        "{name} ({url}): {e}; retrying in {:.1}s",
+                        "{name} ({display_url}): {e}; retrying in {:.1}s",
                         backoff.next().as_secs_f32()
                     );
                 }
@@ -2294,9 +2337,17 @@ fn feed_session(
     displays: usize,
     limit: (u32, u32),
     shutdown: &AtomicBool,
+    force_software: bool,
 ) -> Result<(), Refused> {
     let name = &source.name;
-    let mut dec = Decoder::open(url, source.stats.clone(), limit, frames_held(displays))?;
+    let display_url = safe_url(url);
+    let mut dec = Decoder::open(
+        url,
+        source.stats.clone(),
+        limit,
+        frames_held(displays),
+        force_software,
+    )?;
     {
         let mut info = source.decoder_info.lock().unwrap();
         info.decoder = Some(dec.decoder_name.clone());
@@ -2383,7 +2434,7 @@ fn feed_session(
                 eprintln!(
                     "{name}: {}{w}x{h} {codec}, decoded in {}",
                     if first {
-                        format!("{url}, ")
+                        format!("{display_url}, ")
                     } else {
                         String::new()
                     },
@@ -2482,6 +2533,9 @@ fn feed_session(
     }
     if dec.stalled {
         return Err(format!("no picture for {}s", decode::PICTURE_TIMEOUT.as_secs()).into());
+    }
+    if dec.decoder_failed {
+        return Err("decoder failed: receive/send operation returned an error".into());
     }
     Ok(())
 }
@@ -2838,6 +2892,18 @@ fn first_connected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rtsp_user_information_is_redacted_from_logs() {
+        assert_eq!(
+            safe_url("rtsp://admin:secret@192.0.2.10:554/stream"),
+            "rtsp://***@192.0.2.10:554/stream"
+        );
+        assert_eq!(
+            safe_url("rtsp://192.0.2.10:554/stream"),
+            "rtsp://192.0.2.10:554/stream"
+        );
+    }
 
     /// The name a configuration writes must be the one sysfs shows. The
     /// crate's enum variant is spelled HDMIA, so Debug would render

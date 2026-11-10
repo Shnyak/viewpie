@@ -110,6 +110,10 @@ pub struct Decoder {
     /// Whether next_frame gave up because PICTURE_TIMEOUT passed without a
     /// picture, rather than because the stream ended.
     pub stalled: bool,
+    /// The decoder itself rejected input or failed while producing a frame.
+    /// Kept distinct from a quiet RTSP stream so hardware failures can fall
+    /// back to software without treating ordinary camera disconnects as such.
+    pub decoder_failed: bool,
 }
 
 // The pointers are owned by this struct and touched only from the thread that
@@ -140,6 +144,7 @@ impl Decoder {
         stats: Arc<FeedStats>,
         limit: (u32, u32),
         held: usize,
+        force_software: bool,
     ) -> Result<Self, Refused> {
         unsafe {
             avformat_network_init();
@@ -180,7 +185,7 @@ impl Decoder {
             // timeout at all.
             let mut unknown = unused_options(&mut opts, url);
             if r < 0 {
-                return Err(format!("open {url}: {}", av_err(r)).into());
+                return Err(format!("open RTSP stream: {}", av_err(r)).into());
             }
             let r = avformat_find_stream_info(fmt, std::ptr::null_mut());
             if r < 0 {
@@ -249,7 +254,11 @@ impl Decoder {
             // The hardware decoder may refuse the stream: too many sessions,
             // or one it cannot handle. A viewport showing a software-decoded
             // picture beats a viewport showing nothing.
-            let hardware_result = open_codec(codec, par, true, held, &mut unknown);
+            let hardware_result = if force_software {
+                Err("hardware decoder stalled in a previous session".to_string())
+            } else {
+                open_codec(codec, par, true, held, &mut unknown)
+            };
             let (mut codec_ctx, hardware_fallback) = match hardware_result {
                 Ok(ctx) => (ctx, None),
                 Err(hw_error) if !software.is_null() && codec != software => {
@@ -296,6 +305,7 @@ impl Decoder {
                 hardware_fallback,
                 last_picture: Instant::now(),
                 stalled: false,
+                decoder_failed: false,
                 fmt,
                 codec_ctx,
                 pkt,
@@ -345,6 +355,11 @@ impl Decoder {
                     // so anything but EAGAIN is the stream really ending.
                     if r != AVERROR_EOF {
                         self.stats.errors.fetch_add(1, Ordering::Relaxed);
+                        // A stateful V4L2 decoder can fail after opening
+                        // successfully (for example when its capture queue
+                        // cannot be configured). Do not silently reconnect
+                        // the same broken hardware context forever.
+                        self.decoder_failed = true;
                     }
                     return None;
                 }
@@ -385,6 +400,7 @@ impl Decoder {
                 pending = r == AVERROR_EAGAIN;
                 if r < 0 && !pending {
                     self.stats.errors.fetch_add(1, Ordering::Relaxed);
+                    self.decoder_failed = true;
                     return None;
                 }
             }
