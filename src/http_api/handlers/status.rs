@@ -44,6 +44,24 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         .values()
         .cloned()
         .collect();
+    // Include cameras that have not been opened yet as well: HA can show the
+    // complete inventory immediately, while the active panel's cameras begin
+    // as "starting" and the rest are explicitly "paused".
+    for camera in &cameras {
+        let reported = decoder_status
+            .iter()
+            .any(|item| item.get("camera").and_then(|v| v.as_str()) == Some(camera));
+        if !reported {
+            let active = panel.as_ref().is_some_and(|p| p.has_camera(camera));
+            decoder_status.push(serde_json::json!({
+                "camera": camera,
+                "decoder": null,
+                "mode": null,
+                "state": if active { "starting" } else { "paused" },
+                "fallback_reason": null,
+            }));
+        }
+    }
     decoder_status.sort_by(|a, b| {
         a.get("camera")
             .and_then(|v| v.as_str())
