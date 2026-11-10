@@ -201,9 +201,15 @@ pub async fn activate_panel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, ApiError> {
-    state.manager.switch_to(&id).await?;
-    *state.active_panel.write().await = id.clone();
-    let _ = state.command_tx.send(WallCommand::SwitchPanel(id)).await;
+    // The serialized command pump is the single owner of panel activation.
+    // Do not switch the manager here and then repeat the same operation in the
+    // pump: in native mode that also delays the HTTP response before the
+    // renderer is asked to change panels.
+    state
+        .command_tx
+        .send(WallCommand::SwitchPanel(id))
+        .await
+        .map_err(|_| ApiError::Internal("panel command queue is unavailable".into()))?;
     Ok(Json(OkResponse::ok()))
 }
 
