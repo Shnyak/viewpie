@@ -9,7 +9,7 @@
 //! them safely, and its PlanarBuffer trait already carries the format modifier
 //! that a Pi's HEVC frames arrive with.
 
-use drm::buffer::{DrmFourcc, DrmModifier, Handle, PlanarBuffer};
+use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle, PlanarBuffer};
 use drm::control::atomic::AtomicModeReq;
 use drm::control::{
     self, connector, crtc, framebuffer, plane, property, AtomicCommitFlags,
@@ -371,6 +371,18 @@ impl Card {
         self.plane_type_of(plane) == Some(0)
     }
 
+    /// Current z-position of a plane, if the driver exposes it.
+    pub fn plane_zpos(&self, plane: plane::Handle) -> Option<u64> {
+        let props = self.get_properties(plane).ok()?;
+        for (id, value) in props {
+            let info = self.get_property(id).ok()?;
+            if info.name().to_bytes() == b"zpos" {
+                return Some(value);
+            }
+        }
+        None
+    }
+
     /// A plane's type: 0 overlay, 1 primary, 2 cursor.
     fn plane_type_of(&self, plane: plane::Handle) -> Option<u64> {
         let props = self.get_properties(plane).ok()?;
@@ -626,17 +638,114 @@ impl Card {
         }
     }
 
-    /// Put every viewport's newest framebuffer on screen in one commit.
+
+    /// Allocate a small opaque XRGB overlay on a plane already proven to be
+    /// above every camera plane. It is optional: callers keep the camera wall
+    /// unchanged if allocation or a later atomic commit is refused.
+    pub fn create_debug_overlay(
+        self: &Arc<Self>,
+        plane: plane::Handle,
+        display_width: u32,
+        display_height: u32,
+    ) -> Result<DebugOverlay, String> {
+        let width = display_width.min(640);
+        let height = display_height.min(176);
+        if width < 120 || height < 48 {
+            return Err("display is too small for a readable diagnostics overlay".into());
+        }
+        let mut buffer = self
+            .create_dumb_buffer((width, height), DrmFourcc::Xrgb8888, 32)
+            .map_err(|e| format!("could not allocate diagnostics buffer: {e}"))?;
+        let fb = match self.add_framebuffer(&buffer, 24, 32) {
+            Ok(fb) => fb,
+            Err(e) => {
+                self.drop_buffer(buffer.handle());
+                return Err(format!("could not create diagnostics framebuffer: {e}"));
+            }
+        };
+        let props = match self.plane_props(plane) {
+            Ok(props) => props,
+            Err(e) => {
+                let _ = self.destroy_framebuffer(fb);
+                self.drop_buffer(buffer.handle());
+                return Err(e);
+            }
+        };
+        let mut overlay = DebugOverlay {
+            card: self.clone(),
+            buffer,
+            fb,
+            plane,
+            props,
+            x: 12,
+            y: display_height.saturating_sub(height + 12) as i32,
+            width,
+            height,
+        };
+        self.draw_debug_overlay(&mut overlay, &["VIEWPIE DIAGNOSTICS".to_string()])?;
+        Ok(overlay)
+    }
+
+    /// Refresh the text in the overlay buffer. This touches only the small
+    /// diagnostics surface; decoded camera frames remain zero-copy.
+    pub fn draw_debug_overlay(
+        &self,
+        overlay: &mut DebugOverlay,
+        lines: &[String],
+    ) -> Result<(), String> {
+        let pitch = overlay.buffer.pitch() as usize;
+        let mut map = self
+            .map_dumb_buffer(&mut overlay.buffer)
+            .map_err(|e| format!("could not map diagnostics buffer: {e}"))?;
+        let bytes = map.as_mut();
+        for pixel in bytes.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&0xff10_1820u32.to_le_bytes());
+        }
+        let scale = if overlay.width >= 320 { 2usize } else { 1usize };
+        let char_width = 4 * scale;
+        let line_height = 6 * scale;
+        let max_chars = (overlay.width as usize).saturating_sub(20) / char_width;
+        for (line_index, line) in lines.iter().take(overlay.height as usize / line_height).enumerate() {
+            let y0 = 8 + line_index * line_height;
+            for (char_index, ch) in line.chars().take(max_chars).enumerate() {
+                let glyph = glyph_3x5(ch.to_ascii_uppercase());
+                let x0 = 8 + char_index * char_width;
+                for (row, bits) in glyph.iter().enumerate() {
+                    for col in 0..3 {
+                        if bits & (1 << (2 - col)) == 0 {
+                            continue;
+                        }
+                        for sy in 0..scale {
+                            for sx in 0..scale {
+                                let x = x0 + col * scale + sx;
+                                let y = y0 + row * scale + sy;
+                                if x >= overlay.width as usize || y >= overlay.height as usize {
+                                    continue;
+                                }
+                                let offset = y * pitch + x * 4;
+                                if offset + 4 <= bytes.len() {
+                                    bytes[offset..offset + 4]
+                                        .copy_from_slice(&0xfff2_f5f7u32.to_le_bytes());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Put every viewport and the optional diagnostics plane on screen in one commit.
     ///
     /// Submits and returns: the flip it asks for arrives later on the card's
-    /// event queue, and the caller commits again when it does. Waiting here
-    /// instead would make a second display wait on this one's vsync, and the
-    /// two are not phase locked.
+    /// event queue, and the caller commits again when it does.
     pub fn commit(
         &self,
         crtc: crtc::Handle,
         crtc_active: property::Handle,
         viewports: impl IntoIterator<Item = (Viewport, Option<framebuffer::Handle>)>,
+        overlay: Option<&DebugOverlay>,
     ) -> Result<(), String> {
         let mut req = AtomicModeReq::new();
         // The crtc, named whatever else this request says.
@@ -700,6 +809,24 @@ impl Card {
             }
         }
 
+        if let Some(overlay) = overlay {
+            let p = &overlay.props;
+            for (prop, value) in [
+                (p.fb_id, property::Value::Framebuffer(Some(overlay.fb))),
+                (p.crtc_id, property::Value::CRTC(Some(crtc))),
+                (p.src_x, property::Value::UnsignedRange(0)),
+                (p.src_y, property::Value::UnsignedRange(0)),
+                (p.src_w, property::Value::UnsignedRange((overlay.width as u64) << 16)),
+                (p.src_h, property::Value::UnsignedRange((overlay.height as u64) << 16)),
+                (p.crtc_x, property::Value::SignedRange(overlay.x as i64)),
+                (p.crtc_y, property::Value::SignedRange(overlay.y as i64)),
+                (p.crtc_w, property::Value::UnsignedRange(overlay.width as u64)),
+                (p.crtc_h, property::Value::UnsignedRange(overlay.height as u64)),
+            ] {
+                req.add_property(overlay.plane, prop, value);
+            }
+        }
+
         self.atomic_commit(
             AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK,
             req,
@@ -745,6 +872,79 @@ impl Card {
                 _ => None,
             })
             .collect())
+    }
+}
+
+
+/// A small opaque text surface. Its GEM buffer and framebuffer live as long
+/// as the wall; dropping it releases both resources.
+pub struct DebugOverlay {
+    card: Arc<Card>,
+    buffer: drm::control::dumbbuffer::DumbBuffer,
+    pub fb: framebuffer::Handle,
+    pub plane: plane::Handle,
+    pub props: PlaneProps,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Drop for DebugOverlay {
+    fn drop(&mut self) {
+        if let Err(e) = self.card.destroy_framebuffer(self.fb) {
+            eprintln!("could not release diagnostics framebuffer: {e}");
+        }
+        self.card.drop_buffer(self.buffer.handle());
+    }
+}
+
+fn glyph_3x5(ch: char) -> [u8; 5] {
+    match ch {
+        'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
+        'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
+        'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
+        'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
+        'E' => [0b111, 0b100, 0b110, 0b100, 0b111],
+        'F' => [0b111, 0b100, 0b110, 0b100, 0b100],
+        'G' => [0b011, 0b100, 0b101, 0b101, 0b011],
+        'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
+        'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
+        'J' => [0b001, 0b001, 0b001, 0b101, 0b010],
+        'K' => [0b101, 0b101, 0b110, 0b101, 0b101],
+        'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
+        'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
+        'N' => [0b101, 0b111, 0b111, 0b111, 0b101],
+        'O' => [0b010, 0b101, 0b101, 0b101, 0b010],
+        'P' => [0b110, 0b101, 0b110, 0b100, 0b100],
+        'Q' => [0b010, 0b101, 0b101, 0b111, 0b011],
+        'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
+        'S' => [0b011, 0b100, 0b010, 0b001, 0b110],
+        'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
+        'U' => [0b101, 0b101, 0b101, 0b101, 0b111],
+        'V' => [0b101, 0b101, 0b101, 0b101, 0b010],
+        'W' => [0b101, 0b101, 0b111, 0b111, 0b101],
+        'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
+        'Y' => [0b101, 0b101, 0b010, 0b010, 0b010],
+        'Z' => [0b111, 0b001, 0b010, 0b100, 0b111],
+        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+        '2' => [0b110, 0b001, 0b010, 0b100, 0b111],
+        '3' => [0b110, 0b001, 0b010, 0b001, 0b110],
+        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+        '5' => [0b111, 0b100, 0b110, 0b001, 0b110],
+        '6' => [0b011, 0b100, 0b110, 0b101, 0b010],
+        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
+        '8' => [0b010, 0b101, 0b010, 0b101, 0b010],
+        '9' => [0b010, 0b101, 0b011, 0b001, 0b110],
+        ':' => [0, 0b010, 0, 0b010, 0],
+        '.' => [0, 0, 0, 0, 0b010],
+        '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
+        '-' => [0, 0, 0b111, 0, 0],
+        '_' => [0, 0, 0, 0, 0b111],
+        '%' => [0b101, 0b001, 0b010, 0b100, 0b101],
+        '?' => [0b110, 0b001, 0b010, 0, 0b010],
+        _ => [0; 5],
     }
 }
 
