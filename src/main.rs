@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
         ScreenBootMode::Restore => cfg.display.last_screen_on,
     };
     let native_renderer = if cfg!(feature = "native-pipeline") {
-        Some(Arc::new(NativeRendererController::new(config_path.clone())))
+        Some(Arc::new(NativeRendererController::new(config_path.clone(), start_screen_on)))
     } else {
         None
     };
