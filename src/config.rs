@@ -81,6 +81,16 @@ pub struct FeedConfig {
     pub decoder: DecoderPreference,
 }
 
+/// Screen state policy applied during Viewpie startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenBootMode {
+    AlwaysOn,
+    AlwaysOff,
+    #[default]
+    Restore,
+}
+
 /// Display-wide settings that can be changed at runtime via the HTTP API.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -91,6 +101,15 @@ pub struct DisplaySettings {
     pub hardware_decoder_limit: u32,
     /// Automatically pause decoding when the screen is switched off (CEC/KMS).
     pub pause_off_screen: bool,
+    /// Render readable per-stream diagnostics over the camera wall.
+    pub debug_overlay: bool,
+    /// Panel to activate on startup; None keeps the legacy defaults.panel behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_panel: Option<String>,
+    /// Screen state to apply after a system reboot.
+    pub screen_boot_mode: ScreenBootMode,
+    /// Last manually selected screen state; persisted on every pause/resume.
+    pub last_screen_on: bool,
     /// Background color, `#RRGGBB`.
     pub background: String,
     /// Seconds between fullscreen rotations inside a viewport.
@@ -105,6 +124,10 @@ impl Default for DisplaySettings {
             spacing: 1,
             hardware_decoder_limit: 6,
             pause_off_screen: true,
+            debug_overlay: false,
+            startup_panel: None,
+            screen_boot_mode: ScreenBootMode::Restore,
+            last_screen_on: true,
             background: "#000000".to_string(),
             rotation_interval: 20,
             fullscreen_timeout: 600,
@@ -295,9 +318,12 @@ impl PanelConfig {
 /// Defaults section.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DefaultsConfig {
-    /// Panel activated on startup / resume.
+    /// Panel activated on startup / resume (legacy YAML setting).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel: Option<String>,
+    /// User-defined panel order, from first to last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panel_order: Vec<String>,
     /// Override for display.rotation_interval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation_interval: Option<u64>,
@@ -324,7 +350,13 @@ impl Config {
         if let Some(ri) = cfg.defaults.rotation_interval {
             cfg.display.rotation_interval = ri;
         }
+        if cfg.display.startup_panel.is_none() {
+            cfg.display.startup_panel = cfg.defaults.panel.clone();
+        }
         cfg.validate()?;
+        if cfg.display.startup_panel.is_none() {
+            cfg.display.startup_panel = Some(cfg.initial_panel());
+        }
         Ok(cfg)
     }
 
@@ -420,6 +452,13 @@ impl Config {
             p.validate(&feed_names)
                 .map_err(|e| ConfigError::Validation(format!("panel: {e}")))?;
         }
+        if let Some(def) = &self.display.startup_panel {
+            if !self.panels.contains_key(def) {
+                return Err(ConfigError::Validation(format!(
+                    "display.startup_panel {def:?} does not exist"
+                )));
+            }
+        }
         if let Some(def) = &self.defaults.panel {
             if !self.panels.contains_key(def) {
                 return Err(ConfigError::Validation(format!(
@@ -427,19 +466,57 @@ impl Config {
                 )));
             }
         }
+        let mut ordered = std::collections::HashSet::new();
+        for id in &self.defaults.panel_order {
+            if !self.panels.contains_key(id) {
+                return Err(ConfigError::Validation(format!(
+                    "defaults.panel_order references unknown panel {id:?}"
+                )));
+            }
+            if !ordered.insert(id.clone()) {
+                return Err(ConfigError::Validation(format!(
+                    "defaults.panel_order contains duplicate panel {id:?}"
+                )));
+            }
+        }
         Ok(())
+    }
+
+    /// Return panel ids in configured order, appending any legacy/unlisted ids.
+    pub fn ordered_panel_ids(&self) -> Vec<String> {
+        let mut ids = Vec::with_capacity(self.panels.len());
+        for id in &self.defaults.panel_order {
+            if self.panels.contains_key(id) && !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        let mut remaining: Vec<String> = self
+            .panels
+            .keys()
+            .filter(|id| !ids.contains(id))
+            .cloned()
+            .collect();
+        remaining.sort();
+        ids.extend(remaining);
+        ids
     }
 
     /// Determine the initially active panel.
     pub fn initial_panel(&self) -> String {
+        if let Some(p) = &self.display.startup_panel {
+            if self.panels.contains_key(p) {
+                return p.clone();
+            }
+        }
         if let Some(p) = &self.defaults.panel {
             if self.panels.contains_key(p) {
                 return p.clone();
             }
         }
-        let mut keys: Vec<&String> = self.panels.keys().collect();
-        keys.sort();
-        keys.into_iter().next().cloned().unwrap_or_default()
+        self.ordered_panel_ids()
+            .into_iter()
+            .next()
+            .unwrap_or_default()
     }
 }
 
@@ -671,7 +748,9 @@ panels:
       - { slot: a, feeds: [a] }
 "#;
         let cfg = Config::from_yaml(minimal).unwrap();
-        assert_eq!(cfg.display, DisplaySettings::default());
+        let mut expected = DisplaySettings::default();
+        expected.startup_panel = Some("p".to_string());
+        assert_eq!(cfg.display, expected);
         assert_eq!(cfg.initial_panel(), "p");
     }
 
@@ -712,5 +791,84 @@ panels:
         let cfg = Config::from_yaml(SAMPLE).unwrap();
         assert!(cfg.save_atomic(missing_parent.to_str().unwrap()).is_err());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn panel_order_is_persisted_and_unknown_or_duplicate_ids_are_rejected() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  zeta:
+    name: Zeta
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+  alpha:
+    name: Alpha
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+defaults:
+  panel_order: [zeta, alpha]
+"#;
+        let cfg = Config::from_yaml(yaml).unwrap();
+        assert_eq!(cfg.ordered_panel_ids(), ["zeta", "alpha"]);
+        let unknown = yaml.replace("[zeta, alpha]", "[zeta, missing]");
+        assert!(Config::from_yaml(&unknown).is_err());
+        let duplicate = yaml.replace("[zeta, alpha]", "[zeta, zeta]");
+        assert!(Config::from_yaml(&duplicate).is_err());
+    }
+
+    #[test]
+    fn startup_panel_overrides_legacy_default_panel() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  first:
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+  second:
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+display:
+  startup_panel: second
+defaults:
+  panel: first
+"#;
+        let cfg = Config::from_yaml(yaml).unwrap();
+        assert_eq!(cfg.initial_panel(), "second");
+    }
+
+    #[test]
+    fn screen_boot_policy_defaults_to_restoring_last_state() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  p:
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+"#;
+        let cfg = Config::from_yaml(yaml).unwrap();
+        assert_eq!(cfg.display.screen_boot_mode, ScreenBootMode::Restore);
+        assert!(cfg.display.last_screen_on);
+
+        let off = yaml.replace(
+            "panels:",
+            "display:\n  screen_boot_mode: always_off\n  last_screen_on: false\npanels:",
+        );
+        let cfg = Config::from_yaml(&off).unwrap();
+        assert_eq!(cfg.display.screen_boot_mode, ScreenBootMode::AlwaysOff);
+        assert!(!cfg.display.last_screen_on);
     }
 }

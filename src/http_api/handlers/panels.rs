@@ -11,7 +11,7 @@ use tracing::info;
 
 use crate::http_api::errors::ApiError;
 use crate::http_api::models::{
-    ActivePanelResponse, OkResponse, PanelDto, PanelListResponse, PanelSummary,
+    ActivePanelResponse, OkResponse, PanelDto, PanelListResponse, PanelOrderRequest, PanelSummary,
 };
 use crate::http_api::state::{AppState, WallCommand};
 
@@ -21,12 +21,18 @@ pub async fn list_panels(
 ) -> Result<Json<PanelListResponse>, ApiError> {
     let all = state.manager.list().await;
     let active = state.manager.active_id().await;
-    let panels = all
+    let config = state.config.read().await.clone();
+    let panels = config
+        .ordered_panel_ids()
         .into_iter()
-        .map(|(id, p)| PanelSummary {
-            id,
-            name: p.name.clone(),
-            camera_count: p.camera_count(),
+        .filter_map(|id| {
+            all.iter()
+                .find(|(panel_id, _)| panel_id == &id)
+                .map(|(_, p)| PanelSummary {
+                    id,
+                    name: p.name.clone(),
+                    camera_count: p.camera_count(),
+                })
         })
         .collect();
     Ok(Json(PanelListResponse { panels, active }))
@@ -88,6 +94,10 @@ pub async fn create_panel(
         return Err(ApiError::conflict(format!("panel {id:?} already exists")));
     }
     candidate.panels.insert(id.clone(), panel_config.clone());
+    candidate.defaults.panel_order = old_config.ordered_panel_ids();
+    if !candidate.defaults.panel_order.contains(&id) {
+        candidate.defaults.panel_order.push(id.clone());
+    }
     candidate.validate()?;
     state.persist_config(&candidate)?;
     if let Err(error) = state.manager.add_panel(id.clone(), panel_config).await {
@@ -169,11 +179,21 @@ pub async fn delete_panel(
         .ok_or_else(|| ApiError::not_found(format!("panel {id:?} not found")))?;
     let mut candidate = old_config.clone();
     candidate.panels.remove(&id);
+    candidate
+        .defaults
+        .panel_order
+        .retain(|panel_id| panel_id != &id);
     if candidate.panels.is_empty() {
         return Err(ApiError::LastPanel);
     }
     if candidate.defaults.panel.as_deref() == Some(id.as_str()) {
         candidate.defaults.panel = None;
+    }
+    if candidate.display.startup_panel.as_deref() == Some(id.as_str()) {
+        candidate.display.startup_panel = None;
+    }
+    if candidate.display.startup_panel.is_none() {
+        candidate.display.startup_panel = Some(candidate.initial_panel());
     }
     candidate.validate()?;
     state.persist_config(&candidate)?;
@@ -193,6 +213,31 @@ pub async fn delete_panel(
     *state.active_panel.write().await = active.clone();
     let _ = state.command_tx.send(WallCommand::ReloadConfig).await;
     info!(panel = id, "panel deleted");
+    Ok(Json(OkResponse::ok()))
+}
+
+/// `PUT /api/panels/order` — persist the exact display order.
+pub async fn reorder_panels(
+    State(state): State<AppState>,
+    Json(request): Json<PanelOrderRequest>,
+) -> Result<Json<OkResponse>, ApiError> {
+    let _config_guard = state.config_update_lock.lock().await;
+    let old_config = state.config.read().await.clone();
+    let requested = request.order;
+    let mut expected = old_config.ordered_panel_ids();
+    expected.sort();
+    let mut actual = requested.clone();
+    actual.sort();
+    if actual != expected {
+        return Err(ApiError::bad_request(
+            "order must contain every panel id exactly once",
+        ));
+    }
+    let mut candidate = old_config;
+    candidate.defaults.panel_order = requested;
+    candidate.validate()?;
+    state.persist_config(&candidate)?;
+    state.publish_config(candidate).await;
     Ok(Json(OkResponse::ok()))
 }
 

@@ -27,7 +27,7 @@ mod present;
 use self::config::Config;
 use self::decode::{Decoder, FeedStats, Refused};
 use self::ffi::*;
-use self::present::{Card, Fb, ImportedFrame, Viewport};
+use self::present::{Card, DebugOverlay, Fb, ImportedFrame, Viewport};
 use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle};
 use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
@@ -51,6 +51,11 @@ struct DecoderInfo {
     mode: Option<String>,
     state: Option<String>,
     fallback_reason: Option<String>,
+    codec: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    fps: Option<f64>,
+    errors: u64,
 }
 
 struct Source {
@@ -521,6 +526,11 @@ struct Wall {
     /// afresh whenever the layout changes, and whenever the picture changes
     /// from the grid's stream to the one for fullscreen.
     fullscreen_tap: Option<(Tap, Duration)>,
+    /// Optional diagnostics plane, allocated only after every camera plane.
+    debug_overlay: Option<DebugOverlay>,
+    debug_overlay_active: bool,
+    debug_overlay_detached: bool,
+    debug_overlay_updated_at: Instant,
 }
 
 /// A camera a display can show fullscreen.
@@ -921,6 +931,54 @@ fn run(config: &Config) -> Result<(), String> {
         walls.push(wall);
     }
 
+    // Only after every display has reserved its maximum camera-plane count
+    // may diagnostics take a spare plane. It is never allowed to reduce the
+    // number of cameras a configured panel can show.
+    if config.debug_overlay {
+        for wall in &mut walls {
+            let camera_zpos = wall
+                .plane_pool
+                .iter()
+                .map(|&p| card.plane_zpos(p))
+                .collect::<Option<Vec<_>>>()
+                .and_then(|positions| positions.into_iter().max());
+            let usable = card.overlay_planes(wall.out.crtc).unwrap_or_default();
+            let candidate = camera_zpos.and_then(|highest_camera| {
+                spare.iter().position(|plane| {
+                    usable.contains(plane)
+                        && card
+                            .plane_zpos(*plane)
+                            .is_some_and(|zpos| zpos > highest_camera)
+                })
+            });
+            let Some(index) = candidate else {
+                eprintln!(
+                    "{}: diagnostics overlay disabled; no spare plane above all camera planes",
+                    wall.out.name
+                );
+                continue;
+            };
+            let plane = spare.remove(index);
+            claimed.push(plane);
+            match card.create_debug_overlay(plane, wall.size.0, wall.size.1) {
+                Ok(overlay) => {
+                    wall.debug_overlay = Some(overlay);
+                    wall.debug_overlay_active = true;
+                    wall.debug_overlay_detached = false;
+                    println!("{}: diagnostics overlay enabled", wall.out.name);
+                }
+                Err(error) => {
+                    claimed.retain(|claimed_plane| *claimed_plane != plane);
+                    spare.push(plane);
+                    eprintln!(
+                        "{}: diagnostics overlay unavailable: {error}",
+                        wall.out.name
+                    );
+                }
+            }
+        }
+    }
+
     // Every grid feed referenced by any panel starts once and stays wanted
     // while at least one display is watched. Panel selection is presentation-only.
     for source in &sources {
@@ -1230,6 +1288,10 @@ fn build(
         pressed: Instant::now(),
         laid_out: None,
         fullscreen_tap: None,
+        debug_overlay: None,
+        debug_overlay_active: false,
+        debug_overlay_detached: true,
+        debug_overlay_updated_at: Instant::now(),
     })
 }
 
@@ -1359,6 +1421,25 @@ fn source_wanted_for_state(
     watched && (persistent_grid || (!panel_transition_pending && shown_in_current_scene))
 }
 
+/// Find a camera already in the active scene, or add any registered feed
+/// so API requests are not restricted to cameras used by that panel.
+fn ensure_camera_index(
+    cameras: &mut Vec<Camera>,
+    sources: &[Arc<Source>],
+    fullscreen_sources: &[Option<Arc<Source>>],
+    name: &str,
+) -> Option<usize> {
+    if let Some(index) = cameras.iter().position(|camera| camera.feed.name == name) {
+        return Some(index);
+    }
+    let source_index = sources.iter().position(|source| source.name == name)?;
+    cameras.push(Camera {
+        feed: sources[source_index].clone(),
+        fullscreen: fullscreen_sources.get(source_index).cloned().flatten(),
+    });
+    Some(cameras.len() - 1)
+}
+
 /// Whether a source must keep decoding for at least one watched wall.
 /// Grid sources are persistent across panel transitions; fullscreen-only
 /// sources remain tied to the currently presented scene.
@@ -1394,8 +1475,13 @@ fn run_walls(
             .collect(),
     };
     let mut commit_gripe = Throttle::new();
-    let mut display_requested_on = true;
-    let mut display_on = true;
+    let initial_display_on = std::env::var("VIEWPIE_SCREEN_ON")
+        .map(|value| value != "0")
+        .unwrap_or(true);
+    let mut display_requested_on = initial_display_on;
+    // Force the first loop iteration to apply the requested DPMS state even
+    // when a previous renderer process left the connector powered off.
+    let mut display_on = !initial_display_on;
     let mut stopping = false;
 
     while !stopping {
@@ -1437,16 +1523,17 @@ fn run_walls(
                     if let Some(wall) = walls.first_mut() {
                         if wall.pending_panel.is_some() {
                             wall.pending_fullscreen = Some(camera);
-                        } else if let Some(at) = wall
-                            .cameras
-                            .iter()
-                            .position(|entry| entry.feed.name == camera)
-                        {
+                        } else if let Some(at) = ensure_camera_index(
+                            &mut wall.cameras,
+                            sources,
+                            &wall.fullscreen_sources,
+                            &camera,
+                        ) {
                             let was = wall.mode;
                             wall.show(Mode::Fullscreen(at));
                             panel_changed |= was != wall.mode;
                         } else {
-                            eprintln!("camera is not in the active panel: {camera}");
+                            eprintln!("unknown camera requested for fullscreen: {camera}");
                         }
                     }
                 }
@@ -1568,14 +1655,17 @@ fn run_walls(
                                 wall.pending_panel = None;
                                 wall.mode = Mode::Grid;
                                 if let Some(camera) = wall.pending_fullscreen.take() {
-                                    if let Some(at) = wall
-                                        .cameras
-                                        .iter()
-                                        .position(|entry| entry.feed.name == camera)
-                                    {
+                                    if let Some(at) = ensure_camera_index(
+                                        &mut wall.cameras,
+                                        sources,
+                                        &wall.fullscreen_sources,
+                                        &camera,
+                                    ) {
                                         wall.show(Mode::Fullscreen(at));
                                     } else {
-                                        eprintln!("camera is not in panel '{panel}': {camera}");
+                                        eprintln!(
+                                            "unknown camera requested for fullscreen: {camera}"
+                                        );
                                     }
                                 }
                                 wall.laid_out = None;
@@ -1634,11 +1724,56 @@ fn run_walls(
                 // without one a new frame would wait out the poll below. Such a
                 // commit is legal because Card::commit names the crtc whatever
                 // else a request says.
-                let request = ready
-                    .iter()
-                    .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb)));
-                match card.commit(wall.out.crtc, wall.crtc_active, request) {
+                if wall.debug_overlay.is_some()
+                    && wall.debug_overlay_updated_at.elapsed() >= Duration::from_secs(1)
+                {
+                    let lines = debug_overlay_lines(sources);
+                    let draw_result = wall
+                        .debug_overlay
+                        .as_mut()
+                        .map(|overlay| card.draw_debug_overlay(overlay, &lines));
+                    if let Some(Err(error)) = draw_result {
+                        eprintln!("{}: diagnostics overlay disabled: {error}", wall.out.name);
+                        wall.debug_overlay_active = false;
+                    } else {
+                        wall.debug_overlay_updated_at = Instant::now();
+                    }
+                }
+                let had_overlay = wall.debug_overlay_active;
+                let result = card.commit(
+                    wall.out.crtc,
+                    wall.crtc_active,
+                    ready
+                        .iter()
+                        .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
+                    wall.debug_overlay
+                        .as_ref()
+                        .map(|overlay| (overlay, wall.debug_overlay_active)),
+                );
+                let result = if result.is_err() && had_overlay {
+                    eprintln!(
+                        "{}: diagnostics plane rejected by KMS; retrying camera-only commit",
+                        wall.out.name
+                    );
+                    // Explicitly detach the optional plane on the retry. Keep
+                    // its backing buffer alive until the detach flip is complete.
+                    wall.debug_overlay_active = false;
+                    card.commit(
+                        wall.out.crtc,
+                        wall.crtc_active,
+                        ready
+                            .iter()
+                            .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
+                        wall.debug_overlay.as_ref().map(|overlay| (overlay, false)),
+                    )
+                } else {
+                    result
+                };
+                match result {
                     Ok(()) => {
+                        if wall.debug_overlay.is_some() {
+                            wall.debug_overlay_detached = !wall.debug_overlay_active;
+                        }
                         wall.commits += 1;
                         // Held until the flip: from here on the display may be
                         // reading these, whatever their feeds do next. Recorded
@@ -1706,11 +1841,12 @@ fn run_walls(
     loop {
         let mut all_clear = true;
         for wall in walls.iter_mut() {
-            if wall.in_flight.is_none() && wall.on_screen.iter().any(Option::is_some) {
+            let camera_attached = wall.on_screen.iter().any(Option::is_some);
+            if wall.in_flight.is_none() && camera_attached {
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let ready = let_go(&wall.viewports, showing, 0);
                 let request = ready.iter().map(|(_, viewport, _)| (*viewport, None));
-                match card.commit(wall.out.crtc, wall.crtc_active, request) {
+                match card.commit(wall.out.crtc, wall.crtc_active, request, None) {
                     Ok(()) => {
                         wall.in_flight = Some(InFlight {
                             at: Instant::now(),
@@ -1724,7 +1860,27 @@ fn run_walls(
                     )),
                 }
             }
-            if wall.in_flight.is_some() || wall.on_screen.iter().any(Option::is_some) {
+            if wall.in_flight.is_none() && !camera_attached && !wall.debug_overlay_detached {
+                if let Some(overlay) = wall.debug_overlay.as_ref() {
+                    match card.detach_debug_overlay(wall.out.crtc, wall.crtc_active, overlay) {
+                        Ok(()) => {
+                            wall.debug_overlay_detached = true;
+                            wall.in_flight = Some(InFlight {
+                                at: Instant::now(),
+                                overdue_said: false,
+                                named: Vec::new(),
+                            });
+                        }
+                        Err(error) => commit_gripe.say(format_args!(
+                            "shutdown diagnostics detach on {}: {error}",
+                            wall.out.name
+                        )),
+                    }
+                } else {
+                    wall.debug_overlay_detached = true;
+                }
+            }
+            if wall.in_flight.is_some() || camera_attached || !wall.debug_overlay_detached {
                 all_clear = false;
             }
         }
@@ -1972,6 +2128,80 @@ struct Marks {
 struct WallMark {
     commits: u64,
     turns: u64,
+}
+
+/// Text shown on the optional KMS plane. Keep the overlay compact: it is
+/// deliberately a small status panel, not a copy of the full journal.
+fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
+    let mut lines = vec!["CAMERA PATH CODEC RESOLUTION FPS ERRORS".to_string()];
+    for source in sources
+        .iter()
+        .filter(|source| source.persistent_grid || source.wanted.load(Ordering::Relaxed))
+    {
+        let info = source.decoder_info.lock().unwrap().clone();
+        let path = match (info.decoder.as_deref(), info.mode.as_deref()) {
+            (Some(decoder), Some(mode)) => format!("{decoder}/{mode}"),
+            (Some(decoder), None) => decoder.to_string(),
+            _ => "WAIT".to_string(),
+        };
+        let codec = info.codec.unwrap_or_else(|| "?".to_string());
+        let resolution = match (info.width, info.height) {
+            (Some(width), Some(height)) => format!("{width}X{height}"),
+            _ => "?".to_string(),
+        };
+        let fps = info
+            .fps
+            .map(|value| format!("{value:.1}"))
+            .unwrap_or_else(|| "-".into());
+        let errors = source.stats.errors.load(Ordering::Relaxed).max(info.errors);
+        let state = if source.wanted.load(Ordering::Relaxed) {
+            info.state.unwrap_or_else(|| "CONNECTING".to_string())
+        } else {
+            "PAUSED".to_string()
+        };
+        lines.push(format!(
+            "{} {} {} {} {} E{} {}",
+            source.name, path, codec, resolution, fps, errors, state
+        ));
+    }
+    let cpu = debug_cpu_load_percent()
+        .map(|value| format!("{value:.0}%"))
+        .unwrap_or_else(|| "?".to_string());
+    let temp = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .map(|value| format!("{:.1}C", value / 1000.0))
+        .unwrap_or_else(|| "?".to_string());
+    lines.push(format!("CPU {cpu} TEMP {temp}"));
+    lines
+}
+
+/// CPU busy percentage between one-second overlay refreshes.
+fn debug_cpu_load_percent() -> Option<f64> {
+    static PREVIOUS: Mutex<Option<(u64, u64)>> = Mutex::new(None);
+    let raw = std::fs::read_to_string("/proc/stat").ok()?;
+    let values: Vec<u64> = raw
+        .lines()
+        .find(|line| line.starts_with("cpu "))?
+        .split_whitespace()
+        .skip(1)
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    if values.len() < 5 {
+        return None;
+    }
+    let total: u64 = values.iter().take(8).sum();
+    let idle = values[3] + values[4];
+    let mut previous = PREVIOUS.lock().ok()?;
+    let result = (*previous).and_then(|(old_total, old_idle)| {
+        let total_delta = total.saturating_sub(old_total);
+        let idle_delta = idle.saturating_sub(old_idle);
+        (total_delta > 0)
+            .then_some((total_delta.saturating_sub(idle_delta)) as f64 / total_delta as f64 * 100.0)
+    });
+    *previous = Some((total, idle));
+    result
 }
 
 /// Say what the last few seconds were like, in two parts: the feeds, then
@@ -2397,6 +2627,11 @@ fn emit_decoder_status(source: &Source) {
             "paused".to_string()
         },
         "fallback_reason": info.fallback_reason,
+        "codec": info.codec,
+        "width": info.width,
+        "height": info.height,
+        "fps": info.fps,
+        "errors": source.stats.errors.load(Ordering::Relaxed).max(info.errors),
     });
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "VIEWPIE_DECODER_STATUS {status}");
@@ -2428,6 +2663,11 @@ fn feed_session(
         info.mode = None;
         info.state = Some("starting".to_string());
         info.fallback_reason = dec.hardware_fallback.clone();
+        info.codec = Some(dec.codec().to_string());
+        info.width = None;
+        info.height = None;
+        info.fps = None;
+        info.errors = source.stats.errors.load(Ordering::Relaxed);
     }
     emit_decoder_status(source);
     eprintln!("{name}: selected decoder {}", dec.decoder_name);
@@ -2458,6 +2698,8 @@ fn feed_session(
     // Read once, before the loop borrows the decoder: it cannot change while
     // a session runs, since a different codec means a different stream.
     let codec = dec.codec();
+    let mut telemetry_at = Instant::now();
+    let mut telemetry_frames = source.stats.decoded.load(Ordering::Relaxed);
 
     while !shutdown.load(Ordering::Acquire) {
         let Some(frame) = dec.next_frame(shutdown, &source.wanted) else {
@@ -2484,6 +2726,25 @@ fn feed_session(
         };
         if w == 0 || h == 0 {
             continue;
+        }
+        let now = Instant::now();
+        if now.duration_since(telemetry_at) >= Duration::from_secs(2) {
+            let decoded = source.stats.decoded.load(Ordering::Relaxed);
+            let elapsed = now.duration_since(telemetry_at).as_secs_f64();
+            {
+                let mut info = source.decoder_info.lock().unwrap();
+                info.width = Some(w);
+                info.height = Some(h);
+                info.fps = Some(decoded.saturating_sub(telemetry_frames) as f64 / elapsed);
+                info.errors = source.stats.errors.load(Ordering::Relaxed);
+            }
+            emit_decoder_status(source);
+            telemetry_at = now;
+            telemetry_frames = decoded;
+        } else {
+            let mut info = source.decoder_info.lock().unwrap();
+            info.width = Some(w);
+            info.height = Some(h);
         }
         let (fb, frame) = unsafe {
             // Report the path once, and again whenever it changes: a decoder
@@ -2966,6 +3227,46 @@ fn first_connected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fullscreen_can_resolve_a_registered_camera_outside_the_active_panel() {
+        let active = Arc::new(Source::new("active_camera", true));
+        let other = Arc::new(Source::new("other_camera", true));
+        let fullscreen_active = Arc::new(Source::on_demand("active_camera (fullscreen)"));
+        let fullscreen_other = Arc::new(Source::on_demand("other_camera (fullscreen)"));
+        let sources = vec![active.clone(), other.clone()];
+        let fullscreen_sources = vec![Some(fullscreen_active), Some(fullscreen_other)];
+        let mut cameras = vec![Camera {
+            feed: active.clone(),
+            fullscreen: fullscreen_sources[0].clone(),
+        }];
+
+        let index =
+            ensure_camera_index(&mut cameras, &sources, &fullscreen_sources, "other_camera");
+
+        assert_eq!(index, Some(1));
+        assert_eq!(cameras.len(), 2);
+        assert!(Arc::ptr_eq(&cameras[1].feed, &other));
+        assert!(Arc::ptr_eq(
+            cameras[1].fullscreen.as_ref().unwrap(),
+            fullscreen_sources[1].as_ref().unwrap()
+        ));
+        assert_eq!(
+            ensure_camera_index(&mut cameras, &sources, &fullscreen_sources, "other_camera"),
+            Some(1),
+            "repeated requests must not duplicate camera entries"
+        );
+        assert_eq!(cameras.len(), 2);
+        assert_eq!(
+            ensure_camera_index(
+                &mut cameras,
+                &sources,
+                &fullscreen_sources,
+                "missing_camera"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn explicit_hardware_preferences_win_before_auto_feeds() {

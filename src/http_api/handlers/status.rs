@@ -6,11 +6,34 @@
 
 use axum::extract::State;
 use axum::Json;
+use chrono::DateTime;
 
 use crate::http_api::errors::ApiError;
 use crate::http_api::handlers::restart::restart_available;
 use crate::http_api::models::StatusResponse;
 use crate::http_api::state::AppState;
+
+fn format_build_date(value: &str) -> String {
+    DateTime::parse_from_rfc3339(value)
+        .map(|date| date.format("%d.%m.%y %H:%M:%S").to_string())
+        .unwrap_or_else(|_| value.to_string())
+}
+
+fn format_uptime(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    if days > 0 {
+        format!("{days} дн. {hours} ч. {minutes} мин.")
+    } else if hours > 0 {
+        format!("{hours} ч. {minutes} мин.")
+    } else if minutes > 0 {
+        format!("{minutes} мин.")
+    } else {
+        format!("{seconds} сек.")
+    }
+}
 
 pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse>, ApiError> {
     let wall = state.wall_state.read().await;
@@ -82,7 +105,7 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
 
     Ok(Json(StatusResponse {
         software_version: env!("CARGO_PKG_VERSION"),
-        software_build_date: env!("VIEWPIE_BUILD_DATE"),
+        software_build_date: format_build_date(env!("VIEWPIE_BUILD_DATE")),
         paused,
         pause_off_screen: settings.pause_off_screen,
         screen_off: !screen_on,
@@ -93,6 +116,7 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         layout,
         spacing: settings.spacing,
         uptime_seconds,
+        uptime: format_uptime(uptime_seconds),
         cpu_temp_c,
         cpu_load_percent,
         load_average_1m,
@@ -101,4 +125,25 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         panels_count,
         decoder_status,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_build_date, format_uptime};
+
+    #[test]
+    fn build_date_uses_day_month_short_year_and_time() {
+        assert_eq!(
+            format_build_date("2026-11-11T16:37:16+03:00"),
+            "11.11.26 16:37:16"
+        );
+    }
+
+    #[test]
+    fn uptime_uses_days_hours_and_minutes() {
+        assert_eq!(format_uptime(0), "0 сек.");
+        assert_eq!(format_uptime(125), "2 мин.");
+        assert_eq!(format_uptime(3_661), "1 ч. 1 мин.");
+        assert_eq!(format_uptime(90_061), "1 дн. 1 ч. 1 мин.");
+    }
 }

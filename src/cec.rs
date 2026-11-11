@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use crate::http_api::state::AppState;
+use crate::http_api::state::{set_paused, AppState, WallCommand};
 
 /// Abstract CEC device capability. Implemented by the libcec binding on
 /// ARM builds; absent devices fall back to [`NoCec`].
@@ -134,11 +134,23 @@ pub fn spawn_cec_handler(state: AppState, adapter: Arc<dyn CecAdapter>) {
             match ev {
                 CecEvent::TvPoweredOff => {
                     info!("CEC: TV off → pausing");
-                    let _ = state.manager.pause().await;
+                    if let Err(error) = state.persist_screen_state(false).await {
+                        warn!("CEC screen-off state could not be persisted: {error}");
+                    }
+                    set_paused(true).await;
+                    if let Err(error) = state.command_tx.send(WallCommand::Pause).await {
+                        warn!("CEC screen-off command failed: {error}");
+                    }
                 }
                 CecEvent::TvPoweredOn => {
                     info!("CEC: TV on → resuming");
-                    let _ = state.manager.resume().await;
+                    if let Err(error) = state.persist_screen_state(true).await {
+                        warn!("CEC screen-on state could not be persisted: {error}");
+                    }
+                    set_paused(false).await;
+                    if let Err(error) = state.command_tx.send(WallCommand::Resume).await {
+                        warn!("CEC screen-on command failed: {error}");
+                    }
                 }
                 CecEvent::MenuPressed | CecEvent::OkPressed => {
                     info!("CEC: menu → cycling panel");

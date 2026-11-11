@@ -1,5 +1,9 @@
 name: ci
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: ["**"]
@@ -15,7 +19,26 @@ jobs:
       # links nothing of: the drm crate speaks to the kernel by ioctl.
       - name: Install what the crate builds against
         run: |
-          sudo apt-get update
+          # Select a mirror reachable from this runner. The default Azure
+          # mirror and archive.ubuntu.com were both unreachable in recent runs.
+          MIRROR=""
+          for candidate in \
+            https://mirrors.edge.kernel.org/ubuntu \
+            https://ubuntu.osuosl.org/ubuntu \
+            https://mirror.math.princeton.edu/pub/ubuntu; do
+            if curl -fsSI --connect-timeout 5 --max-time 12 \
+              "$candidate/dists/noble/InRelease" >/dev/null; then
+              MIRROR="$candidate"
+              break
+            fi
+          done
+          if [ -z "$MIRROR" ]; then
+            echo "No reachable Ubuntu package mirror found" >&2
+            exit 1
+          fi
+          echo "Using Ubuntu mirror: $MIRROR"
+          echo "$MIRROR" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
           sudo apt-get install -y --no-install-recommends \
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
             libclang-dev clang

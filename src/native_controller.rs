@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
@@ -17,10 +18,11 @@ pub struct NativeRendererController {
     child: Mutex<Option<RunningChild>>,
     operation: Mutex<()>,
     decoder_status: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    display_on: AtomicBool,
 }
 
 impl NativeRendererController {
-    pub fn new(config_path: impl Into<String>) -> Self {
+    pub fn new(config_path: impl Into<String>, initial_display_on: bool) -> Self {
         let binary_path = std::env::var_os("VIEWPIE_NATIVE_RENDERER")
             .map(PathBuf::from)
             .or_else(|| {
@@ -36,6 +38,7 @@ impl NativeRendererController {
             child: Mutex::new(None),
             operation: Mutex::new(()),
             decoder_status: Arc::new(RwLock::new(HashMap::new())),
+            display_on: AtomicBool::new(initial_display_on),
         }
     }
 
@@ -76,8 +79,8 @@ impl NativeRendererController {
     /// Reload the YAML-backed scene set after a configuration mutation.
     /// Unlike ordinary panel selection, this intentionally restarts the
     /// renderer so newly added cameras, panel definitions and settings are read.
-    pub async fn reload(&self, panel: &str) -> anyhow::Result<()> {
-        self.restart(panel, None).await
+    pub async fn reload(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
+        self.restart(panel, fullscreen).await
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
@@ -108,6 +111,9 @@ impl NativeRendererController {
     }
 
     pub async fn set_display_power(&self, on: bool) -> anyhow::Result<()> {
+        // Keep the requested state even if the child is currently unavailable;
+        // the next renderer start must honor the API's persisted preference.
+        self.display_on.store(on, Ordering::Release);
         let _operation = self.operation.lock().await;
         let mut guard = self.child.lock().await;
 
@@ -134,6 +140,14 @@ impl NativeRendererController {
         command
             .arg(&self.config_path)
             .env("VIEWPIE_PANEL", panel)
+            .env(
+                "VIEWPIE_SCREEN_ON",
+                if self.display_on.load(Ordering::Acquire) {
+                    "1"
+                } else {
+                    "0"
+                },
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());

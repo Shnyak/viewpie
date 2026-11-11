@@ -85,9 +85,21 @@ pub async fn put_settings(
     }
 
     state.publish_config(candidate_config).await;
-    let _ = state
-        .command_tx
-        .send(WallCommand::UpdateSettings(candidate))
-        .await;
+    // Startup-only choices must not restart the renderer or change the
+    // currently displayed scene/power state. Only live rendering settings
+    // are forwarded to the native child.
+    let renderer_changed = old.spacing != candidate.spacing
+        || old.hardware_decoder_limit != candidate.hardware_decoder_limit
+        || old.pause_off_screen != candidate.pause_off_screen
+        || old.debug_overlay != candidate.debug_overlay
+        || old.background != candidate.background
+        || old.rotation_interval != candidate.rotation_interval
+        || old.fullscreen_timeout != candidate.fullscreen_timeout;
+    if renderer_changed {
+        let _ = state
+            .command_tx
+            .send(WallCommand::UpdateSettings(candidate))
+            .await;
+    }
     Ok(Json(OkResponse::ok()))
 }

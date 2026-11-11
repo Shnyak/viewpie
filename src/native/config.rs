@@ -28,6 +28,8 @@ pub struct Config {
     /// Whether to stop decoding for a display nobody is watching: one that
     /// is unplugged, or whose television is off or showing another input.
     pub pause_off_screen: bool,
+    /// Whether the renderer should reserve and draw the diagnostics overlay.
+    pub debug_overlay: bool,
     /// Maximum simultaneous hardware-decoded grid streams.
     pub hardware_decoder_limit: usize,
 }
@@ -112,6 +114,7 @@ impl Config {
                 "spacing",
                 "background",
                 "pause_off_screen",
+                "debug_overlay",
                 "feeds",
                 "displays",
                 "panels",
@@ -146,6 +149,12 @@ impl Config {
             Yaml::BadValue => false,
             Yaml::Boolean(b) => *b,
             _ => return Err("pause_off_screen must be true or false".into()),
+        };
+
+        let debug_overlay = match &doc["debug_overlay"] {
+            Yaml::BadValue => false,
+            Yaml::Boolean(value) => *value,
+            _ => return Err("debug_overlay must be true or false".into()),
         };
 
         let mut panels = HashMap::new();
@@ -255,6 +264,7 @@ impl Config {
             active_panel,
             active_fullscreen,
             pause_off_screen,
+            debug_overlay,
             hardware_decoder_limit,
         };
         if let Some(camera) = &config.active_fullscreen {
@@ -809,6 +819,21 @@ displays:
         assert_eq!(d.layout.size, 2, "two feeds infer a 2x2 grid");
         assert_eq!(d.viewports[1].rotation_interval, DEFAULT_ROTATION_INTERVAL);
         assert!(!c.pause_off_screen, "a wall decodes whether watched or not");
+    }
+
+    #[test]
+    fn diagnostics_overlay_setting_is_parsed_as_a_boolean() {
+        let wall = |value: &str| {
+            Config::parse(&format!(
+                "debug_overlay: {value}\nfeeds: {{a: rtsp://a}}\ndisplays: [{{viewports: [{{feeds: [a]}}]}}]"
+            ))
+        };
+        assert!(wall("true").unwrap().debug_overlay);
+        assert!(!wall("false").unwrap().debug_overlay);
+        assert_eq!(
+            wall("sometimes").unwrap_err(),
+            "debug_overlay must be true or false"
+        );
     }
 
     #[test]

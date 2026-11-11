@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
             get(panels::list_panels).post(panels::create_panel),
         )
         .route("/api/panels/active", get(panels::active_panel))
+        .route("/api/panels/order", put(panels::reorder_panels))
         .route(
             "/api/panels/:id",
             get(panels::get_panel)
