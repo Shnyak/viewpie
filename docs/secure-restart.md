@@ -1,43 +1,40 @@
 # Protected Raspberry Pi restart
 
-Viewpie exposes POST /api/restart. The endpoint requires the dedicated
-VIEWPIE_RESTART_TOKEN bearer token and verifies that the running service
-has Linux CAP_SYS_BOOT before accepting the request.
+Viewpie exposes a token-protected `POST /api/restart` endpoint. The Debian
+package creates a cryptographically random 256-bit token on first installation
+and stores it in the root-only `/etc/viewpie/restart.env` file. The token is
+printed once by the package installer so it can be entered in Home Assistant.
+Package upgrades preserve the existing token. Older installations that used
+`/etc/viewpie/viewpie.env` are migrated without printing the secret.
 
-The Debian package grants only CAP_SYS_BOOT to the unprivileged viewpie
-service using systemd CapabilityBoundingSet and AmbientCapabilities.
-The service continues to run as user viewpie with NoNewPrivileges=yes.
-No sudoers entry, root shell, or general-purpose privilege escalation is used.
+The Debian service runs as the unprivileged `viewpie` account and receives only
+`CAP_SYS_BOOT` through systemd. No sudoers entry or general-purpose privilege
+escalation is used for reboot.
 
-## Configure the token on Raspberry Pi
+## Home Assistant
 
-Generate a cryptographically random 256-bit token and store it in a root-only
-environment file. Run this after installing Viewpie 0.2.10-fork or newer:
+During initial integration setup, paste the one-time token printed by the
+package installer into the optional **Restart / update token** field. For an
+existing integration, open Settings → Devices & services → Viewpie → Configure
+and enter the same token. The token is sent only as a Bearer authorization
+header to the protected restart and update endpoints.
 
-```bash
-TOKEN="$(openssl rand -hex 32)"
-sudo install -d -m 0755 /etc/viewpie
-sudo install -m 600 -o root -g root /dev/null /etc/viewpie/restart.env
-printf "VIEWPIE_RESTART_TOKEN=%s\n" "$TOKEN" | sudo tee /etc/viewpie/restart.env >/dev/null
-printf "\nСохраните этот токен и введите его в настройках интеграции Viewpie:\n%s\n" "$TOKEN"
-unset TOKEN
-sudo systemctl daemon-reload
-sudo systemctl restart viewpie
-```
+## Verified updates from Home Assistant
 
-systemd reads the environment file as the system manager, so it can remain
-owned by root and mode 0600; the Viewpie service account does not need direct
-filesystem access to the secret.
+The system management card can check the latest GitHub release for the
+Raspberry Pi architecture. Installation is enabled only when a newer matching
+package and a SHA-256 digest are available. The user must start installation
+manually and confirm it in the card.
 
-## Configure Home Assistant
+The package installer is a separate root-owned, systemd socket-activated helper.
+The Viewpie API can request only the fixed `INSTALL` operation; it cannot pass
+an arbitrary URL, file path, shell command, or package name. The helper fetches
+the latest release directly from the fixed GitHub repository, checks the
+architecture, verifies the GitHub-published SHA-256 digest, validates the
+Debian package identity, and only then runs `dpkg -i`.
 
-Open Settings → Devices & services → Viewpie → Configure and paste the same
-token into Restart token. Save the options. The integration sends the token
-only as Authorization: Bearer <token> to POST /api/restart.
-
-The restart_available field in GET /api/status becomes true only when the
-token is non-empty and the process has CAP_SYS_BOOT. The Home Assistant button
-additionally requires the matching token in integration options and asks for
-confirmation before rebooting.
+The helper logs installation errors to the system journal. A package update
+restarts the Viewpie service through Debian's normal package hooks. It does not
+automatically reboot the Raspberry Pi.
 
 Never publish the token or include it in diagnostic output.
