@@ -298,9 +298,12 @@ impl PanelConfig {
 /// Defaults section.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DefaultsConfig {
-    /// Panel activated on startup / resume.
+    /// Panel activated on startup / resume (legacy YAML setting).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel: Option<String>,
+    /// User-defined panel order, from first to last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panel_order: Vec<String>,
     /// Override for display.rotation_interval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation_interval: Option<u64>,
@@ -430,7 +433,37 @@ impl Config {
                 )));
             }
         }
+        let mut ordered = std::collections::HashSet::new();
+        for id in &self.defaults.panel_order {
+            if !self.panels.contains_key(id) {
+                return Err(ConfigError::Validation(format!(
+                    "defaults.panel_order references unknown panel {id:?}"
+                )));
+            }
+            if !ordered.insert(id) {
+                return Err(ConfigError::Validation(format!(
+                    "defaults.panel_order contains duplicate panel {id:?}"
+                )));
+            }
+        }
         Ok(())
+    }
+
+    /// Return panel ids in configured order, appending any legacy/unlisted ids.
+    pub fn ordered_panel_ids(&self) -> Vec<String> {
+        let mut ids = Vec::with_capacity(self.panels.len());
+        for id in &self.defaults.panel_order {
+            if self.panels.contains_key(id) && !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        let mut remaining: Vec<String> = self.panels.keys()
+            .filter(|id| !ids.contains(id))
+            .cloned()
+            .collect();
+        remaining.sort();
+        ids.extend(remaining);
+        ids
     }
 
     /// Determine the initially active panel.
