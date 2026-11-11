@@ -149,7 +149,7 @@ pub async fn update_status() -> Result<Json<Value>, ApiError> {
             .into_iter()
             .rev()
             .collect::<Vec<_>>()
-            .join("\\n"),
+            .join("\n"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => {
             return Err(ApiError::Unavailable(format!(
