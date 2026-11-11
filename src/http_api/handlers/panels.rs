@@ -23,7 +23,7 @@ pub async fn list_panels(
     let active = state.manager.active_id().await;
     let config = state.config.read().await.clone();
     let panels = config.ordered_panel_ids().into_iter().filter_map(|id| {
-        all.get(&id).map(|p| PanelSummary {
+        all.iter().find(|(panel_id, _)| panel_id == &id).map(|(_, p)| PanelSummary {
             id,
             name: p.name.clone(),
             camera_count: p.camera_count(),
