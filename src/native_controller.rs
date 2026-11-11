@@ -51,6 +51,7 @@ impl NativeRendererController {
     }
 
     pub async fn select_panel(&self, panel: &str) -> anyhow::Result<()> {
+        self.renderer_state.send_replace(None);
         if panel.contains('\n') || panel.contains('\r') {
             anyhow::bail!("panel id contains a line break");
         }
@@ -94,10 +95,6 @@ impl NativeRendererController {
         {
             anyhow::bail!("panel or camera id contains a line break");
         }
-        // Clear the previous acknowledgement before sending a new request;
-        // the HTTP API waits for proof that a frame reached the physical KMS
-        // display, not merely that a command was written to the child pipe.
-        self.renderer_state.send_replace(None);
         let _operation = self.operation.lock().await;
         let mut guard = self.child.lock().await;
         let exited = match guard.as_mut() {
@@ -107,6 +104,22 @@ impl NativeRendererController {
         if exited {
             guard.take();
         }
+        let already_visible = self
+            .renderer_state
+            .borrow()
+            .as_ref()
+            .is_some_and(|state| {
+                state.get("status").and_then(|value| value.as_str()) == Some("committed")
+                    && state.get("mode").and_then(|value| value.as_str()) == Some("fullscreen")
+                    && state.get("camera").and_then(|value| value.as_str()) == Some(camera)
+            });
+        if already_visible && !exited && guard.is_some() {
+            return Ok(());
+        }
+        // Clear the previous acknowledgement before sending a new request;
+        // the HTTP API waits for proof that a frame reached the physical KMS
+        // display, not merely that a command was written to the child pipe.
+        self.renderer_state.send_replace(None);
         if let Some(running) = guard.as_mut() {
             let command = format!("FULLSCREEN {camera}\n");
             running.stdin.write_all(command.as_bytes()).await?;
@@ -170,6 +183,7 @@ impl NativeRendererController {
     }
 
     async fn restart(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
+        self.renderer_state.send_replace(None);
         let _operation = self.operation.lock().await;
         self.decoder_status.write().await.clear();
         self.stop_inner().await;
