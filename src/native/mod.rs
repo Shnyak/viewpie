@@ -529,6 +529,7 @@ struct Wall {
     /// Optional diagnostics plane, allocated only after every camera plane.
     debug_overlay: Option<DebugOverlay>,
     debug_overlay_active: bool,
+    debug_overlay_detached: bool,
     debug_overlay_updated_at: Instant,
 }
 
@@ -963,6 +964,7 @@ fn run(config: &Config) -> Result<(), String> {
                 Ok(overlay) => {
                     wall.debug_overlay = Some(overlay);
                     wall.debug_overlay_active = true;
+                    wall.debug_overlay_detached = false;
                     println!("{}: diagnostics overlay enabled", wall.out.name);
                 }
                 Err(error) => {
@@ -1285,6 +1287,7 @@ fn build(
         fullscreen_tap: None,
         debug_overlay: None,
         debug_overlay_active: false,
+        debug_overlay_detached: true,
         debug_overlay_updated_at: Instant::now(),
     })
 }
@@ -1803,11 +1806,12 @@ fn run_walls(
     loop {
         let mut all_clear = true;
         for wall in walls.iter_mut() {
-            if wall.in_flight.is_none() && wall.on_screen.iter().any(Option::is_some) {
+            let camera_attached = wall.on_screen.iter().any(Option::is_some);
+            if wall.in_flight.is_none() && camera_attached {
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let ready = let_go(&wall.viewports, showing, 0);
                 let request = ready.iter().map(|(_, viewport, _)| (*viewport, None));
-                match card.commit(wall.out.crtc, wall.crtc_active, request) {
+                match card.commit(wall.out.crtc, wall.crtc_active, request, None) {
                     Ok(()) => {
                         wall.in_flight = Some(InFlight {
                             at: Instant::now(),
@@ -1821,7 +1825,30 @@ fn run_walls(
                     )),
                 }
             }
-            if wall.in_flight.is_some() || wall.on_screen.iter().any(Option::is_some) {
+            if wall.in_flight.is_none()
+                && !camera_attached
+                && !wall.debug_overlay_detached
+            {
+                if let Some(overlay) = wall.debug_overlay.as_ref() {
+                    match card.detach_debug_overlay(wall.out.crtc, wall.crtc_active, overlay) {
+                        Ok(()) => {
+                            wall.debug_overlay_detached = true;
+                            wall.in_flight = Some(InFlight {
+                                at: Instant::now(),
+                                overdue_said: false,
+                                named: Vec::new(),
+                            });
+                        }
+                        Err(error) => commit_gripe.say(format_args!(
+                            "shutdown diagnostics detach on {}: {error}",
+                            wall.out.name
+                        )),
+                    }
+                } else {
+                    wall.debug_overlay_detached = true;
+                }
+            }
+            if wall.in_flight.is_some() || camera_attached || !wall.debug_overlay_detached {
                 all_clear = false;
             }
         }
