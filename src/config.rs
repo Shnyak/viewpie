@@ -745,7 +745,9 @@ panels:
       - { slot: a, feeds: [a] }
 "#;
         let cfg = Config::from_yaml(minimal).unwrap();
-        assert_eq!(cfg.display, DisplaySettings::default());
+        let mut expected = DisplaySettings::default();
+        expected.startup_panel = Some("p".to_string());
+        assert_eq!(cfg.display, expected);
         assert_eq!(cfg.initial_panel(), "p");
     }
 
