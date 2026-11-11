@@ -8,8 +8,7 @@
 use super::ffi::*;
 use std::ffi::CString;
 use std::os::raw::c_int;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
