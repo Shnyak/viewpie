@@ -91,11 +91,7 @@ pub async fn fullscreen(
         .await
         .is_err()
     {
-        if let Some(camera) = previous.as_deref() {
-            let _ = state.manager.enter_fullscreen(camera).await;
-        } else {
-            let _ = state.manager.leave_fullscreen().await;
-        }
+        restore_fullscreen_selection(&state, previous.clone()).await;
         return Err(ApiError::Unavailable(
             "renderer command channel is closed".into(),
         ));
@@ -107,11 +103,7 @@ pub async fn fullscreen(
         Err(_) => Err("timed out waiting for the camera to appear on the display".to_string()),
     };
     if let Err(error) = renderer_result {
-        if let Some(camera) = previous.as_deref() {
-            let _ = state.manager.enter_fullscreen(camera).await;
-        } else {
-            let _ = state.manager.leave_fullscreen().await;
-        }
+        restore_fullscreen_selection(&state, previous.clone()).await;
         return Err(ApiError::Unavailable(format!(
             "fullscreen transition was not confirmed by the native renderer: {error}"
         )));
@@ -144,6 +136,20 @@ pub async fn fullscreen(
     }
 
     Ok((StatusCode::OK, Json(OkResponse::ok())))
+}
+
+async fn restore_fullscreen_selection(state: &AppState, previous: Option<String>) {
+    if let Some(camera) = previous {
+        let _ = state.manager.enter_fullscreen(&camera).await;
+        let (acknowledgement, _receiver) = oneshot::channel();
+        let _ = state
+            .command_tx
+            .send(WallCommand::SetFullscreen(camera, None, acknowledgement))
+            .await;
+    } else {
+        let _ = state.manager.leave_fullscreen().await;
+        let _ = state.command_tx.send(WallCommand::ReturnToGrid).await;
+    }
 }
 
 /// `POST /api/reload` — re-read the YAML config and apply without restart.
