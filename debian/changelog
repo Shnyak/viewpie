@@ -1,3 +1,12 @@
+viewpie (0.2.19-fork-1) unstable; urgency=medium
+
+  * Add per-camera FFmpeg decoder-open diagnostics, including the requested
+    and actual decoder, open result and CMA total/free memory snapshot.
+  * Record FFmpeg decoder-open error codes and messages without logging RTSP
+    URLs or credentials.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 09:00:00 +0000
+
 viewpie (0.2.18-fork-1) unstable; urgency=medium
 
   * Fall back to software decoding for an individual H.264 feed after its
