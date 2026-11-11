@@ -2956,6 +2956,7 @@ feeds:
   b_auto: rtsp://b
   a_auto: rtsp://a
   cpu_only: {url: rtsp://c, decoder: software}
+  spare_priority: {url: rtsp://spare, decoder: hardware}
 displays:
   - viewports:
       - {feeds: [z_priority, b_auto, a_auto, cpu_only]}
@@ -2969,6 +2970,7 @@ displays:
         assert!(selected.contains("a_auto"));
         assert!(!selected.contains("b_auto"));
         assert!(!selected.contains("cpu_only"));
+        assert!(!selected.contains("spare_priority"));
     }
 
     #[test]
