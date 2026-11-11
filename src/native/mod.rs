@@ -1359,9 +1359,12 @@ fn source_wanted_for_state(
 /// Grid sources are persistent across panel transitions; fullscreen-only
 /// sources remain tied to the currently presented scene.
 fn source_wanted_for_wall(source: &Source, wall: &Wall) -> bool {
-    wall.watched
-        && (source.persistent_grid
-            || (wall.pending_panel.is_none() && wall.shows(source)))
+    source_wanted_for_state(
+        source.persistent_grid,
+        wall.watched,
+        wall.pending_panel.is_some(),
+        wall.shows(source),
+    )
 }
 
 fn run_walls(
