@@ -580,6 +580,43 @@ panels:
     }
 
     #[test]
+    fn decoder_preferences_default_to_auto_and_hardware_budget_defaults_to_six() {
+        let yaml = r#"
+feeds:
+  a: {url: "rtsp://x/a"}
+panels:
+  p:
+    layout: |
+      a
+    viewports:
+      - {slot: a, feeds: [a]}
+"#;
+        let cfg = Config::from_yaml(yaml).unwrap();
+        assert_eq!(cfg.display.hardware_decoder_limit, 6);
+        assert_eq!(cfg.feeds["a"].decoder, DecoderPreference::Auto);
+    }
+
+    #[test]
+    fn explicit_hardware_preferences_cannot_exceed_budget() {
+        let yaml = r#"
+display:
+  hardware_decoder_limit: 1
+feeds:
+  a: {url: "rtsp://x/a", decoder: hardware}
+  b: {url: "rtsp://x/b", decoder: hardware}
+panels:
+  p:
+    layout: |
+      a b
+    viewports:
+      - {slot: a, feeds: [a]}
+      - {slot: b, feeds: [b]}
+"#;
+        let error = Config::from_yaml(yaml).unwrap_err().to_string();
+        assert!(error.contains("2 cameras explicitly request hardware decoding"));
+    }
+
+    #[test]
     fn settings_validation() {
         let mut s = DisplaySettings::default();
         assert!(s.validate().is_ok());
