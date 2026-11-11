@@ -723,9 +723,10 @@ panels:
     fn panels_config_may_keep_cameras_not_assigned_to_a_panel_yet() {
         let config = Config::parse(
             r#"
+hardware_decoder_limit: 0
 feeds:
   a: rtsp://a
-  spare: rtsp://spare
+  spare: {url: rtsp://spare, decoder: hardware}
 active_panel: yard
 panels:
   yard:
