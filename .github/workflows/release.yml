@@ -217,15 +217,19 @@ jobs:
           pattern: deb-*
           merge-multiple: true
           path: dist
+      - name: Generate SHA256 manifest for bootstrap installs
+        run: |
+          cd dist
+          sha256sum *.deb > SHA256SUMS
       - name: Create or complete the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.release.outputs.tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.deb --clobber
+            gh release upload "$tag" dist/*.deb dist/SHA256SUMS --clobber
           else
-            gh release create "$tag" dist/*.deb --generate-notes || {
+            gh release create "$tag" dist/*.deb dist/SHA256SUMS --generate-notes || {
               echo "Release may have been created by the parallel tag workflow; uploading assets"
               gh release upload "$tag" dist/*.deb --clobber
             }
