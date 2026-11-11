@@ -854,29 +854,29 @@ impl Card {
                 req.add_property(overlay.plane, p.crtc_id, property::Value::CRTC(None));
             } else {
                 for (prop, value) in [
-                (p.fb_id, property::Value::Framebuffer(Some(overlay.fb))),
-                (p.crtc_id, property::Value::CRTC(Some(crtc))),
-                (p.src_x, property::Value::UnsignedRange(0)),
-                (p.src_y, property::Value::UnsignedRange(0)),
-                (
-                    p.src_w,
-                    property::Value::UnsignedRange((overlay.width as u64) << 16),
-                ),
-                (
-                    p.src_h,
-                    property::Value::UnsignedRange((overlay.height as u64) << 16),
-                ),
-                (p.crtc_x, property::Value::SignedRange(overlay.x as i64)),
-                (p.crtc_y, property::Value::SignedRange(overlay.y as i64)),
-                (
-                    p.crtc_w,
-                    property::Value::UnsignedRange(overlay.width as u64),
-                ),
-                (
-                    p.crtc_h,
-                    property::Value::UnsignedRange(overlay.height as u64),
-                ),
-            ] {
+                    (p.fb_id, property::Value::Framebuffer(Some(overlay.fb))),
+                    (p.crtc_id, property::Value::CRTC(Some(crtc))),
+                    (p.src_x, property::Value::UnsignedRange(0)),
+                    (p.src_y, property::Value::UnsignedRange(0)),
+                    (
+                        p.src_w,
+                        property::Value::UnsignedRange((overlay.width as u64) << 16),
+                    ),
+                    (
+                        p.src_h,
+                        property::Value::UnsignedRange((overlay.height as u64) << 16),
+                    ),
+                    (p.crtc_x, property::Value::SignedRange(overlay.x as i64)),
+                    (p.crtc_y, property::Value::SignedRange(overlay.y as i64)),
+                    (
+                        p.crtc_w,
+                        property::Value::UnsignedRange(overlay.width as u64),
+                    ),
+                    (
+                        p.crtc_h,
+                        property::Value::UnsignedRange(overlay.height as u64),
+                    ),
+                ] {
                     req.add_property(overlay.plane, prop, value);
                 }
             }
