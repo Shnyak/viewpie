@@ -234,6 +234,7 @@ mod tests {
         let json = serde_json::to_string(&dto).unwrap();
         let back: CameraDto = serde_json::from_str(&json).unwrap();
         assert_eq!(back.name, "yard");
+        assert_eq!(back.decoder, DecoderPreference::Auto);
         assert_eq!(back.ref_count, 2);
     }
 
