@@ -1745,7 +1745,8 @@ fn run_walls(
                     }
                 }
                 let fullscreen_frame_ready = matches!(wall.mode, Mode::Fullscreen(_))
-                    && ready.iter().any(|(_, _, shown)| shown.is_some());
+                    && (ready.iter().any(|(_, _, shown)| shown.is_some())
+                        || wall.on_screen.first().is_some_and(|shown| shown.is_some()));
                 let had_overlay = wall.debug_overlay_active;
                 let result = card.commit(
                     wall.out.crtc,
