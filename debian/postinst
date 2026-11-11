@@ -30,6 +30,35 @@ configure)
     # a shell can complete the file's name for them. Set again on every
     # upgrade, which is what opens up the 0750 earlier versions made it.
     install -d -m 0755 -o "$VP_USER" -g "$VP_USER" /etc/viewpie
+
+    # Keep the reboot credential across upgrades. Older experimental installs
+    # used viewpie.env; migrate that value without ever printing it.
+    VP_RESTART_ENV=/etc/viewpie/restart.env
+    VP_OLD_RESTART_ENV=/etc/viewpie/viewpie.env
+    if [ -L "$VP_RESTART_ENV" ]; then
+        echo "viewpie: refusing symlink restart environment at $VP_RESTART_ENV" >&2
+        exit 1
+    fi
+    if [ ! -s "$VP_RESTART_ENV" ]; then
+        if [ -f "$VP_OLD_RESTART_ENV" ] &&
+           grep -q '^VIEWPIE_RESTART_TOKEN=.' "$VP_OLD_RESTART_ENV"; then
+            sed -n '/^VIEWPIE_RESTART_TOKEN=./p' "$VP_OLD_RESTART_ENV" |
+                install -m 0600 -o root -g root /dev/stdin "$VP_RESTART_ENV"
+        else
+            VP_RESTART_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \\n')
+            if [ "${#VP_RESTART_TOKEN}" -ne 64 ]; then
+                echo "viewpie: could not generate restart token" >&2
+                exit 1
+            fi
+            printf 'VIEWPIE_RESTART_TOKEN=%s\\n' "$VP_RESTART_TOKEN" |
+                install -m 0600 -o root -g root /dev/stdin "$VP_RESTART_ENV"
+            echo "Viewpie restart token (enter once in the Home Assistant integration):"
+            echo "$VP_RESTART_TOKEN"
+            unset VP_RESTART_TOKEN
+        fi
+    fi
+    chown root:root "$VP_RESTART_ENV"
+    chmod 0600 "$VP_RESTART_ENV"
     VP_CONFIG=/etc/viewpie/viewpie.yaml
     # Never follow a config symlink when repairing ownership: doing so
     # could change permissions on a file outside /etc/viewpie.
