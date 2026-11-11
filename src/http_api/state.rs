@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock};
 use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
-use crate::config::{Config, ConfigError, DisplaySettings, FeedConfig, PanelConfig};
+use crate::config::{Config, ConfigError, DisplaySettings, FeedConfig, PanelConfig, ScreenBootMode};
 use crate::feed::FeedPool;
 use crate::kms::DisplayBackend;
 use crate::panel_manager::PanelManager;
@@ -191,7 +191,15 @@ impl AppState {
         }
 
         let settings = Arc::new(RwLock::new(cfg.display.clone()));
-        let wall_state = Arc::new(RwLock::new(WallState::default()));
+        let initial_screen_on = match cfg.display.screen_boot_mode {
+            ScreenBootMode::AlwaysOn => true,
+            ScreenBootMode::AlwaysOff => false,
+            ScreenBootMode::Restore => cfg.display.last_screen_on,
+        };
+        let wall_state = Arc::new(RwLock::new(WallState {
+            paused: !initial_screen_on,
+            ..WallState::default()
+        }));
         init_singletons(settings.clone(), wall_state.clone()).await;
 
         let panels = Arc::new(RwLock::new(cfg.panels.clone()));
@@ -227,7 +235,23 @@ impl AppState {
             native_pipeline,
             decoder_status,
         };
+        if !initial_screen_on {
+            // Queue the pause before the command pump starts; the physical screen
+            // stays off after a reboot without requiring a second user action.
+            let _ = state.command_tx.send(WallCommand::Pause).await;
+        }
         (state, rx)
+    }
+
+    /// Persist the last manually selected screen state for abrupt power loss.
+    pub async fn persist_screen_state(&self, screen_on: bool) -> Result<(), ConfigError> {
+        let _guard = self.config_update_lock.lock().await;
+        let mut candidate = self.config.read().await.clone();
+        candidate.display.last_screen_on = screen_on;
+        self.persist_config(&candidate)?;
+        self.settings.write().await.last_screen_on = screen_on;
+        self.publish_config(candidate).await;
+        Ok(())
     }
 
     /// Persist a validated candidate before publishing it to API readers.
