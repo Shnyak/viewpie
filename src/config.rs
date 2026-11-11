@@ -81,7 +81,7 @@ pub struct FeedConfig {
     pub decoder: DecoderPreference,
 }
 
-/// Screen state policy applied during Viewpie startup.
+/// Screen state policy applied after Viewpie startup and physical display reconnect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ScreenBootMode {
@@ -89,6 +89,17 @@ pub enum ScreenBootMode {
     AlwaysOff,
     #[default]
     Restore,
+}
+
+impl ScreenBootMode {
+    /// Resolve the requested display state using the last manually selected state.
+    pub fn resolve(self, last_screen_on: bool) -> bool {
+        match self {
+            Self::AlwaysOn => true,
+            Self::AlwaysOff => false,
+            Self::Restore => last_screen_on,
+        }
+    }
 }
 
 /// Display-wide settings that can be changed at runtime via the HTTP API.
@@ -106,7 +117,7 @@ pub struct DisplaySettings {
     /// Panel to activate on startup; None keeps the legacy defaults.panel behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_panel: Option<String>,
-    /// Screen state to apply after a system reboot.
+    /// Screen state to apply after startup and physical display reconnect.
     pub screen_boot_mode: ScreenBootMode,
     /// Last manually selected screen state; persisted on every pause/resume.
     pub last_screen_on: bool,
@@ -845,6 +856,14 @@ defaults:
 "#;
         let cfg = Config::from_yaml(yaml).unwrap();
         assert_eq!(cfg.initial_panel(), "second");
+    }
+
+    #[test]
+    fn screen_boot_modes_resolve_all_three_policies() {
+        assert!(ScreenBootMode::AlwaysOn.resolve(false));
+        assert!(!ScreenBootMode::AlwaysOff.resolve(true));
+        assert!(ScreenBootMode::Restore.resolve(true));
+        assert!(!ScreenBootMode::Restore.resolve(false));
     }
 
     #[test]
