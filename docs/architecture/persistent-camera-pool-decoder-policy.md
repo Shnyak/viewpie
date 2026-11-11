@@ -46,7 +46,7 @@ Allowed values are `hardware`, `software`, and `auto`; omitted values mean `auto
 - `auto` cameras fill remaining slots in stable feed-name order.
 - `software` cameras never attempt V4L2/DRM hardware decoding.
 - If a selected hardware decoder is unavailable or fails, that camera falls back to software; the failure is reported in decoder telemetry.
-- Fullscreen/main-stream sessions share the same global hardware budget. They may use a free slot, but must fall back to software when all slots are occupied. A fullscreen stream must never evict a persistent grid camera from its reserved slot.
+- Fullscreen/main-stream sessions are software-decoded and do not consume the grid hardware budget. This keeps every explicitly prioritized grid camera's slot reserved while fullscreen is active.
 
 The Home Assistant camera manager will expose a per-camera selector (Automatic / Hardware / Software), and a global number control for the hardware-session limit (default 6). The camera selector is the user's priority mechanism; no hidden ranking based on camera name should override an explicit choice.
 
