@@ -41,9 +41,9 @@ def main():
     with connection:
         command = connection.makefile("rb").readline(64).decode("ascii", "replace").strip()
         if command != "INSTALL":
-            connection.sendall(b'{"ok":false,"error":"unsupported command"}\\n')
+            connection.sendall(b'{"ok":false,"error":"unsupported command"}\n')
             return 2
-        connection.sendall(b'{"ok":true,"status":"started"}\\n')
+        connection.sendall(b'{"ok":true,"status":"started"}\n')
 
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock:
@@ -56,7 +56,7 @@ def main():
         release = request_json(RELEASE_API)
         tag = str(release.get("tag_name", ""))
         version = tag[1:] if tag.startswith("v") else tag
-        if not re.fullmatch(r"\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.]+)?", version):
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?", version):
             raise RuntimeError("GitHub returned an invalid release tag")
 
         arch = subprocess.check_output(
