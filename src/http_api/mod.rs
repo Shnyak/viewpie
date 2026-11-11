@@ -72,23 +72,21 @@ pub async fn run(
                     }
                     Err(e) => warn!("cmd switch {id}: {e}"),
                 },
+                // REST handlers update the shared PanelManager before enqueueing
+                // these renderer-only commands. Do not apply the same transition
+                // twice: doing so resets fullscreen timing and can race a newer
+                // scene request while the native child is switching KMS planes.
                 WallCommand::SetFullscreen(cam, _dur) => {
-                    match st.manager.enter_fullscreen(&cam).await {
-                        Ok(()) => {
-                            if let Some(renderer) = &command_renderer {
-                                let panel = st.manager.active_id().await;
-                                if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
-                                    warn!(
-                                        "native renderer failed to enter fullscreen for {cam}: {e}"
-                                    );
-                                }
-                            }
+                    if let Some(renderer) = &command_renderer {
+                        let panel = st.manager.active_id().await;
+                        if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
+                            warn!("native renderer failed to enter fullscreen for {cam}: {e}");
+                        } else {
+                            info!(camera = %cam, "native renderer accepted fullscreen request");
                         }
-                        Err(e) => warn!("cmd fullscreen {cam}: {e}"),
                     }
                 }
                 WallCommand::ReturnToGrid => {
-                    let _ = st.manager.leave_fullscreen().await;
                     if let Some(renderer) = &command_renderer {
                         let panel = st.manager.active_id().await;
                         if let Err(e) = renderer.select_panel(&panel).await {
