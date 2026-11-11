@@ -5,6 +5,7 @@
 //! slot rather than a path into a document.
 
 use super::layout::Layout;
+use crate::config::DecoderPreference;
 use std::collections::HashMap;
 use std::time::Duration;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -27,6 +28,8 @@ pub struct Config {
     /// Whether to stop decoding for a display nobody is watching: one that
     /// is unplugged, or whose television is off or showing another input.
     pub pause_off_screen: bool,
+    /// Maximum simultaneous hardware-decoded grid streams.
+    pub hardware_decoder_limit: usize,
 }
 
 /// A camera, named once and shown wherever a viewport names it.
@@ -38,6 +41,8 @@ pub struct Feed {
     /// A sharper stream of the same camera, for showing it across the whole
     /// screen, where the one for a viewport would be scaled up soft.
     pub fullscreen_url: Option<String>,
+    /// Requested decode path for this camera.
+    pub decoder: DecoderPreference,
 }
 
 #[derive(Debug, Clone)]
@@ -112,10 +117,31 @@ impl Config {
                 "panels",
                 "active_panel",
                 "active_fullscreen",
+                "hardware_decoder_limit",
             ],
         )?;
 
         let feeds = feeds(&doc["feeds"])?;
+        let hardware_decoder_limit = match &doc["hardware_decoder_limit"] {
+            Yaml::BadValue => 6,
+            other => whole(other, "hardware_decoder_limit")? as usize,
+        };
+        if hardware_decoder_limit > 16 {
+            return Err("hardware_decoder_limit must be between 0 and 16".into());
+        }
+        let explicit_hardware = feeds.iter()
+            .filter(|feed| feed.decoder == DecoderPreference::Hardware)
+            .count();
+        if explicit_hardware > hardware_decoder_limit {
+            let names = feeds.iter()
+                .filter(|feed| feed.decoder == DecoderPreference::Hardware)
+                .map(|feed| feed.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "{explicit_hardware} cameras explicitly request hardware decoding ({names}), but hardware_decoder_limit is {hardware_decoder_limit}"
+            ));
+        }
 
         let rotation = match &doc["rotation_interval"] {
             Yaml::BadValue => DEFAULT_ROTATION_INTERVAL,
@@ -212,6 +238,7 @@ impl Config {
             active_panel,
             active_fullscreen,
             pause_off_screen,
+            hardware_decoder_limit,
         };
         if let Some(camera) = &config.active_fullscreen {
             let active = config
@@ -266,13 +293,14 @@ fn feeds(y: &Yaml) -> Result<Vec<Feed>, String> {
                     name,
                     url: url.to_string(),
                     fullscreen_url: None,
+                    decoder: DecoderPreference::Auto,
                 });
             }
             let what = format!("the feed '{name}'");
             if v.as_hash().is_none() {
                 return Err(format!("{what} must be a url, or a mapping with one"));
             }
-            only(v, &what, &["url", "fullscreen_url"])?;
+            only(v, &what, &["url", "fullscreen_url", "decoder"])?;
             let url = |key: &str| match &v[key] {
                 Yaml::BadValue => Ok(None),
                 y => y
@@ -280,9 +308,16 @@ fn feeds(y: &Yaml) -> Result<Vec<Feed>, String> {
                     .map(|s| Some(s.to_string()))
                     .ok_or_else(|| format!("{what}'s {key} must be a url")),
             };
+            let decoder = match v["decoder"].as_str() {
+                None | Some("auto") => DecoderPreference::Auto,
+                Some("hardware") => DecoderPreference::Hardware,
+                Some("software") => DecoderPreference::Software,
+                Some(other) => return Err(format!("{what}'s decoder must be auto, hardware, or software; got '{other}'")),
+            };
             Ok(Feed {
                 url: url("url")?.ok_or_else(|| format!("{what} needs a url"))?,
                 fullscreen_url: url("fullscreen_url")?,
+                decoder,
                 name,
             })
         })
