@@ -93,6 +93,9 @@ pub struct DisplaySettings {
     pub pause_off_screen: bool,
     /// Render readable per-stream diagnostics over the camera wall.
     pub debug_overlay: bool,
+    /// Panel to activate on startup; None keeps the legacy defaults.panel behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_panel: Option<String>,
     /// Background color, `#RRGGBB`.
     pub background: String,
     /// Seconds between fullscreen rotations inside a viewport.
@@ -108,6 +111,7 @@ impl Default for DisplaySettings {
             hardware_decoder_limit: 6,
             pause_off_screen: true,
             debug_overlay: false,
+            startup_panel: None,
             background: "#000000".to_string(),
             rotation_interval: 20,
             fullscreen_timeout: 600,
@@ -426,6 +430,13 @@ impl Config {
             p.validate(&feed_names)
                 .map_err(|e| ConfigError::Validation(format!("panel: {e}")))?;
         }
+        if let Some(def) = &self.display.startup_panel {
+            if !self.panels.contains_key(def) {
+                return Err(ConfigError::Validation(format!(
+                    "display.startup_panel {def:?} does not exist"
+                )));
+            }
+        }
         if let Some(def) = &self.defaults.panel {
             if !self.panels.contains_key(def) {
                 return Err(ConfigError::Validation(format!(
@@ -468,6 +479,11 @@ impl Config {
 
     /// Determine the initially active panel.
     pub fn initial_panel(&self) -> String {
+        if let Some(p) = &self.display.startup_panel {
+            if self.panels.contains_key(p) {
+                return p.clone();
+            }
+        }
         if let Some(p) = &self.defaults.panel {
             if self.panels.contains_key(p) {
                 return p.clone();
