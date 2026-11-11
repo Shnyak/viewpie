@@ -26,7 +26,7 @@ use tracing::{error, info, warn};
 
 pub use state::{AppState, PanelRuntimeState, WallCommand, WallState};
 
-use crate::config::{Config, ScreenBootMode};
+use crate::config::Config;
 use crate::kms::{check_screen_via_kms, DisplayBackend};
 use crate::wall::Resolution;
 
@@ -187,11 +187,7 @@ fn spawn_background_tasks(
                     let settings = st.settings.read().await;
                     (settings.screen_boot_mode, settings.last_screen_on)
                 };
-                let restore_on = match mode {
-                    ScreenBootMode::AlwaysOn => true,
-                    ScreenBootMode::AlwaysOff => false,
-                    ScreenBootMode::Restore => last_screen_on,
-                };
+                let restore_on = mode.resolve(last_screen_on);
                 info!(
                     screen_on = restore_on,
                     ?mode,
