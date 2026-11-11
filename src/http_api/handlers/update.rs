@@ -141,9 +141,21 @@ pub async fn update_status() -> Result<Json<Value>, ApiError> {
         Err(error) => return Err(ApiError::Unavailable(format!("Could not read updater status: {error}"))),
     };
     let log = match tokio::fs::read_to_string(LOG_PATH).await {
-        Ok(raw) => raw.lines().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"),
+        Ok(raw) => raw
+            .lines()
+            .rev()
+            .take(500)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\\n"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(ApiError::Unavailable(format!("Could not read updater journal: {error}"))),
+        Err(error) => {
+            return Err(ApiError::Unavailable(format!(
+                "Could not read updater journal: {error}"
+            )))
+        }
     };
     if let Some(object) = status.as_object_mut() {
         object.insert("log".into(), Value::String(log));
