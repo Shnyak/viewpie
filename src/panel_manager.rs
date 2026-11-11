@@ -410,15 +410,11 @@ impl PanelManager {
         Ok(())
     }
 
-    /// Enter fullscreen on `camera` (must be part of the active panel).
+    /// Enter fullscreen on any registered camera, whether or not it belongs
+    /// to the active panel. Home Assistant can request an individual camera
+    /// independently of the currently displayed panel.
     pub async fn enter_fullscreen(&self, camera: &str) -> Result<(), PanelError> {
-        let id = self.active_id().await;
-        let panel = self.get_panel(&id).await?;
-        if !panel.has_camera(camera) {
-            return Err(PanelError::Validation(format!(
-                "camera {camera:?} is not part of active panel {id:?}"
-            )));
-        }
+        // The caller verifies that the camera exists in the shared feed pool.
         // Stop previous fullscreen stream if any.
         if let Some(prev) =
             crate::http_api::state::set_fullscreen_state(Some(camera.to_string())).await
@@ -724,13 +720,18 @@ defaults:
     }
 
     #[tokio::test]
-    async fn fullscreen_requires_camera_in_panel() {
+    async fn fullscreen_can_show_camera_outside_active_panel() {
         let (mgr, pool, _be) = make_mgr().await;
-        let err = mgr.enter_fullscreen("c").await.unwrap_err();
-        assert!(matches!(err, PanelError::Validation(_)));
+        // Camera c belongs only to panel p2; p1 is still active.
+        mgr.enter_fullscreen("c").await.unwrap();
+        assert_eq!(mgr.fullscreen_camera().await.as_deref(), Some("c"));
+        assert!(pool.fullscreen_is_running("c").await);
+        mgr.leave_fullscreen().await.unwrap();
+        assert_eq!(mgr.fullscreen_camera().await, None);
+
         mgr.enter_fullscreen("a").await.unwrap();
         assert_eq!(mgr.fullscreen_camera().await.as_deref(), Some("a"));
-        assert!(pool.is_running("a").await);
+        assert!(pool.fullscreen_is_running("a").await);
         mgr.leave_fullscreen().await.unwrap();
         assert_eq!(mgr.fullscreen_camera().await, None);
     }
