@@ -216,7 +216,6 @@ pub async fn delete_panel(
     Ok(Json(OkResponse::ok()))
 }
 
-
 /// `PUT /api/panels/order` — persist the exact display order.
 pub async fn reorder_panels(
     State(state): State<AppState>,
