@@ -10,3 +10,4 @@ pub mod panels;
 pub mod restart;
 pub mod settings;
 pub mod status;
+pub mod update;
