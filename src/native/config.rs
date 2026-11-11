@@ -129,11 +129,13 @@ impl Config {
         if hardware_decoder_limit > 16 {
             return Err("hardware_decoder_limit must be between 0 and 16".into());
         }
-        let explicit_hardware = feeds.iter()
+        let explicit_hardware = feeds
+            .iter()
             .filter(|feed| feed.decoder == DecoderPreference::Hardware)
             .count();
         if explicit_hardware > hardware_decoder_limit {
-            let names = feeds.iter()
+            let names = feeds
+                .iter()
                 .filter(|feed| feed.decoder == DecoderPreference::Hardware)
                 .map(|feed| feed.name.as_str())
                 .collect::<Vec<_>>()
@@ -312,7 +314,11 @@ fn feeds(y: &Yaml) -> Result<Vec<Feed>, String> {
                 None | Some("auto") => DecoderPreference::Auto,
                 Some("hardware") => DecoderPreference::Hardware,
                 Some("software") => DecoderPreference::Software,
-                Some(other) => return Err(format!("{what}'s decoder must be auto, hardware, or software; got '{other}'")),
+                Some(other) => {
+                    return Err(format!(
+                        "{what}'s decoder must be auto, hardware, or software; got '{other}'"
+                    ))
+                }
             };
             Ok(Feed {
                 url: url("url")?.ok_or_else(|| format!("{what} needs a url"))?,
