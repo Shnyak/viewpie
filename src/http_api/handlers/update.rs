@@ -145,14 +145,14 @@ pub async fn install(headers: HeaderMap) -> Result<Json<Value>, ApiError> {
         .map_err(|_| ApiError::Unavailable("could not send update request".into()))?
         .map_err(|err| ApiError::Unavailable(format!("could not send update request: {err}")))?;
 
-    let mut acknowledgement = [0_u8; 256];
-    let received = timeout(Duration::from_secs(3), socket.read(&mut acknowledgement))
+    let mut acknowledgement = [0_u8; 1];
+    timeout(Duration::from_secs(3), socket.read_exact(&mut acknowledgement))
         .await
         .map_err(|_| ApiError::Unavailable("update helper did not acknowledge the request".into()))?
         .map_err(|err| {
             ApiError::Unavailable(format!("update helper acknowledgement failed: {err}"))
         })?;
-    if received == 0 || !String::from_utf8_lossy(&acknowledgement[..received]).contains("started") {
+    if acknowledgement[0] != b'1' {
         return Err(ApiError::Unavailable(
             "update helper rejected the request".into(),
         ));
