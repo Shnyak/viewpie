@@ -37,7 +37,26 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install what the crate builds against
         run: |
-          sudo apt-get update
+          # Use the same reachable-mirror selection as the regular CI workflow.
+          # The default Azure mirror and archive.ubuntu.com were unreachable in recent runs.
+          MIRROR=""
+          for candidate in \
+            https://mirrors.edge.kernel.org/ubuntu \
+            https://ubuntu.osuosl.org/ubuntu \
+            https://mirror.math.princeton.edu/pub/ubuntu; do
+            if curl -fsSI --connect-timeout 5 --max-time 12 \
+              "$candidate/dists/noble/InRelease" >/dev/null; then
+              MIRROR="$candidate"
+              break
+            fi
+          done
+          if [ -z "$MIRROR" ]; then
+            echo "No reachable Ubuntu package mirror found" >&2
+            exit 1
+          fi
+          echo "Using Ubuntu mirror: $MIRROR"
+          echo "$MIRROR" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
           sudo apt-get install -y --no-install-recommends \
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
             libclang-dev clang
