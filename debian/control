@@ -32,7 +32,8 @@ Architecture: any
 # written list goes stale the first time something new is linked.
 Depends: ${shlibs:Depends},
          ${misc:Depends},
-         adduser
+         adduser,
+         python3
 Description: Camera wall for Raspberry Pi, on one atomic KMS commit
  Viewpie decodes RTSP camera feeds with ffmpeg and scans them out on KMS
  overlay planes, one plane per viewport, with no X11, Wayland, desktop
