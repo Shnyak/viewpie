@@ -1718,20 +1718,17 @@ fn run_walls(
                     ready
                         .iter()
                         .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
-                    if wall.debug_overlay_active {
-                        wall.debug_overlay.as_ref()
-                    } else {
-                        None
-                    },
+                    wall.debug_overlay
+                        .as_ref()
+                        .map(|overlay| (overlay, wall.debug_overlay_active)),
                 );
                 let result = if result.is_err() && had_overlay {
                     eprintln!(
                         "{}: diagnostics plane rejected by KMS; retrying camera-only commit",
                         wall.out.name
                     );
-                    // Keep the backing buffer alive in case a previous commit
-                    // had already attached it. The camera-only retry must not
-                    // risk freeing memory still scanned out by KMS.
+                    // Explicitly detach the optional plane on the retry. Keep
+                    // its backing buffer alive until the detach flip is complete.
                     wall.debug_overlay_active = false;
                     card.commit(
                         wall.out.crtc,
@@ -1739,13 +1736,18 @@ fn run_walls(
                         ready
                             .iter()
                             .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
-                        None,
+                        wall.debug_overlay
+                            .as_ref()
+                            .map(|overlay| (overlay, false)),
                     )
                 } else {
                     result
                 };
                 match result {
                     Ok(()) => {
+                        if wall.debug_overlay.is_some() {
+                            wall.debug_overlay_detached = !wall.debug_overlay_active;
+                        }
                         wall.commits += 1;
                         // Held until the flip: from here on the display may be
                         // reading these, whatever their feeds do next. Recorded
