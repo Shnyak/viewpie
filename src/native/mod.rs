@@ -856,7 +856,12 @@ fn run(config: &Config) -> Result<(), String> {
     let fullscreen: Vec<Option<Arc<Source>>> = config
         .feeds
         .iter()
-        .map(|f| Some(Arc::new(Source::on_demand(&format!("{} (fullscreen)", f.name)))))
+        .map(|f| {
+            Some(Arc::new(Source::on_demand(&format!(
+                "{} (fullscreen)",
+                f.name
+            ))))
+        })
         .collect();
 
     let mut walls = Vec::new();
@@ -941,7 +946,9 @@ fn run(config: &Config) -> Result<(), String> {
             Some((&feed.url, source, hardware_allowed)),
             Some((
                 feed.fullscreen_url.as_ref().unwrap_or(&feed.url),
-                fullscreen[i].as_ref().expect("fullscreen source exists for every camera"),
+                fullscreen[i]
+                    .as_ref()
+                    .expect("fullscreen source exists for every camera"),
                 false,
             )),
         ];
