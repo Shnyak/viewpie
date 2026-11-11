@@ -844,15 +844,20 @@ fn run(config: &Config) -> Result<(), String> {
     // Choose hardware cameras before starting any worker. Explicit hardware
     // preferences win; auto feeds fill the remaining slots in stable name order.
     let mut hardware_feeds: HashSet<String> = config.feeds.iter()
-        .filter(|feed| feed.decoder == crate::config::DecoderPreference::Hardware)
-        .map(|feed| feed.name.clone())
+        .enumerate()
+        .filter(|(index, feed)| {
+            config.displays_showing(*index) > 0
+                && feed.decoder == crate::config::DecoderPreference::Hardware
+        })
+        .map(|(_, feed)| feed.name.clone())
         .collect();
     let mut automatic_feeds: Vec<String> = config.feeds.iter()
-        .filter(|feed| feed.decoder == crate::config::DecoderPreference::Auto)
-        .filter(|feed| config.displays_showing(
-            config.feeds.iter().position(|candidate| candidate.name == feed.name).unwrap_or(usize::MAX)
-        ) > 0)
-        .map(|feed| feed.name.clone())
+        .enumerate()
+        .filter(|(index, feed)| {
+            config.displays_showing(*index) > 0
+                && feed.decoder == crate::config::DecoderPreference::Auto
+        })
+        .map(|(_, feed)| feed.name.clone())
         .collect();
     automatic_feeds.sort();
     let available_slots = config.hardware_decoder_limit.saturating_sub(hardware_feeds.len());
