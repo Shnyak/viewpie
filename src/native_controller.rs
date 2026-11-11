@@ -115,6 +115,9 @@ impl NativeRendererController {
     }
 
     pub async fn set_display_power(&self, on: bool) -> anyhow::Result<()> {
+        // Keep the requested state even if the child is currently unavailable;
+        // the next renderer start must honor the API's persisted preference.
+        self.display_on.store(on, Ordering::Release);
         let _operation = self.operation.lock().await;
         let mut guard = self.child.lock().await;
 
@@ -125,7 +128,6 @@ impl NativeRendererController {
         let command = if on { "ON\n" } else { "OFF\n" };
         running.stdin.write_all(command.as_bytes()).await?;
         running.stdin.flush().await?;
-        self.display_on.store(on, Ordering::Release);
 
         Ok(())
     }
