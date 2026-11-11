@@ -35,17 +35,17 @@ def _write_status(**changes):
     ).isoformat()
     STATE_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     temp = STATUS_PATH.with_suffix(".tmp")
-    temp.write_text(json.dumps(CURRENT, ensure_ascii=False) + "\\n", encoding="utf-8")
+    temp.write_text(json.dumps(CURRENT, ensure_ascii=False) + "\n", encoding="utf-8")
     os.chmod(temp, 0o644)
     temp.replace(STATUS_PATH)
 
 
 def log(message):
-    safe = str(message).replace("\\x00", "")
+    safe = str(message).replace("\x00", "")
     print(safe, file=sys.stderr, flush=True)
     STATE_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     with LOG_PATH.open("a", encoding="utf-8") as stream:
-        stream.write(safe + "\\n")
+        stream.write(safe + "\n")
     os.chmod(LOG_PATH, 0o644)
 
 
