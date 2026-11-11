@@ -856,11 +856,7 @@ fn run(config: &Config) -> Result<(), String> {
     let fullscreen: Vec<Option<Arc<Source>>> = config
         .feeds
         .iter()
-        .map(|f| {
-            f.fullscreen_url
-                .as_ref()
-                .map(|_| Arc::new(Source::on_demand(&format!("{} (fullscreen)", f.name))))
-        })
+        .map(|f| Some(Arc::new(Source::on_demand(&format!("{} (fullscreen)", f.name)))))
         .collect();
 
     let mut walls = Vec::new();
@@ -943,10 +939,11 @@ fn run(config: &Config) -> Result<(), String> {
         let hardware_allowed = hardware_feeds.contains(&feed.name);
         let streams = [
             Some((&feed.url, source, hardware_allowed)),
-            feed.fullscreen_url
-                .as_ref()
-                .zip(fullscreen[i].as_ref())
-                .map(|(url, source)| (url, source, false)),
+            Some((
+                feed.fullscreen_url.as_deref().unwrap_or(&feed.url),
+                fullscreen[i].as_ref().expect("fullscreen source exists for every camera"),
+                false,
+            )),
         ];
         for (url, source, hardware_allowed) in streams.into_iter().flatten() {
             let url = url.clone();
