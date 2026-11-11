@@ -334,6 +334,9 @@ impl Config {
         if let Some(ri) = cfg.defaults.rotation_interval {
             cfg.display.rotation_interval = ri;
         }
+        if cfg.display.startup_panel.is_none() {
+            cfg.display.startup_panel = cfg.defaults.panel.clone();
+        }
         cfg.validate()?;
         Ok(cfg)
     }
