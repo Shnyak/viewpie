@@ -1411,17 +1411,6 @@ fn scene_parts(
     Ok((viewports, feeds, cameras))
 }
 
-/// Drive every display from one loop, each paced by its own flips.
-///
-/// One loop rather than a thread per display. Each commit asks for a
-/// page-flip event, and that event is the cue to commit that display again,
-/// so a display that is slower, or in a different refresh rate, simply asks
-/// for its next commit later. A thread apiece would need the card locked
-/// around every commit and would spin whenever a display was not ready;
-/// waiting on the card's events blocks until one of them actually needs
-/// something. It also means never committing while a flip is outstanding,
-/// which the kernel refuses with EBUSY. A loop that retried instead spun at
-/// thousands of rejections a second.
 /// Whether every viewport in a prepared scene has a first frame ready.
 fn scene_frames_ready(feeds: &[Feeds], clock: Duration) -> bool {
     !feeds.is_empty()
@@ -1500,6 +1489,17 @@ fn source_wanted_for_wall(source: &Arc<Source>, wall: &Wall) -> bool {
     )
 }
 
+/// Drive every display from one loop, each paced by its own flips.
+///
+/// One loop rather than a thread per display. Each commit asks for a
+/// page-flip event, and that event is the cue to commit that display again,
+/// so a display that is slower, or in a different refresh rate, simply asks
+/// for its next commit later. A thread apiece would need the card locked
+/// around every commit and would spin whenever a display was not ready;
+/// waiting on the card's events blocks until one of them actually needs
+/// something. It also means never committing while a flip is outstanding,
+/// which the kernel refuses with EBUSY. A loop that retried instead spun at
+/// thousands of rejections a second.
 fn run_walls(
     card: &Arc<Card>,
     sources: &[Arc<Source>],
@@ -1682,9 +1682,8 @@ fn run_walls(
                                 wall.pending_panel = None;
                                 wall.pending_scene = None;
                                 wall.pending_fullscreen = None;
-                                wall.mode = Mode::Grid;
-                                wall.laid_out = None;
-                                wall.fullscreen_tap = None;
+                                // Keep the currently displayed scene intact:
+                                // the invalid request must not blank the wall.
                                 panel_changed = true;
                             }
                         }
