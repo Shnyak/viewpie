@@ -183,6 +183,9 @@ pub async fn delete_panel(
     if candidate.display.startup_panel.as_deref() == Some(id.as_str()) {
         candidate.display.startup_panel = None;
     }
+    if candidate.display.startup_panel.is_none() {
+        candidate.display.startup_panel = Some(candidate.initial_panel());
+    }
     candidate.validate()?;
     state.persist_config(&candidate)?;
     if let Err(error) = state.manager.delete_panel(&id).await {
