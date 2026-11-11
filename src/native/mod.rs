@@ -970,7 +970,10 @@ fn run(config: &Config) -> Result<(), String> {
                 Err(error) => {
                     claimed.retain(|claimed_plane| *claimed_plane != plane);
                     spare.push(plane);
-                    eprintln!("{}: diagnostics overlay unavailable: {error}", wall.out.name);
+                    eprintln!(
+                        "{}: diagnostics overlay unavailable: {error}",
+                        wall.out.name
+                    );
                 }
             }
         }
@@ -1712,7 +1715,9 @@ fn run_walls(
                 let result = card.commit(
                     wall.out.crtc,
                     wall.crtc_active,
-                    ready.iter().map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
+                    ready
+                        .iter()
+                        .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
                     if wall.debug_overlay_active {
                         wall.debug_overlay.as_ref()
                     } else {
@@ -1731,7 +1736,9 @@ fn run_walls(
                     card.commit(
                         wall.out.crtc,
                         wall.crtc_active,
-                        ready.iter().map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
+                        ready
+                            .iter()
+                            .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
                         None,
                     )
                 } else {
@@ -1825,10 +1832,7 @@ fn run_walls(
                     )),
                 }
             }
-            if wall.in_flight.is_none()
-                && !camera_attached
-                && !wall.debug_overlay_detached
-            {
+            if wall.in_flight.is_none() && !camera_attached && !wall.debug_overlay_detached {
                 if let Some(overlay) = wall.debug_overlay.as_ref() {
                     match card.detach_debug_overlay(wall.out.crtc, wall.crtc_active, overlay) {
                         Ok(()) => {
@@ -2098,14 +2102,14 @@ struct WallMark {
     turns: u64,
 }
 
-
 /// Text shown on the optional KMS plane. Keep the overlay compact: it is
 /// deliberately a small status panel, not a copy of the full journal.
 fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
     let mut lines = vec!["CAMERA PATH CODEC RESOLUTION FPS ERRORS".to_string()];
-    for source in sources.iter().filter(|source| {
-        source.persistent_grid || source.wanted.load(Ordering::Relaxed)
-    }) {
+    for source in sources
+        .iter()
+        .filter(|source| source.persistent_grid || source.wanted.load(Ordering::Relaxed))
+    {
         let info = source.decoder_info.lock().unwrap().clone();
         let path = match (info.decoder.as_deref(), info.mode.as_deref()) {
             (Some(decoder), Some(mode)) => format!("{decoder}/{mode}"),
@@ -2117,7 +2121,10 @@ fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
             (Some(width), Some(height)) => format!("{width}X{height}"),
             _ => "?".to_string(),
         };
-        let fps = info.fps.map(|value| format!("{value:.1}")).unwrap_or_else(|| "-".into());
+        let fps = info
+            .fps
+            .map(|value| format!("{value:.1}"))
+            .unwrap_or_else(|| "-".into());
         let errors = source.stats.errors.load(Ordering::Relaxed).max(info.errors);
         let state = if source.wanted.load(Ordering::Relaxed) {
             info.state.unwrap_or_else(|| "CONNECTING".to_string())
@@ -2162,9 +2169,8 @@ fn debug_cpu_load_percent() -> Option<f64> {
     let result = (*previous).and_then(|(old_total, old_idle)| {
         let total_delta = total.saturating_sub(old_total);
         let idle_delta = idle.saturating_sub(old_idle);
-        (total_delta > 0).then_some(
-            (total_delta.saturating_sub(idle_delta)) as f64 / total_delta as f64 * 100.0,
-        )
+        (total_delta > 0)
+            .then_some((total_delta.saturating_sub(idle_delta)) as f64 / total_delta as f64 * 100.0)
     });
     *previous = Some((total, idle));
     result
