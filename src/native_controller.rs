@@ -104,9 +104,8 @@ impl NativeRendererController {
         if exited {
             guard.take();
         }
-        let already_visible = self
-            .renderer_state
-            .borrow()
+        let current_renderer_state = self.renderer_state.subscribe().borrow().clone();
+        let already_visible = current_renderer_state
             .as_ref()
             .is_some_and(|state| {
                 state.get("status").and_then(|value| value.as_str()) == Some("committed")
