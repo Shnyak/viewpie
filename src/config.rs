@@ -392,7 +392,9 @@ impl Config {
 
     /// Validate cross-references between panels and feeds.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        let explicit_hardware = self.feeds.values()
+        let explicit_hardware = self
+            .feeds
+            .values()
             .filter(|feed| feed.decoder == DecoderPreference::Hardware)
             .count();
         if explicit_hardware > self.display.hardware_decoder_limit as usize {
