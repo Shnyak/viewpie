@@ -513,7 +513,10 @@ impl Config {
                 return p.clone();
             }
         }
-        self.ordered_panel_ids().into_iter().next().unwrap_or_default()
+        self.ordered_panel_ids()
+            .into_iter()
+            .next()
+            .unwrap_or_default()
     }
 }
 
@@ -844,7 +847,6 @@ defaults:
         assert_eq!(cfg.initial_panel(), "second");
     }
 
-
     #[test]
     fn screen_boot_policy_defaults_to_restoring_last_state() {
         let yaml = r#"
@@ -861,7 +863,10 @@ panels:
         assert_eq!(cfg.display.screen_boot_mode, ScreenBootMode::Restore);
         assert!(cfg.display.last_screen_on);
 
-        let off = yaml.replace("panels:", "display:\n  screen_boot_mode: always_off\n  last_screen_on: false\npanels:");
+        let off = yaml.replace(
+            "panels:",
+            "display:\n  screen_boot_mode: always_off\n  last_screen_on: false\npanels:",
+        );
         let cfg = Config::from_yaml(&off).unwrap();
         assert_eq!(cfg.display.screen_boot_mode, ScreenBootMode::AlwaysOff);
         assert!(!cfg.display.last_screen_on);
