@@ -86,6 +86,7 @@ def request_json(url):
 
 def read_deb_field(package, field):
     """Read one control field without relying on multi-field dpkg-deb formatting."""
+    event("metadata", f"$ dpkg-deb -f {package.name} {field}")
     output = subprocess.check_output(
         ["dpkg-deb", "-f", str(package), field],
         text=True,
@@ -130,11 +131,13 @@ def install_latest_release():
         if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?", version):
             raise RuntimeError("GitHub returned an invalid release tag")
 
+        event("prepare", "$ dpkg --print-architecture")
         arch = subprocess.check_output(
             ["dpkg", "--print-architecture"], text=True, timeout=10
         ).strip()
         _write_status(version=version, architecture=arch)
         event("prepare", f"Выбран релиз {version}, архитектура {arch}")
+        event("prepare", "$ dpkg-query -W -f=${Version} viewpie")
         installed_package_version = subprocess.check_output(
             ["dpkg-query", "-W", "-f=${Version}", "viewpie"],
             text=True,
@@ -177,13 +180,25 @@ def install_latest_release():
             )
             hasher = hashlib.sha256()
             with urllib.request.urlopen(req, timeout=60) as response, package.open("wb") as out:
+                total = int(response.headers.get("Content-Length", "0") or 0)
+                downloaded = 0
+                last_reported = -10
                 while True:
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
                     hasher.update(chunk)
                     out.write(chunk)
-            event("verify", "Проверка SHA-256")
+                    downloaded += len(chunk)
+                    if total:
+                        percent = min(100, downloaded * 100 // total)
+                        if percent >= last_reported + 10 or percent == 100:
+                            _write_status(progress_percent=percent, downloaded_bytes=downloaded, total_bytes=total)
+                            log(f"[download] {percent}% ({downloaded}/{total} bytes)")
+                            last_reported = percent // 10 * 10
+                    elif downloaded // (5 * 1024 * 1024) > (downloaded - len(chunk)) // (5 * 1024 * 1024):
+                        log(f"[download] downloaded {downloaded} bytes")
+            event("verify", "$ SHA-256 проверка загруженного пакета")
             if hasher.hexdigest().lower() != digest.split(":", 1)[1].lower():
                 raise RuntimeError("Downloaded package SHA-256 does not match GitHub release metadata")
 
@@ -199,7 +214,8 @@ def install_latest_release():
 
             event("verify", "SHA-256 и метаданные пакета подтверждены")
             _write_status(package_version=package_version)
-            event("install", "Установка пакета " + package_version)
+            _write_status(progress_percent=None)
+            event("install", "$ dpkg -i " + package.name + " — установка " + package_version)
             run_logged(["dpkg", "-i", str(package)], timeout_seconds=900, phase="dpkg")
             event("complete", "Обновление Viewpie завершено: " + version, "success",
                   exit_code=0, finished_at=__import__("datetime").datetime.now(
@@ -229,6 +245,7 @@ def main():
         # package hooks may restart Viewpie and the socket listener, but must
         # not kill the worker that is performing the upgrade.
         unit = "viewpie-update-worker-" + uuid.uuid4().hex
+        event("queue", "$ systemd-run --unit=" + unit + " /usr/bin/python3 update-helper.py --apply")
         try:
             subprocess.run(
                 [
