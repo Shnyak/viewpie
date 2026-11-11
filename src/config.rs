@@ -625,6 +625,24 @@ panels:
     }
 
     #[test]
+    fn unused_hardware_camera_does_not_consume_budget() {
+        let yaml = r#"
+display:
+  hardware_decoder_limit: 0
+feeds:
+  a: {url: "rtsp://x/a"}
+  spare: {url: "rtsp://x/spare", decoder: hardware}
+panels:
+  p:
+    layout: |
+      a
+    viewports:
+      - {slot: a, feeds: [a]}
+"#;
+        assert!(Config::from_yaml(yaml).is_ok());
+    }
+
+    #[test]
     fn settings_validation() {
         let mut s = DisplaySettings::default();
         assert!(s.validate().is_ok());
