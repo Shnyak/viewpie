@@ -1460,10 +1460,9 @@ fn run_walls(
         .map(|value| value != "0")
         .unwrap_or(true);
     let mut display_requested_on = initial_display_on;
-    // KMS outputs are discovered in their normal on state. If the saved
-    // preference is OFF, the first loop iteration applies DPMS before any
-    // camera frames are committed.
-    let mut display_on = true;
+    // Force the first loop iteration to apply the requested DPMS state even
+    // when a previous renderer process left the connector powered off.
+    let mut display_on = !initial_display_on;
     let mut stopping = false;
 
     while !stopping {
