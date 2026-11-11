@@ -1822,8 +1822,7 @@ fn run_walls(
                             if new_fullscreen_frame_ready {
                                 wall.pending_fullscreen_report = Some(camera);
                             } else if fullscreen_already_visible
-                                && wall.reported_fullscreen.as_deref()
-                                    != Some(camera.as_str())
+                                && wall.reported_fullscreen.as_deref() != Some(camera.as_str())
                             {
                                 // The requested camera is already scanning out;
                                 // a fresh frame submission is unnecessary.
