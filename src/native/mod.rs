@@ -1736,9 +1736,7 @@ fn run_walls(
                         ready
                             .iter()
                             .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
-                        wall.debug_overlay
-                            .as_ref()
-                            .map(|overlay| (overlay, false)),
+                        wall.debug_overlay.as_ref().map(|overlay| (overlay, false)),
                     )
                 } else {
                     result
