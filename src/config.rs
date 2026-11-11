@@ -470,7 +470,7 @@ impl Config {
                     "defaults.panel_order references unknown panel {id:?}"
                 )));
             }
-            if !ordered.insert(id) {
+            if !ordered.insert(id.clone()) {
                 return Err(ConfigError::Validation(format!(
                     "defaults.panel_order contains duplicate panel {id:?}"
                 )));
@@ -487,7 +487,9 @@ impl Config {
                 ids.push(id.clone());
             }
         }
-        let mut remaining: Vec<String> = self.panels.keys()
+        let mut remaining: Vec<String> = self
+            .panels
+            .keys()
             .filter(|id| !ids.contains(id))
             .cloned()
             .collect();
