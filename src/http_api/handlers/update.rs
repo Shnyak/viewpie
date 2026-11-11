@@ -128,6 +128,29 @@ pub async fn check() -> Result<Json<Value>, ApiError> {
     })))
 }
 
+/// Return the persisted updater state and the latest bounded journal lines.
+pub async fn update_status() -> Result<Json<Value>, ApiError> {
+    const STATUS_PATH: &str = "/var/lib/viewpie/update-status.json";
+    const LOG_PATH: &str = "/var/lib/viewpie/update.log";
+    let mut status: Value = match tokio::fs::read_to_string(STATUS_PATH).await {
+        Ok(raw) => serde_json::from_str(&raw)
+            .unwrap_or_else(|_| json!({"status":"unknown","phase":"unknown","message":"Invalid updater status file"})),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            json!({"status":"idle","phase":"idle","message":"Обновление ещё не запускалось"})
+        }
+        Err(error) => return Err(ApiError::Unavailable(format!("Could not read updater status: {error}"))),
+    };
+    let log = match tokio::fs::read_to_string(LOG_PATH).await {
+        Ok(raw) => raw.lines().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\\n"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(ApiError::Unavailable(format!("Could not read updater journal: {error}"))),
+    };
+    if let Some(object) = status.as_object_mut() {
+        object.insert("log".into(), Value::String(log));
+    }
+    Ok(Json(status))
+}
+
 /// Ask the root-owned socket-activated helper to install the latest verified
 /// package. The helper independently resolves the release and validates its
 /// SHA-256 digest; the HTTP client cannot supply an arbitrary URL or package.
