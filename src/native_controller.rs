@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 
 struct RunningChild {
     child: Child,
@@ -19,6 +19,7 @@ pub struct NativeRendererController {
     operation: Mutex<()>,
     decoder_status: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     display_on: AtomicBool,
+    renderer_state: watch::Sender<Option<serde_json::Value>>,
 }
 
 impl NativeRendererController {
@@ -32,6 +33,7 @@ impl NativeRendererController {
             })
             .unwrap_or_else(|| PathBuf::from("viewpie-native"));
 
+        let (renderer_state, _) = watch::channel(None);
         Self {
             config_path: config_path.into(),
             binary_path,
@@ -39,6 +41,7 @@ impl NativeRendererController {
             operation: Mutex::new(()),
             decoder_status: Arc::new(RwLock::new(HashMap::new())),
             display_on: AtomicBool::new(initial_display_on),
+            renderer_state,
         }
     }
 
@@ -84,13 +87,17 @@ impl NativeRendererController {
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
-        if panel.contains('\n')
-            || panel.contains('\r')
-            || camera.contains('\n')
-            || camera.contains('\r')
+        if panel.contains('\\n')
+            || panel.contains('\\r')
+            || camera.contains('\\n')
+            || camera.contains('\\r')
         {
             anyhow::bail!("panel or camera id contains a line break");
         }
+        // Clear the previous acknowledgement before sending a new request;
+        // the HTTP API waits for proof that a frame reached the physical KMS
+        // display, not merely that a command was written to the child pipe.
+        self.renderer_state.send_replace(None);
         let _operation = self.operation.lock().await;
         let mut guard = self.child.lock().await;
         let exited = match guard.as_mut() {
@@ -101,13 +108,47 @@ impl NativeRendererController {
             guard.take();
         }
         if let Some(running) = guard.as_mut() {
-            let commands = format!("FULLSCREEN {camera}\n");
-            running.stdin.write_all(commands.as_bytes()).await?;
+            let command = format!("FULLSCREEN {camera}\\n");
+            running.stdin.write_all(command.as_bytes()).await?;
             running.stdin.flush().await?;
-            return Ok(());
+        } else {
+            drop(guard);
+            self.start_inner(panel, Some(camera)).await?;
         }
-        drop(guard);
-        self.start_inner(panel, Some(camera)).await
+        self.wait_for_fullscreen(camera).await
+    }
+
+    async fn wait_for_fullscreen(&self, camera: &str) -> anyhow::Result<()> {
+        let mut receiver = self.renderer_state.subscribe();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(state) = receiver.borrow().clone() {
+                let reported_camera = state.get("camera").and_then(|value| value.as_str());
+                let status = state.get("status").and_then(|value| value.as_str());
+                if reported_camera == Some(camera) && status == Some("committed") {
+                    return Ok(());
+                }
+                if reported_camera == Some(camera) && status == Some("error") {
+                    let message = state
+                        .get("error")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("native renderer rejected the fullscreen frame");
+                    anyhow::bail!("{message}");
+                }
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                anyhow::bail!(
+                    "native renderer did not confirm a visible frame for camera {camera} within 10 seconds"
+                );
+            }
+            tokio::time::timeout(remaining, receiver.changed())
+                .await
+                .map_err(|_| anyhow::anyhow!(
+                    "native renderer did not confirm a visible frame for camera {camera} within 10 seconds"
+                ))?
+                .map_err(|_| anyhow::anyhow!("native renderer status channel closed"))?;
+        }
     }
 
     pub async fn set_display_power(&self, on: bool) -> anyhow::Result<()> {
@@ -174,10 +215,21 @@ impl NativeRendererController {
             .take()
             .ok_or_else(|| anyhow::anyhow!("failed to open native renderer stdout"))?;
         let decoder_status = self.decoder_status.clone();
+        let renderer_state = self.renderer_state.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(payload) = line.strip_prefix("VIEWPIE_DECODER_STATUS ") {
+                if let Some(payload) = line
+                    .strip_prefix("VIEWPIE_RENDERER_STATE ")
+                    .or_else(|| line.strip_prefix("VIEWPIE_RENDERER_ERROR "))
+                {
+                    match serde_json::from_str::<serde_json::Value>(payload) {
+                        Ok(status) => {
+                            renderer_state.send_replace(Some(status));
+                        }
+                        Err(error) => tracing::warn!("invalid native renderer state event: {error}"),
+                    }
+                } else if let Some(payload) = line.strip_prefix("VIEWPIE_DECODER_STATUS ") {
                     match serde_json::from_str::<serde_json::Value>(payload) {
                         Ok(status) => {
                             if let Some(camera) = status.get("camera").and_then(|v| v.as_str()) {
