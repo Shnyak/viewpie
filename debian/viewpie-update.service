@@ -1,0 +1,14 @@
+[Unit]
+Description=Install a verified Viewpie release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/lib/viewpie/update-helper.py
+Restart=no
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
