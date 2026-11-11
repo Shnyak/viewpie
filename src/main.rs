@@ -15,7 +15,7 @@ use anyhow::Context;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use viewpie::config::Config;
+use viewpie::config::{Config, ScreenBootMode};
 use viewpie::http_api;
 use viewpie::kms::{DisplayBackend, HeadlessBackend};
 use viewpie::native_controller::NativeRendererController;
@@ -79,6 +79,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     let backend: Arc<dyn DisplayBackend> = create_backend()?;
+    let start_screen_on = match cfg.display.screen_boot_mode {
+        ScreenBootMode::AlwaysOn => true,
+        ScreenBootMode::AlwaysOff => false,
+        ScreenBootMode::Restore => cfg.display.last_screen_on,
+    };
     let native_renderer = if cfg!(feature = "native-pipeline") {
         Some(Arc::new(NativeRendererController::new(config_path.clone())))
     } else {
@@ -95,6 +100,12 @@ fn main() -> anyhow::Result<()> {
                     error = %e,
                     "native renderer failed to start; keeping HTTP API available"
                 );
+            } else if !start_screen_on {
+                // Apply the persisted OFF state before exposing the API, so
+                // the screen does not remain lit while HA connects after boot.
+                if let Err(e) = renderer.set_display_power(false).await {
+                    error!("native renderer failed to restore screen-off state: {e}");
+                }
             }
         }
 
