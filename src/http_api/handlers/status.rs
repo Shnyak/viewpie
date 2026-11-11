@@ -127,7 +127,6 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
     }))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{format_build_date, format_uptime};
