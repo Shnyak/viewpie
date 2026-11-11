@@ -528,6 +528,7 @@ struct Wall {
     fullscreen_tap: Option<(Tap, Duration)>,
     /// Optional diagnostics plane, allocated only after every camera plane.
     debug_overlay: Option<DebugOverlay>,
+    debug_overlay_active: bool,
     debug_overlay_updated_at: Instant,
 }
 
@@ -960,6 +961,7 @@ fn run(config: &Config) -> Result<(), String> {
             match card.create_debug_overlay(plane, wall.size.0, wall.size.1) {
                 Ok(overlay) => {
                     wall.debug_overlay = Some(overlay);
+                    wall.debug_overlay_active = true;
                     println!("{}: diagnostics overlay enabled", wall.out.name);
                 }
                 Err(error) => {
@@ -1281,6 +1283,7 @@ fn build(
         laid_out: None,
         fullscreen_tap: None,
         debug_overlay: None,
+        debug_overlay_active: false,
         debug_overlay_updated_at: Instant::now(),
     })
 }
@@ -1696,24 +1699,31 @@ fn run_walls(
                         .map(|overlay| card.draw_debug_overlay(overlay, &lines));
                     if let Some(Err(error)) = draw_result {
                         eprintln!("{}: diagnostics overlay disabled: {error}", wall.out.name);
-                        wall.debug_overlay = None;
+                        wall.debug_overlay_active = false;
                     } else {
                         wall.debug_overlay_updated_at = Instant::now();
                     }
                 }
-                let had_overlay = wall.debug_overlay.is_some();
+                let had_overlay = wall.debug_overlay_active;
                 let result = card.commit(
                     wall.out.crtc,
                     wall.crtc_active,
                     ready.iter().map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
-                    wall.debug_overlay.as_ref(),
+                    if wall.debug_overlay_active {
+                        wall.debug_overlay.as_ref()
+                    } else {
+                        None
+                    },
                 );
                 let result = if result.is_err() && had_overlay {
                     eprintln!(
                         "{}: diagnostics plane rejected by KMS; retrying camera-only commit",
                         wall.out.name
                     );
-                    wall.debug_overlay = None;
+                    // Keep the backing buffer alive in case a previous commit
+                    // had already attached it. The camera-only retry must not
+                    // risk freeing memory still scanned out by KMS.
+                    wall.debug_overlay_active = false;
                     card.commit(
                         wall.out.crtc,
                         wall.crtc_active,
