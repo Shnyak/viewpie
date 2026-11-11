@@ -1,3 +1,15 @@
+viewpie (0.2.26-fork-1) unstable; urgency=medium
+
+  * Add persistent panel order and startup panel selection through the API.
+  * Persist the display power policy and restore screen state across renderer
+    restarts.
+  * Preserve the active fullscreen camera when renderer settings are reloaded.
+  * Add the readable diagnostics overlay, build timestamp and uptime.
+  * Resolve fullscreen cameras from the complete configured camera registry
+    and keep fullscreen main-stream decoding on the software decoder.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 17:00:00 +0000
+
 viewpie (0.2.25-fork-1) unstable; urgency=medium
 
   * Install and enable the socket-activated update helper units in the Debian
