@@ -134,11 +134,11 @@ pub async fn check() -> Result<Json<Value>, ApiError> {
 pub async fn install(headers: HeaderMap) -> Result<Json<Value>, ApiError> {
     authorize(&headers)?;
     let mut socket = timeout(Duration::from_secs(3), UnixStream::connect(UPDATE_SOCKET))
-    .await
-    .map_err(|_| ApiError::Unavailable("update helper connection timed out".into()))?
-    .map_err(|err| {
-        ApiError::Unavailable(format!("update helper is not installed or active: {err}"))
-    })?;
+        .await
+        .map_err(|_| ApiError::Unavailable("update helper connection timed out".into()))?
+        .map_err(|err| {
+            ApiError::Unavailable(format!("update helper is not installed or active: {err}"))
+        })?;
 
     timeout(Duration::from_secs(2), socket.write_all(b"INSTALL\n"))
         .await
@@ -146,12 +146,13 @@ pub async fn install(headers: HeaderMap) -> Result<Json<Value>, ApiError> {
         .map_err(|err| ApiError::Unavailable(format!("could not send update request: {err}")))?;
 
     let mut acknowledgement = [0_u8; 1];
-    timeout(Duration::from_secs(3), socket.read_exact(&mut acknowledgement))
-        .await
-        .map_err(|_| ApiError::Unavailable("update helper did not acknowledge the request".into()))?
-        .map_err(|err| {
-            ApiError::Unavailable(format!("update helper acknowledgement failed: {err}"))
-        })?;
+    timeout(
+        Duration::from_secs(3),
+        socket.read_exact(&mut acknowledgement),
+    )
+    .await
+    .map_err(|_| ApiError::Unavailable("update helper did not acknowledge the request".into()))?
+    .map_err(|err| ApiError::Unavailable(format!("update helper acknowledgement failed: {err}")))?;
     if acknowledgement[0] != b'1' {
         return Err(ApiError::Unavailable(
             "update helper rejected the request".into(),
