@@ -1551,6 +1551,7 @@ fn run_walls(
                 RendererCommand::SelectFullscreen(camera) => {
                     if let Some(wall) = walls.first_mut() {
                         wall.reported_fullscreen = None;
+                        wall.pending_fullscreen_report = None;
                         if wall.pending_panel.is_some() {
                             wall.pending_fullscreen = Some(camera);
                         } else if let Some(at) = ensure_camera_index(
