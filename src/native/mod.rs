@@ -530,6 +530,8 @@ struct Wall {
     reported_fullscreen: Option<String>,
     /// Camera whose frame is currently attached to the first KMS plane.
     displayed_fullscreen: Option<String>,
+    /// Camera frame submitted to KMS, awaiting its page-flip confirmation.
+    pending_fullscreen_report: Option<String>,
     /// Optional diagnostics plane, allocated only after every camera plane.
     debug_overlay: Option<DebugOverlay>,
     debug_overlay_active: bool,
@@ -636,6 +638,24 @@ impl Wall {
         };
         for (i, shown) in commit.named {
             self.on_screen[i] = shown;
+        }
+        if let Some(camera) = self.pending_fullscreen_report.take() {
+            if let Mode::Fullscreen(at) = self.mode {
+                if self.cameras[at].feed.name == camera {
+                    self.displayed_fullscreen = Some(camera.clone());
+                    if self.reported_fullscreen.as_deref() != Some(camera.as_str()) {
+                        println!(
+                            "VIEWPIE_RENDERER_STATE {}",
+                            serde_json::json!({
+                                "status": "committed",
+                                "mode": "fullscreen",
+                                "camera": camera,
+                            })
+                        );
+                        self.reported_fullscreen = Some(camera);
+                    }
+                }
+            }
         }
     }
 
@@ -1294,6 +1314,7 @@ fn build(
         fullscreen_tap: None,
         reported_fullscreen: None,
         displayed_fullscreen: None,
+        pending_fullscreen_report: None,
         debug_overlay: None,
         debug_overlay_active: false,
         debug_overlay_detached: true,
@@ -1500,6 +1521,7 @@ fn run_walls(
                 RendererCommand::SelectPanel(panel) => {
                     if let Some(wall) = walls.first_mut() {
                         wall.reported_fullscreen = None;
+                        wall.pending_fullscreen_report = None;
                         if wall.panel_scenes.contains_key(&panel) {
                             wall.pending_fullscreen = None;
                             if wall.current_panel.as_deref() == Some(panel.as_str()) {
@@ -1797,11 +1819,13 @@ fn run_walls(
                         if let Mode::Fullscreen(at) = wall.mode {
                             let camera = wall.cameras[at].feed.name.clone();
                             if new_fullscreen_frame_ready {
-                                wall.displayed_fullscreen = Some(camera.clone());
-                            }
-                            if fullscreen_frame_ready
-                                && wall.reported_fullscreen.as_deref() != Some(camera.as_str())
+                                wall.pending_fullscreen_report = Some(camera);
+                            } else if fullscreen_already_visible
+                                && wall.reported_fullscreen.as_deref()
+                                    != Some(camera.as_str())
                             {
+                                // The requested camera is already scanning out;
+                                // a fresh frame submission is unnecessary.
                                 println!(
                                     "VIEWPIE_RENDERER_STATE {}",
                                     serde_json::json!({
@@ -1815,6 +1839,7 @@ fn run_walls(
                         } else {
                             wall.reported_fullscreen = None;
                             wall.displayed_fullscreen = None;
+                            wall.pending_fullscreen_report = None;
                         }
                         wall.commits += 1;
                         // Held until the flip: from here on the display may be
