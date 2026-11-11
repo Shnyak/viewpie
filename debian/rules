@@ -42,6 +42,8 @@ override_dh_auto_install:
 		debian/viewpie/usr/bin/viewpie-native
 	install -D -m 0644 examples/viewpie.yaml \
 		debian/viewpie/usr/share/viewpie/viewpie.yaml
+	install -D -m 0644 debian/viewpie-update-helper.py \
+		debian/viewpie/usr/lib/viewpie/update-helper.py
 
 # The test suite needs no hardware, but it does need a display to do anything
 # useful, so it is run in CI rather than during a package build.
