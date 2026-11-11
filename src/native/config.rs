@@ -28,6 +28,8 @@ pub struct Config {
     /// Whether to stop decoding for a display nobody is watching: one that
     /// is unplugged, or whose television is off or showing another input.
     pub pause_off_screen: bool,
+    /// Whether the renderer should reserve and draw the diagnostics overlay.
+    pub debug_overlay: bool,
     /// Maximum simultaneous hardware-decoded grid streams.
     pub hardware_decoder_limit: usize,
 }
@@ -112,6 +114,7 @@ impl Config {
                 "spacing",
                 "background",
                 "pause_off_screen",
+                "debug_overlay",
                 "feeds",
                 "displays",
                 "panels",
@@ -146,6 +149,12 @@ impl Config {
             Yaml::BadValue => false,
             Yaml::Boolean(b) => *b,
             _ => return Err("pause_off_screen must be true or false".into()),
+        };
+
+        let debug_overlay = match &doc["debug_overlay"] {
+            Yaml::BadValue => false,
+            Yaml::Boolean(value) => *value,
+            _ => return Err("debug_overlay must be true or false".into()),
         };
 
         let mut panels = HashMap::new();
@@ -255,6 +264,7 @@ impl Config {
             active_panel,
             active_fullscreen,
             pause_off_screen,
+            debug_overlay,
             hardware_decoder_limit,
         };
         if let Some(camera) = &config.active_fullscreen {
