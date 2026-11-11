@@ -111,88 +111,9 @@ jobs:
           name: deb-${{ matrix.arch }}
           path: dist/*.deb
 
-  image:
-    if: needs.deb.result == 'success'
-    needs: deb
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
-      - name: Resolve release version
-        id: release
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-            tag="v$version"
-          else
-            tag="$GITHUB_REF_NAME"
-            version="${tag#v}"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: deb-*
-          merge-multiple: true
-          path: dist
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v6
-        id: meta
-        with:
-          # Container registries require lowercase repository names. The GitHub
-          # owner is mixed-case ("Shnyak"), so do not use github.repository here.
-          images: ghcr.io/shnyak/viewpie
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=${{ steps.release.outputs.version }},enable=${{ github.event_name == 'workflow_run' }}
-          flavor: |
-            latest=auto
-      - name: Name the package each architecture installs
-        id: debs
-        run: |
-          version="${{ steps.release.outputs.version }}"
-          revision=$(sed -n "1s/^viewpie ($version-\([^)]*\)).*/\1/p" debian/changelog)
-          echo "armhf=dist/viewpie_${version}-${revision}_armhf.deb" >> "$GITHUB_OUTPUT"
-          echo "arm64=dist/viewpie_${version}-${revision}_arm64.deb" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/arm/v7
-          build-args: DEB=${{ steps.debs.outputs.armhf }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=ghcr.io/shnyak/viewpie,push-by-digest=true,name-canonical=true,push=true
-        id: armhf
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/arm64
-          build-args: DEB=${{ steps.debs.outputs.arm64 }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=ghcr.io/shnyak/viewpie,push-by-digest=true,name-canonical=true,push=true
-        id: arm64
-      - name: Join them under one tag
-        run: |
-          printf '%s\\n' '${{ steps.meta.outputs.tags }}' | while read -r tag; do
-            [ -n "$tag" ] || continue
-            docker buildx imagetools create -t "$tag" \
-              "ghcr.io/shnyak/viewpie@${{ steps.armhf.outputs.digest }}" \
-              "ghcr.io/shnyak/viewpie@${{ steps.arm64.outputs.digest }}"
-          done
-
   publish:
-    needs: [deb, image]
-    if: needs.deb.result == 'success' && needs.image.result == 'success'
+    needs: deb
+    if: needs.deb.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
