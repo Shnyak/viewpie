@@ -1456,7 +1456,13 @@ fn run_walls(
             .collect(),
     };
     let mut commit_gripe = Throttle::new();
-    let mut display_requested_on = true;
+    let initial_display_on = std::env::var("VIEWPIE_SCREEN_ON")
+        .map(|value| value != "0")
+        .unwrap_or(true);
+    let mut display_requested_on = initial_display_on;
+    // KMS outputs are discovered in their normal on state. If the saved
+    // preference is OFF, the first loop iteration applies DPMS before any
+    // camera frames are committed.
     let mut display_on = true;
     let mut stopping = false;
 
