@@ -1,3 +1,12 @@
+viewpie (0.2.21-fork-1) unstable; urgency=medium
+
+  * Expose the source commit timestamp in the status API so Home Assistant
+    can display the exact build date of the installed Viewpie package.
+  * Embed the timestamp in release binaries while keeping local builds marked
+    as unknown when no release timestamp is supplied.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.20-fork-1) unstable; urgency=medium
 
   * Keep grid camera streams and decoders alive across panel switches so
