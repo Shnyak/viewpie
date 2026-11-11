@@ -822,6 +822,21 @@ displays:
     }
 
     #[test]
+    fn diagnostics_overlay_setting_is_parsed_as_a_boolean() {
+        let wall = |value: &str| {
+            Config::parse(&format!(
+                "debug_overlay: {value}\nfeeds: {{a: rtsp://a}}\ndisplays: [{{viewports: [{{feeds: [a]}}]}}]"
+            ))
+        };
+        assert!(wall("true").unwrap().debug_overlay);
+        assert!(!wall("false").unwrap().debug_overlay);
+        assert_eq!(
+            wall("sometimes").unwrap_err(),
+            "debug_overlay must be true or false"
+        );
+    }
+
+    #[test]
     fn pausing_off_screen_is_yes_or_no() {
         let wall = |pause: &str| {
             Config::parse(&format!(
