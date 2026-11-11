@@ -51,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/status", get(status::status))
         .route("/api/restart", post(restart::restart))
         .route("/api/update/check", get(update::check))
+        .route("/api/update/status", get(update::update_status))
         .route("/api/update/install", post(update::install))
         .with_state(state)
 }
