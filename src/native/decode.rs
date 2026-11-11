@@ -291,14 +291,15 @@ impl Decoder {
             // picture beats a viewport showing nothing.
             // Reserve a bounded hardware slot before opening h264_v4l2m2m.
             // Feeds beyond the budget use the normal software fallback path.
-            let mut h264_v4l2_slot = if !force_software && m2m_name(codec).is_some() {
+            let is_h264_v4l2 = is_v4l2_m2m_decoder(codec);
+            let mut h264_v4l2_slot = if !force_software && is_h264_v4l2 {
                 H264V4l2Slot::try_acquire()
             } else {
                 None
             };
             let hardware_result = if force_software {
                 Err("hardware decoder stalled in a previous session".to_string())
-            } else if m2m_name(codec).is_some() && h264_v4l2_slot.is_none() {
+            } else if is_h264_v4l2 && h264_v4l2_slot.is_none() {
                 Err(format!(
                     "H.264 V4L2 hardware decoder budget exhausted ({MAX_H264_V4L2_SESSIONS} active sessions)"
                 ))
@@ -637,6 +638,14 @@ unsafe fn m2m_name(codec: *const AVCodec) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// Whether the codec pointer selected above is the V4L2 M2M implementation,
+/// rather than libav's ordinary software H.264 decoder.
+unsafe fn is_v4l2_m2m_decoder(codec: *const AVCodec) -> bool {
+    !codec.is_null()
+        && !(*codec).name.is_null()
+        && std::ffi::CStr::from_ptr((*codec).name).to_bytes() == b"h264_v4l2m2m"
 }
 
 /// Pick DRM_PRIME from the formats a decoder offers, or its first choice.
