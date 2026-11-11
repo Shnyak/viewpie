@@ -466,6 +466,8 @@ struct Wall {
     pending_panel: Option<String>,
     /// Prepared off-screen until every incoming viewport has a first frame.
     pending_scene: Option<PendingScene>,
+    /// A panel's atomic replacement must flip before queued fullscreen runs.
+    panel_flip_pending: bool,
     pending_fullscreen: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
     feeds: Vec<Feeds>,
@@ -649,6 +651,7 @@ impl Wall {
         for (i, shown) in commit.named {
             self.on_screen[i] = shown;
         }
+        self.panel_flip_pending = false;
         if let Some(camera) = self.pending_fullscreen_report.take() {
             if let Mode::Fullscreen(at) = self.mode {
                 if self.cameras[at].feed.name == camera {
@@ -1311,6 +1314,7 @@ fn build(
         current_panel: active_panel,
         pending_panel: None,
         pending_scene: None,
+        panel_flip_pending: false,
         pending_fullscreen: None,
         feeds,
         commits: 0,
@@ -1648,6 +1652,23 @@ fn run_walls(
                 if wall.in_flight.is_some() {
                     continue;
                 }
+                // A fullscreen request queued during a panel change waits
+                // until the incoming panel's atomic commit has flipped.
+                if wall.pending_panel.is_none() && !wall.panel_flip_pending {
+                    if let Some(camera) = wall.pending_fullscreen.take() {
+                        if let Some(at) = ensure_camera_index(
+                            &mut wall.cameras,
+                            sources,
+                            &wall.fullscreen_sources,
+                            &camera,
+                        ) {
+                            wall.show(Mode::Fullscreen(at));
+                            panel_changed = true;
+                        } else {
+                            eprintln!("unknown camera requested for fullscreen: {camera}");
+                        }
+                    }
+                }
                 let clock = started.elapsed();
                 // A display is only due once its last commit has flipped, so
                 // on_screen is what its planes show now.
@@ -1729,6 +1750,7 @@ fn run_walls(
                             wall.pending_panel = None;
                             wall.mode = Mode::Grid;
                             wall.laid_out = Some(Mode::Grid);
+                            wall.panel_flip_pending = true;
                             wall.fullscreen_tap = None;
                             wall.turns += 1;
                             panel_changed = true;
