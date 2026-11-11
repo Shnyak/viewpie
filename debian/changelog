@@ -1,3 +1,12 @@
+viewpie (0.2.23-fork-1) unstable; urgency=medium
+
+  * Allow Home Assistant to open any registered camera in fullscreen,
+    independently of the active panel.
+  * Fall back to the camera's configured RTSP URL when no separate
+    fullscreen URL is configured.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.22-fork-1) unstable; urgency=medium
 
   * Generate and preserve a root-only restart token on first installation,
