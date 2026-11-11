@@ -2121,7 +2121,7 @@ fn debug_cpu_load_percent() -> Option<f64> {
     let total: u64 = values.iter().take(8).sum();
     let idle = values[3] + values[4];
     let mut previous = PREVIOUS.lock().ok()?;
-    let result = previous.and_then(|(old_total, old_idle)| {
+    let result = (*previous).and_then(|(old_total, old_idle)| {
         let total_delta = total.saturating_sub(old_total);
         let idle_delta = idle.saturating_sub(old_idle);
         (total_delta > 0).then_some(
