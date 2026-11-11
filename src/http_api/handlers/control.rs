@@ -66,13 +66,7 @@ pub async fn fullscreen(
         .manager
         .enter_fullscreen(&req.camera)
         .await
-        .map_err(|e| match e {
-            crate::panel_manager::PanelError::Validation(_) => ApiError::CameraNotInActivePanel,
-            crate::panel_manager::PanelError::Feed(crate::feed::PoolError::NoFullscreenUrl(_)) => {
-                ApiError::NoFullscreenUrl
-            }
-            other => ApiError::Panel(other),
-        })?;
+        .map_err(ApiError::Panel)?;
 
     // Determine timeout: explicit duration or global fullscreen_timeout.
     let timeout = match req.duration_seconds {
