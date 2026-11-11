@@ -940,7 +940,7 @@ fn run(config: &Config) -> Result<(), String> {
         let streams = [
             Some((&feed.url, source, hardware_allowed)),
             Some((
-                feed.fullscreen_url.as_deref().unwrap_or(&feed.url),
+                feed.fullscreen_url.as_ref().unwrap_or(&feed.url),
                 fullscreen[i].as_ref().expect("fullscreen source exists for every camera"),
                 false,
             )),
