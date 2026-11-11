@@ -64,8 +64,8 @@ impl NativeRendererController {
         }
 
         // The native renderer already owns every configured Source and
-        // supports PANEL over stdin. Keep those decoder sessions alive and
-        // let its render loop prewarm only the incoming scene's first feeds.
+        // supports PANEL over stdin. Keep all grid decoder sessions alive and
+        // let its render loop switch to the incoming scene's existing frames.
         let running = guard.as_mut().expect("live renderer was checked above");
         let command = format!("PANEL {panel}\n");
         running.stdin.write_all(command.as_bytes()).await?;
