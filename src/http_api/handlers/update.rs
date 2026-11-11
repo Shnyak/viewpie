@@ -133,37 +133,26 @@ pub async fn check() -> Result<Json<Value>, ApiError> {
 /// SHA-256 digest; the HTTP client cannot supply an arbitrary URL or package.
 pub async fn install(headers: HeaderMap) -> Result<Json<Value>, ApiError> {
     authorize(&headers)?;
-    let mut socket = timeout(
-        Duration::from_secs(3),
-        UnixStream::connect(UPDATE_SOCKET),
-    )
+    let mut socket = timeout(Duration::from_secs(3), UnixStream::connect(UPDATE_SOCKET))
     .await
     .map_err(|_| ApiError::Unavailable("update helper connection timed out".into()))?
     .map_err(|err| {
-        ApiError::Unavailable(format!(
-            "update helper is not installed or active: {err}"
-        ))
+        ApiError::Unavailable(format!("update helper is not installed or active: {err}"))
     })?;
 
     timeout(Duration::from_secs(2), socket.write_all(b"INSTALL\n"))
         .await
         .map_err(|_| ApiError::Unavailable("could not send update request".into()))?
-        .map_err(|err| {
-            ApiError::Unavailable(format!("could not send update request: {err}"))
-        })?;
+        .map_err(|err| ApiError::Unavailable(format!("could not send update request: {err}")))?;
 
     let mut acknowledgement = [0_u8; 256];
     let received = timeout(Duration::from_secs(3), socket.read(&mut acknowledgement))
         .await
-        .map_err(|_| {
-            ApiError::Unavailable("update helper did not acknowledge the request".into())
-        })?
+        .map_err(|_| ApiError::Unavailable("update helper did not acknowledge the request".into()))?
         .map_err(|err| {
             ApiError::Unavailable(format!("update helper acknowledgement failed: {err}"))
         })?;
-    if received == 0
-        || !String::from_utf8_lossy(&acknowledgement[..received]).contains("started")
-    {
+    if received == 0 || !String::from_utf8_lossy(&acknowledgement[..received]).contains("started") {
         return Err(ApiError::Unavailable(
             "update helper rejected the request".into(),
         ));
@@ -189,8 +178,7 @@ mod tests {
 
     #[test]
     fn release_asset_digest_must_be_sha256() {
-        let valid =
-            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let valid = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         assert!(valid.strip_prefix("sha256:").is_some_and(|hex| {
             hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
         }));
