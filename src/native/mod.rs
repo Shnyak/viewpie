@@ -528,6 +528,8 @@ struct Wall {
     fullscreen_tap: Option<(Tap, Duration)>,
     /// Last fullscreen camera confirmed by a successful KMS commit.
     reported_fullscreen: Option<String>,
+    /// Camera whose frame is currently attached to the first KMS plane.
+    displayed_fullscreen: Option<String>,
     /// Optional diagnostics plane, allocated only after every camera plane.
     debug_overlay: Option<DebugOverlay>,
     debug_overlay_active: bool,
@@ -1291,6 +1293,7 @@ fn build(
         laid_out: None,
         fullscreen_tap: None,
         reported_fullscreen: None,
+        displayed_fullscreen: None,
         debug_overlay: None,
         debug_overlay_active: false,
         debug_overlay_detached: true,
@@ -1744,9 +1747,18 @@ fn run_walls(
                         wall.debug_overlay_updated_at = Instant::now();
                     }
                 }
-                let fullscreen_frame_ready = matches!(wall.mode, Mode::Fullscreen(_))
-                    && (ready.iter().any(|(_, _, shown)| shown.is_some())
-                        || wall.on_screen.first().is_some_and(|shown| shown.is_some()));
+                let new_fullscreen_frame_ready = matches!(wall.mode, Mode::Fullscreen(_))
+                    && ready.iter().any(|(_, _, shown)| shown.is_some());
+                let fullscreen_already_visible = matches!(
+                    wall.mode,
+                    Mode::Fullscreen(at)
+                        if wall.watched
+                            && wall.displayed_fullscreen.as_deref()
+                                == Some(wall.cameras[at].feed.name.as_str())
+                            && wall.on_screen.first().is_some_and(|shown| shown.is_some())
+                );
+                let fullscreen_frame_ready =
+                    new_fullscreen_frame_ready || fullscreen_already_visible;
                 let had_overlay = wall.debug_overlay_active;
                 let result = card.commit(
                     wall.out.crtc,
@@ -1784,6 +1796,9 @@ fn run_walls(
                         }
                         if let Mode::Fullscreen(at) = wall.mode {
                             let camera = wall.cameras[at].feed.name.clone();
+                            if new_fullscreen_frame_ready {
+                                wall.displayed_fullscreen = Some(camera.clone());
+                            }
                             if fullscreen_frame_ready
                                 && wall.reported_fullscreen.as_deref() != Some(camera.as_str())
                             {
@@ -1799,6 +1814,7 @@ fn run_walls(
                             }
                         } else {
                             wall.reported_fullscreen = None;
+                            wall.displayed_fullscreen = None;
                         }
                         wall.commits += 1;
                         // Held until the flip: from here on the display may be
@@ -1813,7 +1829,7 @@ fn run_walls(
                         });
                     }
                     Err(e) => {
-                        if fullscreen_frame_ready {
+                        if new_fullscreen_frame_ready {
                             if let Mode::Fullscreen(at) = wall.mode {
                                 let camera = wall.cameras[at].feed.name.clone();
                                 let marker = format!("!error:{camera}");
