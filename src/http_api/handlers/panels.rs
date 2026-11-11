@@ -215,7 +215,7 @@ pub async fn reorder_panels(
 ) -> Result<Json<OkResponse>, ApiError> {
     let _config_guard = state.config_update_lock.lock().await;
     let old_config = state.config.read().await.clone();
-    let mut requested = request.order;
+    let requested = request.order;
     let mut expected = old_config.ordered_panel_ids();
     expected.sort();
     let mut actual = requested.clone();
