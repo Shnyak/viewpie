@@ -113,6 +113,7 @@ pub type ViewportDto = ViewportConfig;
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SettingsPatch {
     pub spacing: Option<u32>,
+    pub hardware_decoder_limit: Option<u32>,
     pub pause_off_screen: Option<bool>,
     pub background: Option<String>,
     pub rotation_interval: Option<u64>,
@@ -124,6 +125,7 @@ impl SettingsPatch {
     pub fn merge(&self, base: &DisplaySettings) -> DisplaySettings {
         DisplaySettings {
             spacing: self.spacing.unwrap_or(base.spacing),
+            hardware_decoder_limit: self.hardware_decoder_limit.unwrap_or(base.hardware_decoder_limit),
             pause_off_screen: self.pause_off_screen.unwrap_or(base.pause_off_screen),
             background: self
                 .background
@@ -196,6 +198,7 @@ mod tests {
         let patch: SettingsPatch = serde_json::from_str(r#"{"spacing": 5}"#).unwrap();
         let merged = patch.merge(&base);
         assert_eq!(merged.spacing, 5);
+        assert_eq!(merged.hardware_decoder_limit, 6);
         assert_eq!(merged.background, base.background);
         assert_eq!(merged.pause_off_screen, base.pause_off_screen);
     }
@@ -204,11 +207,12 @@ mod tests {
     fn settings_patch_merge_full() {
         let base = DisplaySettings::default();
         let patch: SettingsPatch = serde_json::from_str(
-            r##"{"spacing":2,"pause_off_screen":false,"background":"#ff0000","rotation_interval":30,"fullscreen_timeout":90}"##,
+            r##"{"spacing":2,"hardware_decoder_limit":4,"pause_off_screen":false,"background":"#ff0000","rotation_interval":30,"fullscreen_timeout":90}"##,
         )
         .unwrap();
         let merged = patch.merge(&base);
         assert_eq!(merged.spacing, 2);
+        assert_eq!(merged.hardware_decoder_limit, 4);
         assert!(!merged.pause_off_screen);
         assert_eq!(merged.background, "#ff0000");
         assert_eq!(merged.rotation_interval, 30);
