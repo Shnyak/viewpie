@@ -1,3 +1,15 @@
+viewpie (0.2.20-fork-1) unstable; urgency=medium
+
+  * Keep grid camera streams and decoders alive across panel switches so
+    changing the visible panel does not reconnect or reinitialize feeds.
+  * Add per-camera Automatic, Hardware and Software decoder policies.
+  * Add a configurable hardware decoder budget, defaulting to six sessions,
+    and prioritize cameras explicitly assigned to hardware decoding.
+  * Keep fullscreen main-stream decoding separate from the grid hardware
+    decoder budget.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 09:25:00 +0000
+
 viewpie (0.2.19-fork-1) unstable; urgency=medium
 
   * Add per-camera FFmpeg decoder-open diagnostics, including the requested
