@@ -274,6 +274,11 @@ fn t01_status_endpoint() {
     assert_eq!(j["panels_count"], 2);
     assert!(j["uptime_seconds"].as_u64().unwrap() < 3600);
     assert!(j["layout"].as_str().unwrap().contains("yard"));
+
+    let update = request("GET", "/api/update/status", None);
+    assert_eq!(update.status, 200, "updater status failed: {}", update.body);
+    assert!(update.json()["status"].is_string());
+    assert!(update.json()["phase"].is_string());
 }
 
 #[test]

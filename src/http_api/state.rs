@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use crate::config::{
     Config, ConfigError, DisplaySettings, FeedConfig, PanelConfig, ScreenBootMode,
@@ -29,10 +29,10 @@ use crate::panel_manager::PanelManager;
 use crate::wall::Resolution;
 
 /// Commands accepted by the wall renderer loop (CEC / timers / API).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum WallCommand {
     SwitchPanel(String),
-    SetFullscreen(String, Option<u64>),
+    SetFullscreen(String, Option<u64>, oneshot::Sender<Result<(), String>>),
     ReturnToGrid,
     Pause,
     Resume,

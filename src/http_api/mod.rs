@@ -72,23 +72,26 @@ pub async fn run(
                     }
                     Err(e) => warn!("cmd switch {id}: {e}"),
                 },
-                WallCommand::SetFullscreen(cam, _dur) => {
-                    match st.manager.enter_fullscreen(&cam).await {
-                        Ok(()) => {
-                            if let Some(renderer) = &command_renderer {
-                                let panel = st.manager.active_id().await;
-                                if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
-                                    warn!(
-                                        "native renderer failed to enter fullscreen for {cam}: {e}"
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => warn!("cmd fullscreen {cam}: {e}"),
+                // REST handlers update the shared PanelManager before enqueueing
+                // these renderer-only commands. Do not apply the same transition
+                // twice: doing so resets fullscreen timing and can race a newer
+                // scene request while the native child is switching KMS planes.
+                WallCommand::SetFullscreen(cam, _dur, acknowledgement) => {
+                    let result = if let Some(renderer) = &command_renderer {
+                        let panel = st.manager.active_id().await;
+                        renderer
+                            .select_fullscreen(&cam, &panel)
+                            .await
+                            .map_err(|error| error.to_string())
+                    } else {
+                        Ok(())
+                    };
+                    if let Err(error) = &result {
+                        warn!("native renderer failed to display fullscreen camera {cam}: {error}");
                     }
+                    let _ = acknowledgement.send(result);
                 }
                 WallCommand::ReturnToGrid => {
-                    let _ = st.manager.leave_fullscreen().await;
                     if let Some(renderer) = &command_renderer {
                         let panel = st.manager.active_id().await;
                         if let Err(e) = renderer.select_panel(&panel).await {
