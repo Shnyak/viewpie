@@ -768,4 +768,59 @@ panels:
         assert!(cfg.save_atomic(missing_parent.to_str().unwrap()).is_err());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
+
+    #[test]
+    fn panel_order_is_persisted_and_unknown_or_duplicate_ids_are_rejected() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  zeta:
+    name: Zeta
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+  alpha:
+    name: Alpha
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+defaults:
+  panel_order: [zeta, alpha]
+"#;
+        let cfg = Config::from_yaml(yaml).unwrap();
+        assert_eq!(cfg.ordered_panel_ids(), ["zeta", "alpha"]);
+        let unknown = yaml.replace("[zeta, alpha]", "[zeta, missing]");
+        assert!(Config::from_yaml(&unknown).is_err());
+        let duplicate = yaml.replace("[zeta, alpha]", "[zeta, zeta]");
+        assert!(Config::from_yaml(&duplicate).is_err());
+    }
+
+    #[test]
+    fn startup_panel_overrides_legacy_default_panel() {
+        let yaml = r#"
+feeds:
+  a: { url: "rtsp://x/a" }
+panels:
+  first:
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+  second:
+    layout: |
+      a
+    viewports:
+      - { slot: a, feeds: [a] }
+display:
+  startup_panel: second
+defaults:
+  panel: first
+"#;
+        let cfg = Config::from_yaml(yaml).unwrap();
+        assert_eq!(cfg.initial_panel(), "second");
+    }
+
 }
