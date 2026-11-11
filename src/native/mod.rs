@@ -51,6 +51,11 @@ struct DecoderInfo {
     mode: Option<String>,
     state: Option<String>,
     fallback_reason: Option<String>,
+    codec: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    fps: Option<f64>,
+    errors: u64,
 }
 
 struct Source {
@@ -2397,6 +2402,11 @@ fn emit_decoder_status(source: &Source) {
             "paused".to_string()
         },
         "fallback_reason": info.fallback_reason,
+        "codec": info.codec,
+        "width": info.width,
+        "height": info.height,
+        "fps": info.fps,
+        "errors": source.stats.errors.load(Ordering::Relaxed).max(info.errors),
     });
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "VIEWPIE_DECODER_STATUS {status}");
@@ -2428,6 +2438,11 @@ fn feed_session(
         info.mode = None;
         info.state = Some("starting".to_string());
         info.fallback_reason = dec.hardware_fallback.clone();
+        info.codec = Some(dec.codec().to_string());
+        info.width = None;
+        info.height = None;
+        info.fps = None;
+        info.errors = source.stats.errors.load(Ordering::Relaxed);
     }
     emit_decoder_status(source);
     eprintln!("{name}: selected decoder {}", dec.decoder_name);
@@ -2458,6 +2473,8 @@ fn feed_session(
     // Read once, before the loop borrows the decoder: it cannot change while
     // a session runs, since a different codec means a different stream.
     let codec = dec.codec();
+    let mut telemetry_at = Instant::now();
+    let mut telemetry_frames = source.stats.decoded.load(Ordering::Relaxed);
 
     while !shutdown.load(Ordering::Acquire) {
         let Some(frame) = dec.next_frame(shutdown, &source.wanted) else {
@@ -2484,6 +2501,25 @@ fn feed_session(
         };
         if w == 0 || h == 0 {
             continue;
+        }
+        let now = Instant::now();
+        if now.duration_since(telemetry_at) >= Duration::from_secs(2) {
+            let decoded = source.stats.decoded.load(Ordering::Relaxed);
+            let elapsed = now.duration_since(telemetry_at).as_secs_f64();
+            {
+                let mut info = source.decoder_info.lock().unwrap();
+                info.width = Some(w);
+                info.height = Some(h);
+                info.fps = Some(decoded.saturating_sub(telemetry_frames) as f64 / elapsed);
+                info.errors = source.stats.errors.load(Ordering::Relaxed);
+            }
+            emit_decoder_status(source);
+            telemetry_at = now;
+            telemetry_frames = decoded;
+        } else {
+            let mut info = source.decoder_info.lock().unwrap();
+            info.width = Some(w);
+            info.height = Some(h);
         }
         let (fb, frame) = unsafe {
             // Report the path once, and again whenever it changes: a decoder
