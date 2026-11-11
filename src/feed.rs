@@ -503,6 +503,7 @@ mod tests {
             FeedConfig {
                 url: "rtsp://cam/g".into(),
                 fullscreen_url: None,
+                decoder: crate::config::DecoderPreference::Auto,
             },
         )
         .await;
