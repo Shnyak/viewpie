@@ -871,5 +871,4 @@ panels:
         assert_eq!(cfg.display.screen_boot_mode, ScreenBootMode::AlwaysOff);
         assert!(!cfg.display.last_screen_on);
     }
-
 }
