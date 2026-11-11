@@ -172,31 +172,6 @@ impl Config {
             _ => return Err("active_panel must be a panel name".into()),
         };
 
-        let explicit_hardware: Vec<&str> = feeds
-            .iter()
-            .enumerate()
-            .filter(|(index, feed)| {
-                feed.decoder == DecoderPreference::Hardware
-                    && if panels.is_empty() {
-                        displays.iter().any(|display| {
-                            display.viewports.iter().any(|viewport| viewport.feeds.contains(index))
-                        })
-                    } else {
-                        panels.values().any(|panel| {
-                            panel.viewports.iter().any(|viewport| viewport.feeds.contains(index))
-                        })
-                    }
-            })
-            .map(|(_, feed)| feed.name.as_str())
-            .collect();
-        if explicit_hardware.len() > hardware_decoder_limit {
-            return Err(format!(
-                "{} cameras explicitly request hardware decoding ({}), but hardware_decoder_limit is {hardware_decoder_limit}",
-                explicit_hardware.len(),
-                explicit_hardware.join(", ")
-            ));
-        }
-
         let active_fullscreen = match &doc["active_fullscreen"] {
             Yaml::BadValue => None,
             Yaml::String(name) => Some(name.clone()),
@@ -227,6 +202,31 @@ impl Config {
             }
         } else if !matches!(doc["displays"], Yaml::BadValue) {
             return Err("displays must be a list".into());
+        }
+
+        let explicit_hardware: Vec<&str> = feeds
+            .iter()
+            .enumerate()
+            .filter(|(index, feed)| {
+                feed.decoder == DecoderPreference::Hardware
+                    && if panels.is_empty() {
+                        displays.iter().any(|display| {
+                            display.viewports.iter().any(|viewport| viewport.feeds.contains(index))
+                        })
+                    } else {
+                        panels.values().any(|panel| {
+                            panel.viewports.iter().any(|viewport| viewport.feeds.contains(index))
+                        })
+                    }
+            })
+            .map(|(_, feed)| feed.name.as_str())
+            .collect();
+        if explicit_hardware.len() > hardware_decoder_limit {
+            return Err(format!(
+                "{} cameras explicitly request hardware decoding ({}), but hardware_decoder_limit is {hardware_decoder_limit}",
+                explicit_hardware.len(),
+                explicit_hardware.join(", ")
+            ));
         }
 
         if displays.is_empty() && panels.is_empty() {
