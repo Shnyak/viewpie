@@ -392,14 +392,17 @@ impl Config {
 
     /// Validate cross-references between panels and feeds.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        let explicit_hardware = self
+        let explicit_hardware: Vec<&str> = self
             .feeds
-            .values()
-            .filter(|feed| feed.decoder == DecoderPreference::Hardware)
-            .count();
-        if explicit_hardware > self.display.hardware_decoder_limit as usize {
+            .iter()
+            .filter(|(_, feed)| feed.decoder == DecoderPreference::Hardware)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        if explicit_hardware.len() > self.display.hardware_decoder_limit as usize {
             return Err(ConfigError::Validation(format!(
-                "{explicit_hardware} cameras explicitly request hardware decoding, but hardware_decoder_limit is {}; increase the limit or mark some cameras software/auto",
+                "{} cameras explicitly request hardware decoding ({}), but hardware_decoder_limit is {}; increase the limit or mark some cameras software/auto",
+                explicit_hardware.len(),
+                explicit_hardware.join(", "),
                 self.display.hardware_decoder_limit
             )));
         }
