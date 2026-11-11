@@ -19,7 +19,15 @@ jobs:
       # links nothing of: the drm crate speaks to the kernel by ioctl.
       - name: Install what the crate builds against
         run: |
-          sudo apt-get update
+          # GitHub-hosted Ubuntu runners may point at an Azure mirror that
+          # is intermittently unreachable from the runner network. Prefer the
+          # public Ubuntu archive before refreshing package indexes.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' "$source"
+            fi
+          done
+          sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
           sudo apt-get install -y --no-install-recommends \
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
             libclang-dev clang
