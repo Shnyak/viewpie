@@ -79,11 +79,7 @@ impl NativeRendererController {
     /// Reload the YAML-backed scene set after a configuration mutation.
     /// Unlike ordinary panel selection, this intentionally restarts the
     /// renderer so newly added cameras, panel definitions and settings are read.
-    pub async fn reload(
-        &self,
-        panel: &str,
-        fullscreen: Option<&str>,
-    ) -> anyhow::Result<()> {
+    pub async fn reload(&self, panel: &str, fullscreen: Option<&str>) -> anyhow::Result<()> {
         self.restart(panel, fullscreen).await
     }
 
@@ -146,7 +142,11 @@ impl NativeRendererController {
             .env("VIEWPIE_PANEL", panel)
             .env(
                 "VIEWPIE_SCREEN_ON",
-                if self.display_on.load(Ordering::Acquire) { "1" } else { "0" },
+                if self.display_on.load(Ordering::Acquire) {
+                    "1"
+                } else {
+                    "0"
+                },
             )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
