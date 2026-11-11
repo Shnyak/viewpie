@@ -141,6 +141,7 @@ impl Decoder {
     /// `held` decoded frames at once.
     pub fn open(
         url: &str,
+        camera: &str,
         stats: Arc<FeedStats>,
         limit: (u32, u32),
         held: usize,
@@ -257,12 +258,12 @@ impl Decoder {
             let hardware_result = if force_software {
                 Err("hardware decoder stalled in a previous session".to_string())
             } else {
-                open_codec(codec, par, true, held, &mut unknown)
+                open_codec(camera, codec, par, true, held, &mut unknown)
             };
             let (mut codec_ctx, hardware_fallback) = match hardware_result {
                 Ok(ctx) => (ctx, None),
                 Err(hw_error) if !software.is_null() && codec != software => {
-                    match open_codec(software, par, false, held, &mut unknown) {
+                    match open_codec(camera, software, par, false, held, &mut unknown) {
                         Ok(ctx) => (ctx, Some(hw_error)),
                         Err(software_error) => {
                             return Err(close(format!(
@@ -493,10 +494,27 @@ const SPARE_CAPTURE_BUFFERS: usize = 2;
 /// the keyframes, which are many times the size of the frames between.
 const OUTPUT_BUFFERS: usize = 4;
 
+/// Read the CMA counters at the point a decoder is about to be opened.
+/// Values are reported in kB, as they appear in /proc/meminfo.
+fn cma_memory_kb() -> (Option<u64>, Option<u64>) {
+    let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") else {
+        return (None, None);
+    };
+    let value = |key: &str| {
+        meminfo
+            .lines()
+            .find_map(|line| line.strip_prefix(key))
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|number| number.parse::<u64>().ok())
+    };
+    (value("CmaTotal:"), value("CmaFree:"))
+}
+
 /// Open a decoder for `codec`, with the DRM hwaccel when `hwaccel`, whose
 /// caller may hold `held` decoded frames at once. The options it did not
 /// take go on `unknown`.
 unsafe fn open_codec(
+    camera: &str,
     codec: *const AVCodec,
     par: *const AVCodecParameters,
     hwaccel: bool,
@@ -560,6 +578,16 @@ unsafe fn open_codec(
             dict_set(&mut opts, key, &n.to_string());
         }
     }
+    // Take the memory snapshot immediately before avcodec_open2: this is the
+    // point at which FFmpeg asks the selected decoder to create its context
+    // and allocate/configure its buffers.
+    let (cma_total, cma_free) = cma_memory_kb();
+    let cma_total = cma_total.map_or_else(|| "unavailable".to_string(), |n| n.to_string());
+    let cma_free = cma_free.map_or_else(|| "unavailable".to_string(), |n| n.to_string());
+    eprintln!(
+        "VIEWPIE_DECODER_OPEN camera={camera} requested_decoder={name} hwaccel={hwaccel}          cma_total_kb={cma_total} cma_free_kb={cma_free} stage=before_avcodec_open2"
+    );
+
     let r = avcodec_open2(ctx, codec, &mut opts);
     // Whatever the decoder did not take is left in the dictionary, and it is
     // said rather than dropped: a decoder that stopped knowing the option
@@ -567,9 +595,23 @@ unsafe fn open_codec(
     // with nothing to say why.
     let left = dict_take_keys(&mut opts);
     if r < 0 {
-        let msg = format!("open codec: {}", av_err(r));
+        let error = av_err(r);
+        eprintln!(
+            "VIEWPIE_DECODER_OPEN camera={camera} requested_decoder={name} actual_decoder=none              hwaccel={hwaccel} cma_total_kb={cma_total} cma_free_kb={cma_free}              result=error av_error_code={r} error={error:?}"
+        );
+        let msg = format!("open codec: {error}");
         return Err(fail(&mut ctx, msg));
     }
+    let actual_decoder = if (*ctx).codec.is_null() {
+        "unknown".to_string()
+    } else {
+        std::ffi::CStr::from_ptr((*(*ctx).codec).name)
+            .to_string_lossy()
+            .into_owned()
+    };
+    eprintln!(
+        "VIEWPIE_DECODER_OPEN camera={camera} requested_decoder={name} actual_decoder={actual_decoder}          hwaccel={hwaccel} cma_total_kb={cma_total} cma_free_kb={cma_free} result=ok"
+    );
     unknown.extend(left);
     Ok(ctx)
 }
