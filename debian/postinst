@@ -45,12 +45,12 @@ configure)
             sed -n '/^VIEWPIE_RESTART_TOKEN=./p' "$VP_OLD_RESTART_ENV" |
                 install -m 0600 -o root -g root /dev/stdin "$VP_RESTART_ENV"
         else
-            VP_RESTART_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \\n')
+            VP_RESTART_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
             if [ "${#VP_RESTART_TOKEN}" -ne 64 ]; then
                 echo "viewpie: could not generate restart token" >&2
                 exit 1
             fi
-            printf 'VIEWPIE_RESTART_TOKEN=%s\\n' "$VP_RESTART_TOKEN" |
+            printf 'VIEWPIE_RESTART_TOKEN=%s\n' "$VP_RESTART_TOKEN" |
                 install -m 0600 -o root -g root /dev/stdin "$VP_RESTART_ENV"
             echo "Viewpie restart token (enter once in the Home Assistant integration):"
             echo "$VP_RESTART_TOKEN"
