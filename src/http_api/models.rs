@@ -144,6 +144,8 @@ impl SettingsPatch {
 pub struct StatusResponse {
     /// Version of the Viewpie package used to build this running binary.
     pub software_version: &'static str,
+    /// ISO 8601 timestamp of the source commit used for this build.
+    pub software_build_date: &'static str,
     pub paused: bool,
     pub pause_off_screen: bool,
     pub screen_off: bool,
@@ -268,6 +270,7 @@ mod tests {
     fn status_response_includes_build_package_version() {
         let status = StatusResponse {
             software_version: env!("CARGO_PKG_VERSION"),
+            software_build_date: env!("VIEWPIE_BUILD_DATE"),
             paused: false,
             pause_off_screen: true,
             screen_off: false,
@@ -288,5 +291,6 @@ mod tests {
         };
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json["software_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(json["software_build_date"], env!("VIEWPIE_BUILD_DATE"));
     }
 }
