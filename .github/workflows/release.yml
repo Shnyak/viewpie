@@ -83,6 +83,8 @@ jobs:
             echo "debian/changelog version $changelog does not match tag $tag" >&2
             exit 1
           fi
+      - name: Record source build date
+        run: echo "VIEWPIE_BUILD_DATE=$(git log -1 --format=%cI)" >> "$GITHUB_ENV"
       - name: Build the package
         run: ./scripts/build-deb.sh ${{ matrix.arch }}
       - uses: actions/upload-artifact@v7
