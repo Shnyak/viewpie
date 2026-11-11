@@ -100,6 +100,21 @@ def main():
             if hasher.hexdigest().lower() != digest.split(":", 1)[1].lower():
                 raise RuntimeError("Downloaded package SHA-256 does not match GitHub release metadata")
 
+            package_fields = subprocess.check_output(
+                ["dpkg-deb", "-f", str(package), "Package", "Version", "Architecture"],
+                text=True,
+                timeout=10,
+            ).splitlines()
+            if len(package_fields) != 3:
+                raise RuntimeError("Downloaded package metadata is incomplete")
+            package_name, package_version, package_arch = package_fields
+            if (
+                package_name != "viewpie"
+                or package_version.rsplit("-", 1)[0] != version
+                or package_arch != arch
+            ):
+                raise RuntimeError("Downloaded package identity does not match the selected release")
+
             log("Installing Viewpie " + version + " (" + arch + ")")
             subprocess.run(["dpkg", "-i", str(package)], check=True, timeout=900)
             log("Viewpie update completed: " + version)
