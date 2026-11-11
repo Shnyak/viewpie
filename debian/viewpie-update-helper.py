@@ -110,24 +110,24 @@ def read_deb_field(package, field):
 
 
 def install_latest_release(preserve_log=False):
-    _write_status(
-        status="running", phase="starting", message="Запуск установщика",
-        started_at=__import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).isoformat(),
-        finished_at=None, exit_code=None,
-    )
-    if not preserve_log:
-        LOG_PATH.write_text("", encoding="utf-8")
-        os.chmod(LOG_PATH, 0o644)
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            event("lock", "Другое обновление уже выполняется", "failed", exit_code=1)
-            return 1
+            log("Another Viewpie update is already running; duplicate worker skipped")
+            return 0
 
+        _write_status(
+            status="running", phase="starting", message="Запуск установщика",
+            started_at=__import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat(),
+            finished_at=None, exit_code=None,
+        )
+        if not preserve_log:
+            LOG_PATH.write_text("", encoding="utf-8")
+            os.chmod(LOG_PATH, 0o644)
         event("release", "Получение метаданных последнего релиза")
         release = request_json(RELEASE_API)
         tag = str(release.get("tag_name", ""))
@@ -246,6 +246,15 @@ def main():
         if command != "INSTALL":
             connection.sendall(b"0")
             return 2
+
+        try:
+            existing = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            existing = {}
+        if existing.get("status") == "running":
+            log("Update already running; reusing the current worker")
+            connection.sendall(b"1")
+            return 0
 
         # Run the actual dpkg transaction in a transient systemd unit. Debian's
         # package hooks may restart Viewpie and the socket listener, but must
