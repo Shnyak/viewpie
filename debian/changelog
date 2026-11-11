@@ -1,3 +1,12 @@
+viewpie (0.2.25-fork-1) unstable; urgency=medium
+
+  * Install and enable the socket-activated update helper units in the Debian
+    package, so Home Assistant can start verified in-app updates.
+  * Keep the update helper root-owned and restricted to checksum-verified,
+    architecture-matched GitHub release packages.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 16:45:00 +0000
+
 viewpie (0.2.24-fork-1) unstable; urgency=medium
 
   * Decode fullscreen cameras from their configured main stream, falling
