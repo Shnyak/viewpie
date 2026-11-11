@@ -1346,6 +1346,24 @@ fn hardware_feed_names(config: &config::Config) -> HashSet<String> {
     selected
 }
 
+fn source_wanted_for_state(
+    persistent_grid: bool,
+    watched: bool,
+    panel_transition_pending: bool,
+    shown_in_current_scene: bool,
+) -> bool {
+    watched && (persistent_grid || (!panel_transition_pending && shown_in_current_scene))
+}
+
+/// Whether a source must keep decoding for at least one watched wall.
+/// Grid sources are persistent across panel transitions; fullscreen-only
+/// sources remain tied to the currently presented scene.
+fn source_wanted_for_wall(source: &Source, wall: &Wall) -> bool {
+    wall.watched
+        && (source.persistent_grid
+            || (wall.pending_panel.is_none() && wall.shows(source)))
+}
+
 fn run_walls(
     card: &Arc<Card>,
     sources: &[Arc<Source>],
@@ -1402,11 +1420,9 @@ fn run_walls(
                     // A pending panel owns the transition. Keep every grid
                     // feed alive; only stop fullscreen-only sessions.
                     for source in sources {
-                        let wanted = walls.iter().any(|wall| {
-                            wall.watched
-                                && (source.persistent_grid
-                                    || (wall.pending_panel.is_none() && wall.shows(source)))
-                        });
+                        let wanted = walls
+                            .iter()
+                            .any(|wall| source_wanted_for_wall(source, wall));
                         source.set_wanted(wanted);
                     }
                 }
@@ -1472,11 +1488,9 @@ fn run_walls(
 
             if changed {
                 for source in sources {
-                    let wanted = walls.iter().any(|wall| {
-                        wall.watched
-                            && (source.persistent_grid
-                                || (wall.pending_panel.is_none() && wall.shows(source)))
-                    });
+                    let wanted = walls
+                        .iter()
+                        .any(|wall| source_wanted_for_wall(source, wall));
                     source.set_wanted(wanted);
                 }
             }
@@ -2971,6 +2985,19 @@ displays:
         assert!(!selected.contains("b_auto"));
         assert!(!selected.contains("cpu_only"));
         assert!(!selected.contains("spare_priority"));
+    }
+
+    #[test]
+    fn persistent_grid_sources_stay_wanted_during_panel_transition() {
+        // A watched wall may be replacing a panel whose outgoing scene did
+        // not contain this camera. Grid sources must remain alive anyway.
+        assert!(source_wanted_for_state(true, true, true, false));
+        // Fullscreen-only sources still stop when the outgoing scene is detached.
+        assert!(!source_wanted_for_state(false, true, true, false));
+        // A source used by the currently presented scene remains wanted.
+        assert!(source_wanted_for_state(false, true, false, true));
+        // Nothing should decode while the display is unwatched.
+        assert!(!source_wanted_for_state(true, false, false, false));
     }
 
     #[test]
