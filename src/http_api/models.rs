@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{DisplaySettings, FeedConfig, PanelConfig, ViewportConfig};
+use crate::config::{DecoderPreference, DisplaySettings, FeedConfig, PanelConfig, ViewportConfig};
 use crate::feed::FeedState;
 
 /// `POST /api/fullscreen` body.
@@ -29,6 +29,9 @@ pub struct CameraDto {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fullscreen_url: Option<String>,
+    /// Requested decoder path for this camera.
+    #[serde(default)]
+    pub decoder: DecoderPreference,
     /// Number of panels currently referencing this camera.
     #[serde(default)]
     pub ref_count: usize,
@@ -43,6 +46,7 @@ impl CameraDto {
             name: s.name.clone(),
             url: s.config.url.clone(),
             fullscreen_url: s.config.fullscreen_url.clone(),
+            decoder: s.config.decoder,
             ref_count: s.ref_count,
             running: s.running,
         }
@@ -52,6 +56,7 @@ impl CameraDto {
         FeedConfig {
             url: self.url.clone(),
             fullscreen_url: self.fullscreen_url.clone(),
+            decoder: self.decoder,
         }
     }
 }
@@ -216,6 +221,7 @@ mod tests {
             name: "yard".into(),
             url: "rtsp://x/y".into(),
             fullscreen_url: Some("rtsp://x/ym".into()),
+            decoder: DecoderPreference::Auto,
             ref_count: 2,
             running: true,
         };
