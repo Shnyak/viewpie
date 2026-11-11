@@ -42,12 +42,15 @@ def _write_status(**changes):
 
 def log(message):
     safe = str(message).replace("\x00", "")
-    print(safe, file=sys.stderr, flush=True)
+    timestamp = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc
+    ).isoformat()
+    entry = f"{timestamp} {safe}"
+    print(entry, file=sys.stderr, flush=True)
     STATE_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     with LOG_PATH.open("a", encoding="utf-8") as stream:
-        stream.write(safe + "\n")
+        stream.write(entry + "\n")
     os.chmod(LOG_PATH, 0o644)
-
 
 def event(phase, message, status="running", **extra):
     _write_status(status=status, phase=phase, message=message, **extra)
