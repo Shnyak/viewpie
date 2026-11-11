@@ -8,6 +8,7 @@ on:
       - main
     paths:
       - Cargo.toml
+      - Cargo.lock
       - debian/changelog
       - .github/workflows/tag-versioned-release.yml
 
