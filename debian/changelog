@@ -2,6 +2,10 @@ viewpie (0.2.27-fork-1) unstable; urgency=medium
 
   * Fix updater Debian control-field parsing so verified packages can be
     identified and installed on Debian 12 / Raspberry Pi OS Bookworm.
+  * Persist update phases, download progress, command output and failures in
+    a readable journal exposed to Home Assistant.
+  * Require a confirmed native KMS frame before reporting fullscreen success;
+    return a useful API error and restore the previous selection on failure.
 
  -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 18:55:00 +0000
 
