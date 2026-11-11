@@ -3,7 +3,7 @@
 use axum::http::{header::AUTHORIZATION, HeaderMap};
 use axum::Json;
 use serde_json::{json, Value};
-use tokio::{io::AsyncWriteExt, net::UnixStream, time::{timeout, Duration}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::UnixStream, time::{timeout, Duration}};
 
 use crate::http_api::errors::ApiError;
 
@@ -125,6 +125,14 @@ pub async fn install(headers: HeaderMap) -> Result<Json<Value>, ApiError> {
         .await
         .map_err(|_| ApiError::Unavailable("could not send update request".into()))?
         .map_err(|err| ApiError::Unavailable(format!("could not send update request: {err}")))?;
+    let mut acknowledgement = [0_u8; 256];
+    let received = timeout(Duration::from_secs(3), socket.read(&mut acknowledgement))
+        .await
+        .map_err(|_| ApiError::Unavailable("update helper did not acknowledge the request".into()))?
+        .map_err(|err| ApiError::Unavailable(format!("update helper acknowledgement failed: {err}")))?;
+    if received == 0 || !String::from_utf8_lossy(&acknowledgement[..received]).contains("started") {
+        return Err(ApiError::Unavailable("update helper rejected the request".into()));
+    }
     Ok(Json(json!({
         "ok": true,
         "status": "started",
