@@ -1421,6 +1421,28 @@ fn source_wanted_for_state(
     watched && (persistent_grid || (!panel_transition_pending && shown_in_current_scene))
 }
 
+/// Find a camera already in the active scene, or add any registered feed
+/// so API requests are not restricted to cameras used by that panel.
+fn ensure_camera_index(
+    cameras: &mut Vec<Camera>,
+    sources: &[Arc<Source>],
+    fullscreen_sources: &[Option<Arc<Source>>],
+    name: &str,
+) -> Option<usize> {
+    if let Some(index) = cameras.iter().position(|camera| camera.feed.name == name) {
+        return Some(index);
+    }
+    let source_index = sources.iter().position(|source| source.name == name)?;
+    cameras.push(Camera {
+        feed: sources[source_index].clone(),
+        fullscreen: fullscreen_sources
+            .get(source_index)
+            .cloned()
+            .flatten(),
+    });
+    Some(cameras.len() - 1)
+}
+
 /// Whether a source must keep decoding for at least one watched wall.
 /// Grid sources are persistent across panel transitions; fullscreen-only
 /// sources remain tied to the currently presented scene.
@@ -1504,16 +1526,17 @@ fn run_walls(
                     if let Some(wall) = walls.first_mut() {
                         if wall.pending_panel.is_some() {
                             wall.pending_fullscreen = Some(camera);
-                        } else if let Some(at) = wall
-                            .cameras
-                            .iter()
-                            .position(|entry| entry.feed.name == camera)
-                        {
+                        } else if let Some(at) = ensure_camera_index(
+                            &mut wall.cameras,
+                            sources,
+                            &wall.fullscreen_sources,
+                            &camera,
+                        ) {
                             let was = wall.mode;
                             wall.show(Mode::Fullscreen(at));
                             panel_changed |= was != wall.mode;
                         } else {
-                            eprintln!("camera is not in the active panel: {camera}");
+                            eprintln!("unknown camera requested for fullscreen: {camera}");
                         }
                     }
                 }
@@ -1635,14 +1658,15 @@ fn run_walls(
                                 wall.pending_panel = None;
                                 wall.mode = Mode::Grid;
                                 if let Some(camera) = wall.pending_fullscreen.take() {
-                                    if let Some(at) = wall
-                                        .cameras
-                                        .iter()
-                                        .position(|entry| entry.feed.name == camera)
-                                    {
+                                    if let Some(at) = ensure_camera_index(
+                                        &mut wall.cameras,
+                                        sources,
+                                        &wall.fullscreen_sources,
+                                        &camera,
+                                    ) {
                                         wall.show(Mode::Fullscreen(at));
                                     } else {
-                                        eprintln!("camera is not in panel '{panel}': {camera}");
+                                        eprintln!("unknown camera requested for fullscreen: {camera}");
                                     }
                                 }
                                 wall.laid_out = None;
