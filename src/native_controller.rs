@@ -87,8 +87,8 @@ impl NativeRendererController {
     }
 
     pub async fn select_fullscreen(&self, camera: &str, panel: &str) -> anyhow::Result<()> {
-        if panel.contains('\\n')
-            || panel.contains('\\r')
+        if panel.contains('\n')
+            || panel.contains('\r')
             || camera.contains('\\n')
             || camera.contains('\\r')
         {
