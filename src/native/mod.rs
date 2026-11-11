@@ -843,7 +843,9 @@ fn run(config: &Config) -> Result<(), String> {
     // is shown.
     // Choose hardware cameras before starting any worker. Explicit hardware
     // preferences win; auto feeds fill the remaining slots in stable name order.
-    let mut hardware_feeds: HashSet<String> = config.feeds.iter()
+    let mut hardware_feeds: HashSet<String> = config
+        .feeds
+        .iter()
         .enumerate()
         .filter(|(index, feed)| {
             config.displays_showing(*index) > 0
@@ -851,7 +853,9 @@ fn run(config: &Config) -> Result<(), String> {
         })
         .map(|(_, feed)| feed.name.clone())
         .collect();
-    let mut automatic_feeds: Vec<String> = config.feeds.iter()
+    let mut automatic_feeds: Vec<String> = config
+        .feeds
+        .iter()
         .enumerate()
         .filter(|(index, feed)| {
             config.displays_showing(*index) > 0
@@ -860,7 +864,9 @@ fn run(config: &Config) -> Result<(), String> {
         .map(|(_, feed)| feed.name.clone())
         .collect();
     automatic_feeds.sort();
-    let available_slots = config.hardware_decoder_limit.saturating_sub(hardware_feeds.len());
+    let available_slots = config
+        .hardware_decoder_limit
+        .saturating_sub(hardware_feeds.len());
     hardware_feeds.extend(automatic_feeds.into_iter().take(available_slots));
 
     let sources: Vec<Arc<Source>> = config
@@ -961,7 +967,9 @@ fn run(config: &Config) -> Result<(), String> {
         let hardware_allowed = hardware_feeds.contains(&feed.name);
         let streams = [
             Some((&feed.url, source, hardware_allowed)),
-            feed.fullscreen_url.as_ref().zip(fullscreen[i].as_ref())
+            feed.fullscreen_url
+                .as_ref()
+                .zip(fullscreen[i].as_ref())
                 .map(|(url, source)| (url, source, false)),
         ];
         for (url, source, hardware_allowed) in streams.into_iter().flatten() {
@@ -1390,8 +1398,9 @@ fn run_walls(
                     // feed alive; only stop fullscreen-only sessions.
                     for source in sources {
                         let wanted = walls.iter().any(|wall| {
-                            wall.watched && (source.persistent_grid ||
-                                (wall.pending_panel.is_none() && wall.shows(source)))
+                            wall.watched
+                                && (source.persistent_grid
+                                    || (wall.pending_panel.is_none() && wall.shows(source)))
                         });
                         source.set_wanted(wanted);
                     }
@@ -1459,8 +1468,9 @@ fn run_walls(
             if changed {
                 for source in sources {
                     let wanted = walls.iter().any(|wall| {
-                        wall.watched && (source.persistent_grid ||
-                            (wall.pending_panel.is_none() && wall.shows(source)))
+                        wall.watched
+                            && (source.persistent_grid
+                                || (wall.pending_panel.is_none() && wall.shows(source)))
                     });
                     source.set_wanted(wanted);
                 }
@@ -1627,9 +1637,9 @@ fn run_walls(
 
         if panel_changed {
             for source in sources {
-                let wanted = walls.iter().any(|wall| {
-                    wall.watched && (source.persistent_grid || wall.shows(source))
-                });
+                let wanted = walls
+                    .iter()
+                    .any(|wall| wall.watched && (source.persistent_grid || wall.shows(source)));
                 source.set_wanted(wanted);
             }
         }
