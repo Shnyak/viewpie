@@ -22,13 +22,19 @@ pub async fn list_panels(
     let all = state.manager.list().await;
     let active = state.manager.active_id().await;
     let config = state.config.read().await.clone();
-    let panels = config.ordered_panel_ids().into_iter().filter_map(|id| {
-        all.iter().find(|(panel_id, _)| panel_id == &id).map(|(_, p)| PanelSummary {
-            id,
-            name: p.name.clone(),
-            camera_count: p.camera_count(),
+    let panels = config
+        .ordered_panel_ids()
+        .into_iter()
+        .filter_map(|id| {
+            all.iter()
+                .find(|(panel_id, _)| panel_id == &id)
+                .map(|(_, p)| PanelSummary {
+                    id,
+                    name: p.name.clone(),
+                    camera_count: p.camera_count(),
+                })
         })
-    }).collect();
+        .collect();
     Ok(Json(PanelListResponse { panels, active }))
 }
 
@@ -173,7 +179,10 @@ pub async fn delete_panel(
         .ok_or_else(|| ApiError::not_found(format!("panel {id:?} not found")))?;
     let mut candidate = old_config.clone();
     candidate.panels.remove(&id);
-    candidate.defaults.panel_order.retain(|panel_id| panel_id != &id);
+    candidate
+        .defaults
+        .panel_order
+        .retain(|panel_id| panel_id != &id);
     if candidate.panels.is_empty() {
         return Err(ApiError::LastPanel);
     }
