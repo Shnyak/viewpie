@@ -120,6 +120,7 @@ def install_latest_release(preserve_log=False):
 
         _write_status(
             status="running", phase="starting", message="Запуск установщика",
+            worker_unit=os.environ.get("VIEWPIE_UPDATE_UNIT"),
             started_at=__import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc
             ).isoformat(),
@@ -252,9 +253,22 @@ def main():
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             existing = {}
         if existing.get("status") == "running":
-            log("Update already running; reusing the current worker")
-            connection.sendall(b"1")
-            return 0
+            active_unit = str(existing.get("worker_unit") or "")
+            unit_state = ""
+            if active_unit:
+                try:
+                    check = subprocess.run(
+                        ["systemctl", "is-active", active_unit],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    unit_state = check.stdout.strip()
+                except Exception as error:
+                    log("Could not inspect previous updater worker: " + str(error))
+            if unit_state in ("active", "activating", "reloading"):
+                log("Update already running; reusing worker " + active_unit)
+                connection.sendall(b"1")
+                return 0
+            log("Previous updater state is stale; its systemd worker is not active")
 
         # Run the actual dpkg transaction in a transient systemd unit. Debian's
         # package hooks may restart Viewpie and the socket listener, but must
@@ -263,7 +277,7 @@ def main():
         STATE_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
         LOG_PATH.write_text("", encoding="utf-8")
         os.chmod(LOG_PATH, 0o644)
-        event("queue", "$ systemd-run --unit=" + unit + " /usr/bin/python3 update-helper.py --apply --preserve-log")
+        event("queue", "$ systemd-run --unit=" + unit + " /usr/bin/python3 update-helper.py --apply --preserve-log", worker_unit=unit)
         try:
             subprocess.run(
                 [
@@ -271,6 +285,7 @@ def main():
                     "--quiet",
                     "--collect",
                     "--unit=" + unit,
+                    "--setenv=VIEWPIE_UPDATE_UNIT=" + unit,
                     "/usr/bin/python3",
                     __file__,
                     "--apply",
