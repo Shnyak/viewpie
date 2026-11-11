@@ -2181,7 +2181,12 @@ fn feed_thread(
             force_software,
         );
         let paused = !source.wanted.load(Ordering::Relaxed);
-        let hardware_open_fell_back = source.decoder_info.lock().unwrap().fallback_reason.is_some();
+        let hardware_open_fell_back = source
+            .decoder_info
+            .lock()
+            .unwrap()
+            .fallback_reason
+            .is_some();
         if hardware_open_fell_back && !force_software {
             force_software = true;
         }
