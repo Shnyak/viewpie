@@ -1,3 +1,13 @@
+viewpie (0.2.22-fork-1) unstable; urgency=medium
+
+  * Generate and preserve a root-only restart token on first installation,
+    with one-time setup output for Home Assistant pairing.
+  * Add a token-protected update API and a systemd socket-activated root helper
+    that installs only the latest architecture-matched GitHub release after
+    checking the release asset SHA-256 digest.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.21-fork-1) unstable; urgency=medium
 
   * Expose the source commit timestamp in the status API so Home Assistant

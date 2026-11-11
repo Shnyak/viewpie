@@ -19,6 +19,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libavcodec-dev libavformat-dev libavutil-dev \
             libclang-dev clang
+      - name: Validate the package installer helper
+        run: |
+          python3 -m py_compile debian/viewpie-update-helper.py
+          sh -n debian/postinst
+          sh -n debian/postrm
       - name: Run unit tests serially (they share process-wide singleton state)
         run: cargo test --locked -- --test-threads=1
       - name: Compile the native FFmpeg/DRM renderer
