@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{DecoderPreference, DisplaySettings, FeedConfig, PanelConfig, ViewportConfig};
+use crate::config::{DecoderPreference, DisplaySettings, FeedConfig, PanelConfig, ScreenBootMode, ViewportConfig};
 use crate::feed::FeedState;
 
 /// `POST /api/fullscreen` body.
@@ -123,6 +123,7 @@ pub struct SettingsPatch {
     pub pause_off_screen: Option<bool>,
     pub debug_overlay: Option<bool>,
     pub startup_panel: Option<String>,
+    pub screen_boot_mode: Option<ScreenBootMode>,
     pub background: Option<String>,
     pub rotation_interval: Option<u64>,
     pub fullscreen_timeout: Option<u64>,
@@ -139,6 +140,8 @@ impl SettingsPatch {
             pause_off_screen: self.pause_off_screen.unwrap_or(base.pause_off_screen),
             debug_overlay: self.debug_overlay.unwrap_or(base.debug_overlay),
             startup_panel: self.startup_panel.clone().or_else(|| base.startup_panel.clone()),
+            screen_boot_mode: self.screen_boot_mode.unwrap_or(base.screen_boot_mode),
+            last_screen_on: base.last_screen_on,
             background: self
                 .background
                 .clone()
