@@ -20,7 +20,9 @@ use std::sync::{Arc, LazyLock};
 use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
-use crate::config::{Config, ConfigError, DisplaySettings, FeedConfig, PanelConfig, ScreenBootMode};
+use crate::config::{
+    Config, ConfigError, DisplaySettings, FeedConfig, PanelConfig, ScreenBootMode,
+};
 use crate::feed::FeedPool;
 use crate::kms::DisplayBackend;
 use crate::panel_manager::PanelManager;
