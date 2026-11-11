@@ -648,8 +648,8 @@ impl Card {
         display_width: u32,
         display_height: u32,
     ) -> Result<DebugOverlay, String> {
-        let width = display_width.min(640);
-        let height = display_height.min(176);
+        let width = display_width.saturating_sub(24).min(640);
+        let height = display_height.saturating_sub(24).min(176);
         if width < 120 || height < 48 {
             return Err("display is too small for a readable diagnostics overlay".into());
         }
@@ -705,7 +705,11 @@ impl Card {
         let char_width = 4 * scale;
         let line_height = 6 * scale;
         let max_chars = (overlay.width as usize).saturating_sub(20) / char_width;
-        for (line_index, line) in lines.iter().take(overlay.height as usize / line_height).enumerate() {
+        for (line_index, line) in lines
+            .iter()
+            .take(overlay.height as usize / line_height)
+            .enumerate()
+        {
             let y0 = 8 + line_index * line_height;
             for (char_index, ch) in line.chars().take(max_chars).enumerate() {
                 let glyph = glyph_3x5(ch.to_ascii_uppercase());
