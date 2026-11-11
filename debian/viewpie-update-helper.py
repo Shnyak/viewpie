@@ -36,6 +36,27 @@ def request_json(url):
         return json.load(response)
 
 
+def read_deb_field(package, field):
+    """Read one control field without relying on multi-field dpkg-deb formatting."""
+    output = subprocess.check_output(
+        ["dpkg-deb", "-f", str(package), field],
+        text=True,
+        timeout=10,
+    ).strip()
+    # dpkg-deb versions/platforms may print either the bare value or
+    # "Field: value". Accept both, but never silently accept multiple lines.
+    lines = output.splitlines()
+    if len(lines) != 1:
+        raise RuntimeError("Downloaded package metadata is incomplete")
+    value = lines[0].strip()
+    prefix = field + ":"
+    if value.startswith(prefix):
+        value = value[len(prefix):].strip()
+    if not value:
+        raise RuntimeError("Downloaded package metadata is incomplete")
+    return value
+
+
 def install_latest_release():
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock:
@@ -101,14 +122,9 @@ def install_latest_release():
             if hasher.hexdigest().lower() != digest.split(":", 1)[1].lower():
                 raise RuntimeError("Downloaded package SHA-256 does not match GitHub release metadata")
 
-            package_fields = subprocess.check_output(
-                ["dpkg-deb", "-f", str(package), "Package", "Version", "Architecture"],
-                text=True,
-                timeout=10,
-            ).splitlines()
-            if len(package_fields) != 3:
-                raise RuntimeError("Downloaded package metadata is incomplete")
-            package_name, package_version, package_arch = package_fields
+            package_name = read_deb_field(package, "Package")
+            package_version = read_deb_field(package, "Version")
+            package_arch = read_deb_field(package, "Architecture")
             if (
                 package_name != "viewpie"
                 or package_version.rsplit("-", 1)[0] != version
