@@ -115,6 +115,7 @@ pub struct SettingsPatch {
     pub spacing: Option<u32>,
     pub hardware_decoder_limit: Option<u32>,
     pub pause_off_screen: Option<bool>,
+    pub debug_overlay: Option<bool>,
     pub background: Option<String>,
     pub rotation_interval: Option<u64>,
     pub fullscreen_timeout: Option<u64>,
@@ -129,6 +130,7 @@ impl SettingsPatch {
                 .hardware_decoder_limit
                 .unwrap_or(base.hardware_decoder_limit),
             pause_off_screen: self.pause_off_screen.unwrap_or(base.pause_off_screen),
+            debug_overlay: self.debug_overlay.unwrap_or(base.debug_overlay),
             background: self
                 .background
                 .clone()
