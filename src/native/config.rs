@@ -5,6 +5,7 @@
 //! slot rather than a path into a document.
 
 use super::layout::Layout;
+use crate::config::DecoderPreference;
 use std::collections::HashMap;
 use std::time::Duration;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -27,6 +28,8 @@ pub struct Config {
     /// Whether to stop decoding for a display nobody is watching: one that
     /// is unplugged, or whose television is off or showing another input.
     pub pause_off_screen: bool,
+    /// Maximum simultaneous hardware-decoded grid streams.
+    pub hardware_decoder_limit: usize,
 }
 
 /// A camera, named once and shown wherever a viewport names it.
@@ -38,6 +41,8 @@ pub struct Feed {
     /// A sharper stream of the same camera, for showing it across the whole
     /// screen, where the one for a viewport would be scaled up soft.
     pub fullscreen_url: Option<String>,
+    /// Requested decode path for this camera.
+    pub decoder: DecoderPreference,
 }
 
 #[derive(Debug, Clone)]
@@ -112,11 +117,18 @@ impl Config {
                 "panels",
                 "active_panel",
                 "active_fullscreen",
+                "hardware_decoder_limit",
             ],
         )?;
 
         let feeds = feeds(&doc["feeds"])?;
-
+        let hardware_decoder_limit = match &doc["hardware_decoder_limit"] {
+            Yaml::BadValue => 6,
+            other => whole(other, "hardware_decoder_limit")? as usize,
+        };
+        if hardware_decoder_limit > 16 {
+            return Err("hardware_decoder_limit must be between 0 and 16".into());
+        }
         let rotation = match &doc["rotation_interval"] {
             Yaml::BadValue => DEFAULT_ROTATION_INTERVAL,
             other => rotation_interval(other)?,
@@ -192,6 +204,37 @@ impl Config {
             return Err("displays must be a list".into());
         }
 
+        let explicit_hardware: Vec<&str> = feeds
+            .iter()
+            .enumerate()
+            .filter(|(index, feed)| {
+                feed.decoder == DecoderPreference::Hardware
+                    && if panels.is_empty() {
+                        displays.iter().any(|display| {
+                            display
+                                .viewports
+                                .iter()
+                                .any(|viewport| viewport.feeds.contains(index))
+                        })
+                    } else {
+                        panels.values().any(|panel| {
+                            panel
+                                .viewports
+                                .iter()
+                                .any(|viewport| viewport.feeds.contains(index))
+                        })
+                    }
+            })
+            .map(|(_, feed)| feed.name.as_str())
+            .collect();
+        if explicit_hardware.len() > hardware_decoder_limit {
+            return Err(format!(
+                "{} cameras explicitly request hardware decoding ({}), but hardware_decoder_limit is {hardware_decoder_limit}",
+                explicit_hardware.len(),
+                explicit_hardware.join(", ")
+            ));
+        }
+
         if displays.is_empty() && panels.is_empty() {
             return Err("the configuration needs either displays or panels".into());
         }
@@ -212,6 +255,7 @@ impl Config {
             active_panel,
             active_fullscreen,
             pause_off_screen,
+            hardware_decoder_limit,
         };
         if let Some(camera) = &config.active_fullscreen {
             let active = config
@@ -266,13 +310,14 @@ fn feeds(y: &Yaml) -> Result<Vec<Feed>, String> {
                     name,
                     url: url.to_string(),
                     fullscreen_url: None,
+                    decoder: DecoderPreference::Auto,
                 });
             }
             let what = format!("the feed '{name}'");
             if v.as_hash().is_none() {
                 return Err(format!("{what} must be a url, or a mapping with one"));
             }
-            only(v, &what, &["url", "fullscreen_url"])?;
+            only(v, &what, &["url", "fullscreen_url", "decoder"])?;
             let url = |key: &str| match &v[key] {
                 Yaml::BadValue => Ok(None),
                 y => y
@@ -280,9 +325,20 @@ fn feeds(y: &Yaml) -> Result<Vec<Feed>, String> {
                     .map(|s| Some(s.to_string()))
                     .ok_or_else(|| format!("{what}'s {key} must be a url")),
             };
+            let decoder = match v["decoder"].as_str() {
+                None | Some("auto") => DecoderPreference::Auto,
+                Some("hardware") => DecoderPreference::Hardware,
+                Some("software") => DecoderPreference::Software,
+                Some(other) => {
+                    return Err(format!(
+                        "{what}'s decoder must be auto, hardware, or software; got '{other}'"
+                    ))
+                }
+            };
             Ok(Feed {
                 url: url("url")?.ok_or_else(|| format!("{what} needs a url"))?,
                 fullscreen_url: url("fullscreen_url")?,
+                decoder,
                 name,
             })
         })
@@ -587,6 +643,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn per_camera_decoder_policy_and_hardware_budget_are_parsed() {
+        let yaml = r#"
+hardware_decoder_limit: 2
+feeds:
+  priority_a: {url: rtsp://a, decoder: hardware}
+  priority_b: {url: rtsp://b, decoder: hardware}
+  cpu_only: {url: rtsp://c, decoder: software}
+  automatic: rtsp://d
+displays:
+  - viewports:
+      - {feeds: [priority_a, priority_b, cpu_only, automatic]}
+"#;
+        let config = Config::parse(yaml).unwrap();
+        assert_eq!(config.hardware_decoder_limit, 2);
+        let decoder = |name: &str| {
+            config
+                .feeds
+                .iter()
+                .find(|feed| feed.name == name)
+                .unwrap()
+                .decoder
+        };
+        assert_eq!(decoder("priority_a"), DecoderPreference::Hardware);
+        assert_eq!(decoder("priority_b"), DecoderPreference::Hardware);
+        assert_eq!(decoder("cpu_only"), DecoderPreference::Software);
+        assert_eq!(decoder("automatic"), DecoderPreference::Auto);
+
+        let over_limit = yaml.replace("hardware_decoder_limit: 2", "hardware_decoder_limit: 1");
+        let error = Config::parse(&over_limit).unwrap_err();
+        assert!(error.contains("priority_a") && error.contains("priority_b"));
+    }
+
+    #[test]
+    fn unknown_camera_decoder_policy_is_rejected() {
+        let yaml = r#"
+feeds:
+  a: {url: rtsp://a, decoder: gpu_magic}
+displays:
+  - viewports:
+      - {feeds: [a]}
+"#;
+        assert!(Config::parse(yaml)
+            .unwrap_err()
+            .contains("decoder must be auto, hardware, or software"));
+    }
+
+    #[test]
     fn active_fullscreen_must_name_a_camera_in_the_selected_panel() {
         let valid = r#"
 feeds:
@@ -626,9 +729,10 @@ panels:
     fn panels_config_may_keep_cameras_not_assigned_to_a_panel_yet() {
         let config = Config::parse(
             r#"
+hardware_decoder_limit: 0
 feeds:
   a: rtsp://a
-  spare: rtsp://spare
+  spare: {url: rtsp://spare, decoder: hardware}
 active_panel: yard
 panels:
   yard:

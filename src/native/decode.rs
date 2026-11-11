@@ -256,15 +256,15 @@ impl Decoder {
             // or one it cannot handle. A viewport showing a software-decoded
             // picture beats a viewport showing nothing.
             let hardware_result = if force_software {
-                Err("hardware decoder stalled in a previous session".to_string())
+                Err("software decoding selected by camera policy".to_string())
             } else {
                 open_codec(camera, codec, par, true, held, &mut unknown)
             };
             let (mut codec_ctx, hardware_fallback) = match hardware_result {
                 Ok(ctx) => (ctx, None),
-                Err(hw_error) if !software.is_null() && codec != software => {
+                Err(hw_error) if !software.is_null() && (force_software || codec != software) => {
                     match open_codec(camera, software, par, false, held, &mut unknown) {
-                        Ok(ctx) => (ctx, Some(hw_error)),
+                        Ok(ctx) => (ctx, if force_software { None } else { Some(hw_error) }),
                         Err(software_error) => {
                             return Err(close(format!(
                                 "hardware decoder {} failed: {}; software decoder {} failed: {}",
@@ -279,7 +279,7 @@ impl Decoder {
                 }
                 Err(e) => return Err(close(e).into()),
             };
-            let selected_codec = if hardware_fallback.is_some() {
+            let selected_codec = if force_software || hardware_fallback.is_some() {
                 software
             } else {
                 codec

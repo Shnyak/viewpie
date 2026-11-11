@@ -32,7 +32,7 @@ use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle};
 use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,11 +77,13 @@ struct Source {
     wanted: AtomicBool,
     /// True from just before opening a decoder until its session has fully
     /// returned and all decoder-owned frames/context have been dropped.
-    /// Panel changes use this as a barrier before opening the next panel.
+    /// Session shutdown uses this as a barrier before a decoder is replaced.
     session_active: AtomicBool,
     /// Serializes the wanted check with panel changes, so a feed cannot slip
     /// into Decoder::open after the renderer has observed it as idle.
     session_gate: Mutex<()>,
+    /// Grid feeds are persistent across panel changes; fullscreen feeds are on-demand.
+    persistent_grid: bool,
     /// Whether it is a camera's stream for fullscreen, connected only while
     /// a display shows it, and not worth a line in the report otherwise.
     on_demand: bool,
@@ -89,7 +91,7 @@ struct Source {
 
 impl Source {
     /// A feed that has not decoded anything yet.
-    fn new(name: &str) -> Self {
+    fn new(name: &str, persistent_grid: bool) -> Self {
         Source {
             name: name.to_string(),
             decoder_info: Mutex::new(DecoderInfo::default()),
@@ -98,12 +100,13 @@ impl Source {
             wanted: AtomicBool::new(true),
             session_active: AtomicBool::new(false),
             session_gate: Mutex::new(()),
+            persistent_grid,
             on_demand: false,
         }
     }
 
     /// Change demand under the same gate the feed thread uses before
-    /// opening a decoder. This makes stopping a panel a real barrier.
+    /// opening a decoder. This makes pausing/stopping a source a real barrier.
     fn set_wanted(&self, wanted: bool) {
         let _gate = self.session_gate.lock().unwrap();
         self.wanted.store(wanted, Ordering::Release);
@@ -121,8 +124,9 @@ impl Source {
     fn on_demand(name: &str) -> Self {
         Source {
             wanted: AtomicBool::new(false),
+            persistent_grid: false,
             on_demand: true,
-            ..Source::new(name)
+            ..Source::new(name, false)
         }
     }
 }
@@ -837,10 +841,15 @@ fn run(config: &Config) -> Result<(), String> {
 
     // One per feed, filled by that feed's thread and read wherever the feed
     // is shown.
+    // Choose hardware cameras before starting any worker. Explicit hardware
+    // preferences win; auto feeds fill the remaining slots in stable name order.
+    let hardware_feeds = hardware_feed_names(&config);
+
     let sources: Vec<Arc<Source>> = config
         .feeds
         .iter()
-        .map(|f| Arc::new(Source::new(&f.name)))
+        .enumerate()
+        .map(|(i, f)| Arc::new(Source::new(&f.name, config.displays_showing(i) > 0)))
         .collect();
     // And one per stream for fullscreen, by the feed's index, which connects
     // only while a display shows its camera that way.
@@ -911,11 +920,10 @@ fn run(config: &Config) -> Result<(), String> {
         walls.push(wall);
     }
 
-    // Only feeds used by the startup panel should connect. Other panel
-    // feeds are already represented by Source objects and will be enabled
-    // when their scene is selected.
+    // Every grid feed referenced by any panel starts once and stays wanted
+    // while at least one display is watched. Panel selection is presentation-only.
     for source in &sources {
-        let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+        let wanted = source.persistent_grid && walls.iter().any(|wall| wall.watched);
         source.set_wanted(wanted);
     }
 
@@ -932,17 +940,21 @@ fn run(config: &Config) -> Result<(), String> {
         // The same for its stream for fullscreen, which every display
         // showing the camera may show at once.
         let displays = config.displays_showing(i);
+        let hardware_allowed = hardware_feeds.contains(&feed.name);
         let streams = [
-            Some((&feed.url, source)),
-            feed.fullscreen_url.as_ref().zip(fullscreen[i].as_ref()),
+            Some((&feed.url, source, hardware_allowed)),
+            feed.fullscreen_url
+                .as_ref()
+                .zip(fullscreen[i].as_ref())
+                .map(|(url, source)| (url, source, false)),
         ];
-        for (url, source) in streams.into_iter().flatten() {
+        for (url, source, hardware_allowed) in streams.into_iter().flatten() {
             let url = url.clone();
             let card = card.clone();
             let source = source.clone();
             let stop = shutdown.clone();
             feed_threads.push(std::thread::spawn(move || {
-                feed_thread(&url, card, source, displays, stop)
+                feed_thread(&url, card, source, displays, hardware_allowed, stop)
             }));
         }
     }
@@ -1305,6 +1317,56 @@ fn scene_parts(
 /// something. It also means never committing while a flip is outstanding,
 /// which the kernel refuses with EBUSY. A loop that retried instead spun at
 /// thousands of rejections a second.
+/// Resolve per-camera preferences into a stable set of grid feeds that
+/// may attempt hardware decoding. Fullscreen streams are deliberately excluded.
+fn hardware_feed_names(config: &config::Config) -> HashSet<String> {
+    let mut selected: HashSet<String> = config
+        .feeds
+        .iter()
+        .enumerate()
+        .filter(|(index, feed)| {
+            config.displays_showing(*index) > 0
+                && feed.decoder == crate::config::DecoderPreference::Hardware
+        })
+        .map(|(_, feed)| feed.name.clone())
+        .collect();
+    let mut automatic: Vec<String> = config
+        .feeds
+        .iter()
+        .enumerate()
+        .filter(|(index, feed)| {
+            config.displays_showing(*index) > 0
+                && feed.decoder == crate::config::DecoderPreference::Auto
+        })
+        .map(|(_, feed)| feed.name.clone())
+        .collect();
+    automatic.sort();
+    let remaining = config.hardware_decoder_limit.saturating_sub(selected.len());
+    selected.extend(automatic.into_iter().take(remaining));
+    selected
+}
+
+fn source_wanted_for_state(
+    persistent_grid: bool,
+    watched: bool,
+    panel_transition_pending: bool,
+    shown_in_current_scene: bool,
+) -> bool {
+    watched && (persistent_grid || (!panel_transition_pending && shown_in_current_scene))
+}
+
+/// Whether a source must keep decoding for at least one watched wall.
+/// Grid sources are persistent across panel transitions; fullscreen-only
+/// sources remain tied to the currently presented scene.
+fn source_wanted_for_wall(source: &Arc<Source>, wall: &Wall) -> bool {
+    source_wanted_for_state(
+        source.persistent_grid,
+        wall.watched,
+        wall.pending_panel.is_some(),
+        wall.shows(source),
+    )
+}
+
 fn run_walls(
     card: &Arc<Card>,
     sources: &[Arc<Source>],
@@ -1349,23 +1411,21 @@ fn run_walls(
                                 wall.show(Mode::Grid);
                                 panel_changed |= had_pending || was != wall.mode;
                             } else {
-                                // Stop feeds unique to the old panel. Do not
-                                // prewarm the incoming panel: on a Pi 3 that
-                                // overlaps V4L2 decoder contexts and forces the
-                                // new feeds into software decoding.
+                                // Grid feeds are persistent across scenes.
+                                // Only an on-demand fullscreen stream is stopped
+                                // while the panel's KMS scene is replaced.
                                 wall.pending_panel = Some(panel.clone());
                             }
                         } else {
                             eprintln!("unknown panel requested: {panel}");
                         }
                     }
-                    // A pending panel owns the transition. Keep feeds required
-                    // by other displays alive, but stop this wall's old-only
-                    // feeds so their decoder contexts can be released.
+                    // A pending panel owns the transition. Keep every grid
+                    // feed alive; only stop fullscreen-only sessions.
                     for source in sources {
-                        let wanted = walls.iter().any(|wall| {
-                            wall.watched && wall.pending_panel.is_none() && wall.shows(source)
-                        });
+                        let wanted = walls
+                            .iter()
+                            .any(|wall| source_wanted_for_wall(source, wall));
                         source.set_wanted(wanted);
                     }
                 }
@@ -1431,12 +1491,9 @@ fn run_walls(
 
             if changed {
                 for source in sources {
-                    let wanted = walls.iter().any(|wall| {
-                        if !wall.watched {
-                            return false;
-                        }
-                        wall.pending_panel.is_none() && wall.shows(source)
-                    });
+                    let wanted = walls
+                        .iter()
+                        .any(|wall| source_wanted_for_wall(source, wall));
                     source.set_wanted(wanted);
                 }
             }
@@ -1454,10 +1511,10 @@ fn run_walls(
                 let mut ready = Vec::new();
                 if let Some(panel) = wall.pending_panel.clone() {
                     let scene = wall.panel_scenes[&panel].clone();
-                    // Do not detach the old scene until every feed it alone
-                    // needed has returned from feed_session. Returning drops
-                    // the Decoder; the old scanout references are then drained
-                    // by the detach flip below before the next panel is enabled.
+                    // Persistent grid decoders are deliberately not stopped.
+                    // Wait only for a fullscreen-only stream that was active
+                    // in the outgoing scene; its frame references still drain
+                    // through the detach flip below.
                     let outgoing_stopped = sources.iter().all(|source| {
                         !wall.shows(source)
                             || source.wanted.load(Ordering::Relaxed)
@@ -1602,7 +1659,9 @@ fn run_walls(
 
         if panel_changed {
             for source in sources {
-                let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+                let wanted = walls
+                    .iter()
+                    .any(|wall| wall.watched && (source.persistent_grid || wall.shows(source)));
                 source.set_wanted(wanted);
             }
         }
@@ -2080,6 +2139,7 @@ fn feed_thread(
     card: Arc<Card>,
     source: Arc<Source>,
     displays: usize,
+    hardware_allowed: bool,
     shutdown: Arc<AtomicBool>,
 ) {
     let mut backoff = Backoff::new();
@@ -2094,7 +2154,7 @@ fn feed_thread(
     let mut too_large = false;
     // Once a hardware decoder stalls, keep this feed on software rather than
     // reopening the same broken V4L2 session on every reconnect.
-    let mut force_software = false;
+    let mut force_software = !hardware_allowed;
 
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -2143,10 +2203,19 @@ fn feed_thread(
             force_software,
         );
         let paused = !source.wanted.load(Ordering::Relaxed);
-        // A later panel may have fewer simultaneous feeds, so let this camera
-        // try hardware again after it has been deliberately taken off screen.
+        let hardware_open_fell_back = source
+            .decoder_info
+            .lock()
+            .unwrap()
+            .fallback_reason
+            .is_some();
+        if hardware_open_fell_back && !force_software {
+            force_software = true;
+        }
+        // After a global pause, let a hardware-assigned camera retry its
+        // preferred path; panel changes no longer pause persistent grid feeds.
         if paused {
-            force_software = false;
+            force_software = !hardware_allowed;
         }
         if shutdown.load(Ordering::Acquire) {
             break;
@@ -2212,7 +2281,7 @@ fn feed_thread(
         // own.
         source.shown.lock().unwrap().take();
         // The decoder and its last published frame are both gone now. Only
-        // after this point may the next panel start opening hardware decoders.
+        // after this point may this source open its next decoder session.
         {
             let _gate = source.session_gate.lock().unwrap();
             source.session_active.store(false, Ordering::Release);
@@ -2895,6 +2964,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn explicit_hardware_preferences_win_before_auto_feeds() {
+        let config = config::Config::parse(
+            r#"
+hardware_decoder_limit: 2
+feeds:
+  z_priority: {url: rtsp://z, decoder: hardware}
+  b_auto: rtsp://b
+  a_auto: rtsp://a
+  cpu_only: {url: rtsp://c, decoder: software}
+  spare_priority: {url: rtsp://spare, decoder: hardware}
+displays:
+  - viewports:
+      - {feeds: [z_priority, b_auto, a_auto, cpu_only]}
+"#,
+        )
+        .unwrap();
+
+        let selected = hardware_feed_names(&config);
+        assert_eq!(selected.len(), 2);
+        assert!(selected.contains("z_priority"));
+        assert!(selected.contains("a_auto"));
+        assert!(!selected.contains("b_auto"));
+        assert!(!selected.contains("cpu_only"));
+        assert!(!selected.contains("spare_priority"));
+    }
+
+    #[test]
+    fn persistent_grid_sources_stay_wanted_during_panel_transition() {
+        // A watched wall may be replacing a panel whose outgoing scene did
+        // not contain this camera. Grid sources must remain alive anyway.
+        assert!(source_wanted_for_state(true, true, true, false));
+        // Fullscreen-only sources still stop when the outgoing scene is detached.
+        assert!(!source_wanted_for_state(false, true, true, false));
+        // A source used by the currently presented scene remains wanted.
+        assert!(source_wanted_for_state(false, true, false, true));
+        // Nothing should decode while the display is unwatched.
+        assert!(!source_wanted_for_state(true, false, false, false));
+    }
+
+    #[test]
     fn rtsp_user_information_is_redacted_from_logs() {
         assert_eq!(
             safe_url("rtsp://admin:secret@192.0.2.10:554/stream"),
@@ -3076,7 +3185,7 @@ mod tests {
         // Neither stream has a frame: a camera whose stream for fullscreen
         // is still connecting, and whose feed has gone away too.
         let camera = Camera {
-            feed: Arc::new(Source::new("porch")),
+            feed: Arc::new(Source::new("porch", true)),
             fullscreen: Some(Arc::new(Source::on_demand("porch (fullscreen)"))),
         };
         let size = (1920, 1080);
@@ -3148,7 +3257,7 @@ mod tests {
     fn rotating(feeds: usize, interval_ms: u64) -> Feeds {
         Feeds::new(
             (0..feeds)
-                .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}")))))
+                .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}"), true))))
                 .collect(),
             Duration::from_millis(interval_ms),
         )
@@ -3157,7 +3266,7 @@ mod tests {
     #[test]
     fn a_new_panel_starts_rotation_on_its_first_feed_at_switch_time() {
         let taps = (0..3)
-            .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}")))))
+            .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}"), true))))
             .collect();
         let start = Duration::from_secs(123);
         let feeds = Feeds::new_at(taps, Duration::from_secs(8), start);
@@ -3195,7 +3304,7 @@ mod tests {
     /// thousands.
     #[test]
     fn frames_published_off_screen_are_not_skipped() {
-        let mut tap = Tap::new(Arc::new(Source::new("feed")));
+        let mut tap = Tap::new(Arc::new(Source::new("feed", true)));
         tap.count(1, true);
         tap.count(2, false);
         tap.count(4, false);
@@ -3222,7 +3331,7 @@ mod tests {
     /// on screen in it, whether or not the one before was said.
     #[test]
     fn a_tap_reports_its_rate_since_the_report_before() {
-        let mut tap = Tap::new(Arc::new(Source::new("feed")));
+        let mut tap = Tap::new(Arc::new(Source::new("feed", true)));
         let s = Duration::from_secs;
         for gen in 1..=250 {
             tap.count(gen, gen == 1);
@@ -3335,7 +3444,7 @@ mod tests {
 
     #[test]
     fn shutdown_interrupts_decoder_backoff_independently_of_pause_state() {
-        let source = Source::new("camera");
+        let source = Source::new("camera", true);
         let shutdown = AtomicBool::new(true);
         assert!(source.wanted.load(Ordering::Relaxed));
         assert!(!nap(&source, Duration::from_secs(30), &shutdown));

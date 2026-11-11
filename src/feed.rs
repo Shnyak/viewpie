@@ -393,6 +393,7 @@ mod tests {
         FeedConfig {
             url: format!("rtsp://cam/{url_sfx}_sub"),
             fullscreen_url: Some(format!("rtsp://cam/{url_sfx}_main")),
+            decoder: crate::config::DecoderPreference::Auto,
         }
     }
 
@@ -502,6 +503,7 @@ mod tests {
             FeedConfig {
                 url: "rtsp://cam/g".into(),
                 fullscreen_url: None,
+                decoder: crate::config::DecoderPreference::Auto,
             },
         )
         .await;

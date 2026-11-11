@@ -12,6 +12,7 @@
 //!   background: "#000000"
 //!   pause_off_screen: true
 //!   fullscreen_timeout: 600
+//!   hardware_decoder_limit: 6
 //!
 //! feeds:
 //!   corridor:
@@ -57,6 +58,16 @@ pub enum ConfigError {
     Validation(String),
 }
 
+/// Requested decoder policy for one camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DecoderPreference {
+    Hardware,
+    Software,
+    #[default]
+    Auto,
+}
+
 /// A single RTSP feed (camera) definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeedConfig {
@@ -65,6 +76,9 @@ pub struct FeedConfig {
     /// Main-stream URL used in fullscreen view (high resolution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fullscreen_url: Option<String>,
+    /// Preferred decode path. Auto fills unused hardware slots after explicit preferences.
+    #[serde(default)]
+    pub decoder: DecoderPreference,
 }
 
 /// Display-wide settings that can be changed at runtime via the HTTP API.
@@ -73,6 +87,8 @@ pub struct FeedConfig {
 pub struct DisplaySettings {
     /// Grid separator thickness in pixels (0-20).
     pub spacing: u32,
+    /// Maximum simultaneous hardware-decoded grid streams (0-16).
+    pub hardware_decoder_limit: u32,
     /// Automatically pause decoding when the screen is switched off (CEC/KMS).
     pub pause_off_screen: bool,
     /// Background color, `#RRGGBB`.
@@ -87,6 +103,7 @@ impl Default for DisplaySettings {
     fn default() -> Self {
         Self {
             spacing: 1,
+            hardware_decoder_limit: 6,
             pause_off_screen: true,
             background: "#000000".to_string(),
             rotation_interval: 20,
@@ -98,6 +115,11 @@ impl Default for DisplaySettings {
 impl DisplaySettings {
     /// Validate value ranges; returns the first error found.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.hardware_decoder_limit > 16 {
+            return Err(ConfigError::Validation(
+                "hardware_decoder_limit must be between 0 and 16".into(),
+            ));
+        }
         if self.spacing > 20 {
             return Err(ConfigError::Validation(
                 "spacing must be between 0 and 20".into(),
@@ -370,6 +392,23 @@ impl Config {
 
     /// Validate cross-references between panels and feeds.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        let explicit_hardware: Vec<&str> = self
+            .feeds
+            .iter()
+            .filter(|(name, feed)| {
+                feed.decoder == DecoderPreference::Hardware
+                    && self.panels.values().any(|panel| panel.has_camera(name))
+            })
+            .map(|(name, _)| name.as_str())
+            .collect();
+        if explicit_hardware.len() > self.display.hardware_decoder_limit as usize {
+            return Err(ConfigError::Validation(format!(
+                "{} cameras explicitly request hardware decoding ({}), but hardware_decoder_limit is {}; increase the limit or mark some cameras software/auto",
+                explicit_hardware.len(),
+                explicit_hardware.join(", "),
+                self.display.hardware_decoder_limit
+            )));
+        }
         if self.panels.is_empty() {
             return Err(ConfigError::Validation(
                 "at least one panel must be defined".into(),
@@ -546,6 +585,61 @@ panels:
       - { slot: a, feeds: [a] }
 "#;
         assert!(Config::from_yaml(yaml).is_err());
+    }
+
+    #[test]
+    fn decoder_preferences_default_to_auto_and_hardware_budget_defaults_to_six() {
+        let yaml = r#"
+feeds:
+  a: {url: "rtsp://x/a"}
+panels:
+  p:
+    layout: |
+      a
+    viewports:
+      - {slot: a, feeds: [a]}
+"#;
+        let cfg = Config::from_yaml(yaml).unwrap();
+        assert_eq!(cfg.display.hardware_decoder_limit, 6);
+        assert_eq!(cfg.feeds["a"].decoder, DecoderPreference::Auto);
+    }
+
+    #[test]
+    fn explicit_hardware_preferences_cannot_exceed_budget() {
+        let yaml = r#"
+display:
+  hardware_decoder_limit: 1
+feeds:
+  a: {url: "rtsp://x/a", decoder: hardware}
+  b: {url: "rtsp://x/b", decoder: hardware}
+panels:
+  p:
+    layout: |
+      a b
+    viewports:
+      - {slot: a, feeds: [a]}
+      - {slot: b, feeds: [b]}
+"#;
+        let error = Config::from_yaml(yaml).unwrap_err().to_string();
+        assert!(error.contains("2 cameras explicitly request hardware decoding"));
+    }
+
+    #[test]
+    fn unused_hardware_camera_does_not_consume_budget() {
+        let yaml = r#"
+display:
+  hardware_decoder_limit: 0
+feeds:
+  a: {url: "rtsp://x/a"}
+  spare: {url: "rtsp://x/spare", decoder: hardware}
+panels:
+  p:
+    layout: |
+      a
+    viewports:
+      - {slot: a, feeds: [a]}
+"#;
+        assert!(Config::from_yaml(yaml).is_ok());
     }
 
     #[test]
