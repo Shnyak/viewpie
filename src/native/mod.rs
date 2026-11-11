@@ -3230,6 +3230,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fullscreen_can_resolve_a_registered_camera_outside_the_active_panel() {
+        let active = Arc::new(Source::new("active_camera", true));
+        let other = Arc::new(Source::new("other_camera", true));
+        let fullscreen_active = Arc::new(Source::on_demand("active_camera (fullscreen)"));
+        let fullscreen_other = Arc::new(Source::on_demand("other_camera (fullscreen)"));
+        let sources = vec![active.clone(), other.clone()];
+        let fullscreen_sources = vec![Some(fullscreen_active), Some(fullscreen_other)];
+        let mut cameras = vec![Camera {
+            feed: active.clone(),
+            fullscreen: fullscreen_sources[0].clone(),
+        }];
+
+        let index = ensure_camera_index(
+            &mut cameras,
+            &sources,
+            &fullscreen_sources,
+            "other_camera",
+        );
+
+        assert_eq!(index, Some(1));
+        assert_eq!(cameras.len(), 2);
+        assert!(Arc::ptr_eq(&cameras[1].feed, &other));
+        assert!(Arc::ptr_eq(
+            cameras[1].fullscreen.as_ref().unwrap(),
+            fullscreen_sources[1].as_ref().unwrap()
+        ));
+        assert_eq!(
+            ensure_camera_index(
+                &mut cameras,
+                &sources,
+                &fullscreen_sources,
+                "other_camera"
+            ),
+            Some(1),
+            "repeated requests must not duplicate camera entries"
+        );
+        assert_eq!(cameras.len(), 2);
+        assert_eq!(
+            ensure_camera_index(
+                &mut cameras,
+                &sources,
+                &fullscreen_sources,
+                "missing_camera"
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn explicit_hardware_preferences_win_before_auto_feeds() {
         let config = config::Config::parse(
             r#"
