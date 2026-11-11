@@ -9,6 +9,7 @@ use super::ffi::*;
 use std::ffi::CString;
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -91,7 +92,42 @@ impl From<&str> for Refused {
     }
 }
 
+/// Conservative ceiling for simultaneous Pi-class H.264 V4L2 sessions.
+/// Four concurrent hardware feeds have been observed to run reliably on
+/// RegMon01 (Raspberry Pi 3B+); additional feeds use software decoding rather
+/// than competing for CMA/V4L2 resources and failing unpredictably.
+const MAX_H264_V4L2_SESSIONS: usize = 4;
+static ACTIVE_H264_V4L2_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// RAII reservation held for the lifetime of a hardware H.264 decoder.
+struct H264V4l2Slot;
+
+impl H264V4l2Slot {
+    fn try_acquire() -> Option<Self> {
+        let mut active = ACTIVE_H264_V4L2_SESSIONS.load(Ordering::Acquire);
+        loop {
+            if active >= MAX_H264_V4L2_SESSIONS {
+                return None;
+            }
+            match ACTIVE_H264_V4L2_SESSIONS.compare_exchange_weak(
+                active, active + 1, Ordering::AcqRel, Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(Self),
+                Err(actual) => active = actual,
+            }
+        }
+    }
+}
+
+impl Drop for H264V4l2Slot {
+    fn drop(&mut self) {
+        ACTIVE_H264_V4L2_SESSIONS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 pub struct Decoder {
+    /// Keeps one bounded H.264 V4L2 hardware slot for this session.
+    _h264_v4l2_slot: Option<H264V4l2Slot>,
     fmt: *mut AVFormatContext,
     codec_ctx: *mut AVCodecContext,
     pkt: *mut AVPacket,
@@ -254,8 +290,19 @@ impl Decoder {
             // The hardware decoder may refuse the stream: too many sessions,
             // or one it cannot handle. A viewport showing a software-decoded
             // picture beats a viewport showing nothing.
+            // Reserve a bounded hardware slot before opening h264_v4l2m2m.
+            // Feeds beyond the budget use the normal software fallback path.
+            let mut h264_v4l2_slot = if !force_software && m2m_name(codec).is_some() {
+                H264V4l2Slot::try_acquire()
+            } else {
+                None
+            };
             let hardware_result = if force_software {
                 Err("hardware decoder stalled in a previous session".to_string())
+            } else if m2m_name(codec).is_some() && h264_v4l2_slot.is_none() {
+                Err(format!(
+                    "H.264 V4L2 hardware decoder budget exhausted ({MAX_H264_V4L2_SESSIONS} active sessions)"
+                ))
             } else {
                 open_codec(codec, par, true, held, &mut unknown)
             };
@@ -278,6 +325,11 @@ impl Decoder {
                 }
                 Err(e) => return Err(close(e).into()),
             };
+            // Keep the reservation only when the selected decoder is
+            // actually hardware-backed; release it immediately on fallback.
+            if hardware_fallback.is_some() {
+                h264_v4l2_slot.take();
+            }
             let selected_codec = if hardware_fallback.is_some() {
                 software
             } else {
@@ -300,6 +352,7 @@ impl Decoder {
             }
 
             Ok(Decoder {
+                _h264_v4l2_slot: h264_v4l2_slot,
                 unused,
                 decoder_name,
                 hardware_fallback,
