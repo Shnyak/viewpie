@@ -129,7 +129,7 @@ def install_latest_release(preserve_log=False):
         if not preserve_log:
             LOG_PATH.write_text("", encoding="utf-8")
             os.chmod(LOG_PATH, 0o644)
-        event("release", "Получение метаданных последнего релиза")
+        event("release", "$ GET " + RELEASE_API)
         release = request_json(RELEASE_API)
         tag = str(release.get("tag_name", ""))
         version = tag[1:] if tag.startswith("v") else tag
@@ -173,7 +173,7 @@ def install_latest_release(preserve_log=False):
         if not digest.startswith("sha256:") or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
             raise RuntimeError("GitHub release asset has no verifiable SHA-256 digest")
 
-        event("download", "Загрузка Debian-пакета " + str(asset.get("name", "")))
+        event("download", "$ GET " + str(asset["browser_download_url"]) + " -> " + str(asset.get("name", "")))
         CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix="viewpie-", suffix=".deb", dir=CACHE_DIR)
         os.fchmod(fd, 0o600)
