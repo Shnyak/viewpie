@@ -57,6 +57,16 @@ pub enum ConfigError {
     Validation(String),
 }
 
+/// Requested decoder policy for one camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DecoderPreference {
+    Hardware,
+    Software,
+    #[default]
+    Auto,
+}
+
 /// A single RTSP feed (camera) definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeedConfig {
@@ -65,6 +75,9 @@ pub struct FeedConfig {
     /// Main-stream URL used in fullscreen view (high resolution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fullscreen_url: Option<String>,
+    /// Preferred decode path. Auto fills unused hardware slots after explicit preferences.
+    #[serde(default)]
+    pub decoder: DecoderPreference,
 }
 
 /// Display-wide settings that can be changed at runtime via the HTTP API.
@@ -284,6 +297,9 @@ pub struct DefaultsConfig {
 /// Top-level configuration document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// Maximum number of simultaneous hardware-decoded grid streams (0-16).
+    #[serde(default = "default_hardware_decoder_limit")]
+    pub hardware_decoder_limit: usize,
     #[serde(default)]
     pub display: DisplaySettings,
     #[serde(default)]
@@ -293,6 +309,8 @@ pub struct Config {
     #[serde(default)]
     pub defaults: DefaultsConfig,
 }
+
+fn default_hardware_decoder_limit() -> usize { 6 }
 
 impl Config {
     /// Load and validate configuration from a YAML string.
@@ -370,6 +388,20 @@ impl Config {
 
     /// Validate cross-references between panels and feeds.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.hardware_decoder_limit > 16 {
+            return Err(ConfigError::Validation(
+                "hardware_decoder_limit must be between 0 and 16".into(),
+            ));
+        }
+        let explicit_hardware = self.feeds.values()
+            .filter(|feed| feed.decoder == DecoderPreference::Hardware)
+            .count();
+        if explicit_hardware > self.hardware_decoder_limit {
+            return Err(ConfigError::Validation(format!(
+                "{explicit_hardware} cameras explicitly request hardware decoding, but hardware_decoder_limit is {}; increase the limit or mark some cameras software/auto",
+                self.hardware_decoder_limit
+            )));
+        }
         if self.panels.is_empty() {
             return Err(ConfigError::Validation(
                 "at least one panel must be defined".into(),
