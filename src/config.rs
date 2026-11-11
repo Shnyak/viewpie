@@ -12,6 +12,7 @@
 //!   background: "#000000"
 //!   pause_off_screen: true
 //!   fullscreen_timeout: 600
+//!   hardware_decoder_limit: 6
 //!
 //! feeds:
 //!   corridor:
