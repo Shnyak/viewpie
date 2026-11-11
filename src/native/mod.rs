@@ -2343,6 +2343,7 @@ fn feed_session(
     let display_url = safe_url(url);
     let mut dec = Decoder::open(
         url,
+        name,
         source.stats.clone(),
         limit,
         frames_held(displays),
