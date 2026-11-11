@@ -938,8 +938,9 @@ fn run(config: &Config) -> Result<(), String> {
             let camera_zpos = wall
                 .plane_pool
                 .iter()
-                .filter_map(|&p| card.plane_zpos(p))
-                .max();
+                .map(|&p| card.plane_zpos(p))
+                .collect::<Option<Vec<_>>>()
+                .and_then(|positions| positions.into_iter().max());
             let usable = card.overlay_planes(wall.out.crtc).unwrap_or_default();
             let candidate = camera_zpos.and_then(|highest_camera| {
                 spare.iter().position(|plane| {
