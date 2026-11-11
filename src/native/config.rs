@@ -642,7 +642,14 @@ displays:
 "#;
         let config = Config::parse(yaml).unwrap();
         assert_eq!(config.hardware_decoder_limit, 2);
-        let decoder = |name: &str| config.feeds.iter().find(|feed| feed.name == name).unwrap().decoder;
+        let decoder = |name: &str| {
+            config
+                .feeds
+                .iter()
+                .find(|feed| feed.name == name)
+                .unwrap()
+                .decoder
+        };
         assert_eq!(decoder("priority_a"), DecoderPreference::Hardware);
         assert_eq!(decoder("priority_b"), DecoderPreference::Hardware);
         assert_eq!(decoder("cpu_only"), DecoderPreference::Software);
@@ -662,7 +669,9 @@ displays:
   - viewports:
       - {feeds: [a]}
 "#;
-        assert!(Config::parse(yaml).unwrap_err().contains("decoder must be auto, hardware, or software"));
+        assert!(Config::parse(yaml)
+            .unwrap_err()
+            .contains("decoder must be auto, hardware, or software"));
     }
 
     #[test]
