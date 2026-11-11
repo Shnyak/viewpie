@@ -725,13 +725,13 @@ defaults:
         // Camera c belongs only to panel p2; p1 is still active.
         mgr.enter_fullscreen("c").await.unwrap();
         assert_eq!(mgr.fullscreen_camera().await.as_deref(), Some("c"));
-        assert!(pool.fullscreen_is_running("c").await);
+        assert!(pool.get("c").await.unwrap().fullscreen_running);
         mgr.leave_fullscreen().await.unwrap();
         assert_eq!(mgr.fullscreen_camera().await, None);
 
         mgr.enter_fullscreen("a").await.unwrap();
         assert_eq!(mgr.fullscreen_camera().await.as_deref(), Some("a"));
-        assert!(pool.fullscreen_is_running("a").await);
+        assert!(pool.get("a").await.unwrap().fullscreen_running);
         mgr.leave_fullscreen().await.unwrap();
         assert_eq!(mgr.fullscreen_camera().await, None);
     }
