@@ -640,7 +640,6 @@ impl Card {
         }
     }
 
-
     /// Allocate a small opaque XRGB overlay on a plane already proven to be
     /// above every camera plane. It is optional: callers keep the camera wall
     /// unchanged if allocation or a later atomic commit is refused.
