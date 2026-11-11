@@ -145,7 +145,7 @@ pub struct StatusResponse {
     /// Version of the Viewpie package used to build this running binary.
     pub software_version: &'static str,
     /// ISO 8601 timestamp of the source commit used for this build.
-    pub software_build_date: &'static str,
+    pub software_build_date: String,
     pub paused: bool,
     pub pause_off_screen: bool,
     pub screen_off: bool,
@@ -156,6 +156,8 @@ pub struct StatusResponse {
     pub layout: String,
     pub spacing: u32,
     pub uptime_seconds: i64,
+    /// Human-readable uptime, suitable for dashboards.
+    pub uptime: String,
     pub cpu_temp_c: Option<f64>,
     pub cpu_load_percent: Option<f64>,
     pub load_average_1m: Option<f64>,
@@ -270,7 +272,7 @@ mod tests {
     fn status_response_includes_build_package_version() {
         let status = StatusResponse {
             software_version: env!("CARGO_PKG_VERSION"),
-            software_build_date: env!("VIEWPIE_BUILD_DATE"),
+            software_build_date: env!("VIEWPIE_BUILD_DATE").to_string(),
             paused: false,
             pause_off_screen: true,
             screen_off: false,
@@ -281,6 +283,7 @@ mod tests {
             layout: String::new(),
             spacing: 2,
             uptime_seconds: 1,
+            uptime: "менее минуты".into(),
             cpu_temp_c: None,
             cpu_load_percent: None,
             load_average_1m: None,
