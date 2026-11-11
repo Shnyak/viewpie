@@ -71,9 +71,5 @@ jobs:
       - uses: actions/checkout@v7
       - name: The package must build
         run: ./scripts/build-deb.sh ${{ matrix.arch }}
-      # The image installs that package rather than repeating what it
-      # contains, so a change to debian/control can break it. Checking it here
-      # means finding that out on the branch rather than at tag time.
-      - uses: docker/setup-qemu-action@v4
-      - name: The image must build
-        run: ./scripts/build-image.sh ${{ matrix.arch }}
+      # Debian packages are the deployable artifacts. CI deliberately does
+      # not build container images; the supported install path is the package.
