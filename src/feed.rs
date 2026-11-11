@@ -256,7 +256,8 @@ impl FeedPool {
     }
 
     /// Start the fullscreen (main stream) decoder for a feed. The grid
-    /// decoder keeps running (shared reference intact).
+    /// decoder keeps running (shared reference intact). If no separate main
+    /// stream URL is configured, reuse the camera's only configured URL.
     pub async fn start_fullscreen(&self, name: &str) -> Result<DecoderHandle, PoolError> {
         let url = {
             let g = self.feeds.read().await;
@@ -264,7 +265,7 @@ impl FeedPool {
             st.config
                 .fullscreen_url
                 .clone()
-                .ok_or(PoolError::NoFullscreenUrl(name.to_string()))?
+                .unwrap_or_else(|| st.config.url.clone())
         };
         let h = start_decoder(&format!("{name}#fullscreen"), &url).await;
         let mut fd = self.fullscreen_decoders.lock().await;
@@ -497,7 +498,7 @@ mod tests {
         assert!(pool.is_running("f").await, "grid decoder unaffected");
         pool.stop_fullscreen("f").await;
         assert!(h.is_stopped().await);
-        // no fullscreen_url configured
+        // A camera with only one configured stream remains viewable fullscreen.
         pool.add_feed(
             "g".into(),
             FeedConfig {
@@ -507,7 +508,8 @@ mod tests {
             },
         )
         .await;
-        let err = pool.start_fullscreen("g").await.unwrap_err();
-        assert!(matches!(err, PoolError::NoFullscreenUrl(_)));
+        let fallback = pool.start_fullscreen("g").await.unwrap();
+        assert_eq!(fallback.url(), "rtsp://cam/g");
+        pool.stop_fullscreen("g").await;
     }
 }
