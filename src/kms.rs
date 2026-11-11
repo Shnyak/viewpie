@@ -100,6 +100,36 @@ pub async fn check_screen_via_kms() -> bool {
         .unwrap_or(true)
 }
 
+/// Whether any DRM connector reports a physically connected display.
+///
+/// Unlike DPMS, connector status changes when a monitor is unplugged or its
+/// power supply drops HDMI hot-plug detect. None means this sysfs tree does
+/// not expose connector status, so callers must retain the DPMS-only fallback.
+fn probe_display_connected(sysfs_root: &Path) -> Option<bool> {
+    let entries = std::fs::read_dir(sysfs_root.join("drm")).ok()?;
+    let mut found = false;
+    let mut connected = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if let Ok(status) = std::fs::read_to_string(path.join("status")) {
+            found = true;
+            connected |= status.trim().eq_ignore_ascii_case("connected");
+        }
+    }
+    found.then_some(connected)
+}
+
+/// Read physical connector presence without taking ownership of the DRM card.
+pub async fn check_display_connected_via_kms() -> Option<bool> {
+    let root = std::env::var("VIEWPIE_SYSFS_ROOT").unwrap_or_else(|_| "/sys/class".into());
+    tokio::task::spawn_blocking(move || probe_display_connected(Path::new(&root)))
+        .await
+        .unwrap_or(None)
+}
+
 /// Locate the DRM device node used by the hardware backend.
 pub fn find_drm_device() -> Option<PathBuf> {
     for cand in ["/dev/dri/card0", "/dev/dri/renderD128"] {
@@ -253,6 +283,24 @@ mod tests {
 
         std::fs::write(conn.join("dpms"), "Off\n").unwrap();
         assert!(!probe_dpms(dir.path()));
+    }
+
+    #[test]
+    fn connector_probe_tracks_physical_disconnect_and_reconnect() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = dir.path().join("drm").join("card0-HDMI-A-1");
+        std::fs::create_dir_all(&conn).unwrap();
+        std::fs::write(conn.join("status"), "disconnected\n").unwrap();
+        assert_eq!(probe_display_connected(dir.path()), Some(false));
+
+        std::fs::write(conn.join("status"), "connected\n").unwrap();
+        assert_eq!(probe_display_connected(dir.path()), Some(true));
+    }
+
+    #[test]
+    fn connector_probe_returns_none_when_status_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(probe_display_connected(dir.path()), None);
     }
 
     #[test]
