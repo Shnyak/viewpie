@@ -32,7 +32,7 @@ use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle};
 use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,6 +82,8 @@ struct Source {
     /// Serializes the wanted check with panel changes, so a feed cannot slip
     /// into Decoder::open after the renderer has observed it as idle.
     session_gate: Mutex<()>,
+    /// Grid feeds are persistent across panel changes; fullscreen feeds are on-demand.
+    persistent_grid: bool,
     /// Whether it is a camera's stream for fullscreen, connected only while
     /// a display shows it, and not worth a line in the report otherwise.
     on_demand: bool,
@@ -89,7 +91,7 @@ struct Source {
 
 impl Source {
     /// A feed that has not decoded anything yet.
-    fn new(name: &str) -> Self {
+    fn new(name: &str, persistent_grid: bool) -> Self {
         Source {
             name: name.to_string(),
             decoder_info: Mutex::new(DecoderInfo::default()),
@@ -98,6 +100,7 @@ impl Source {
             wanted: AtomicBool::new(true),
             session_active: AtomicBool::new(false),
             session_gate: Mutex::new(()),
+            persistent_grid,
             on_demand: false,
         }
     }
@@ -121,8 +124,9 @@ impl Source {
     fn on_demand(name: &str) -> Self {
         Source {
             wanted: AtomicBool::new(false),
+            persistent_grid: false,
             on_demand: true,
-            ..Source::new(name)
+            ..Source::new(name, false)
         }
     }
 }
@@ -837,10 +841,28 @@ fn run(config: &Config) -> Result<(), String> {
 
     // One per feed, filled by that feed's thread and read wherever the feed
     // is shown.
+    // Choose hardware cameras before starting any worker. Explicit hardware
+    // preferences win; auto feeds fill the remaining slots in stable name order.
+    let mut hardware_feeds: HashSet<String> = config.feeds.iter()
+        .filter(|feed| feed.decoder == crate::config::DecoderPreference::Hardware)
+        .map(|feed| feed.name.clone())
+        .collect();
+    let mut automatic_feeds: Vec<String> = config.feeds.iter()
+        .filter(|feed| feed.decoder == crate::config::DecoderPreference::Auto)
+        .filter(|feed| config.displays_showing(
+            config.feeds.iter().position(|candidate| candidate.name == feed.name).unwrap_or(usize::MAX)
+        ) > 0)
+        .map(|feed| feed.name.clone())
+        .collect();
+    automatic_feeds.sort();
+    let available_slots = config.hardware_decoder_limit.saturating_sub(hardware_feeds.len());
+    hardware_feeds.extend(automatic_feeds.into_iter().take(available_slots));
+
     let sources: Vec<Arc<Source>> = config
         .feeds
         .iter()
-        .map(|f| Arc::new(Source::new(&f.name)))
+        .enumerate()
+        .map(|(i, f)| Arc::new(Source::new(&f.name, config.displays_showing(i) > 0)))
         .collect();
     // And one per stream for fullscreen, by the feed's index, which connects
     // only while a display shows its camera that way.
@@ -915,7 +937,7 @@ fn run(config: &Config) -> Result<(), String> {
     // feeds are already represented by Source objects and will be enabled
     // when their scene is selected.
     for source in &sources {
-        let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+        let wanted = source.persistent_grid && walls.iter().any(|wall| wall.watched);
         source.set_wanted(wanted);
     }
 
@@ -932,17 +954,19 @@ fn run(config: &Config) -> Result<(), String> {
         // The same for its stream for fullscreen, which every display
         // showing the camera may show at once.
         let displays = config.displays_showing(i);
+        let hardware_allowed = hardware_feeds.contains(&feed.name);
         let streams = [
-            Some((&feed.url, source)),
-            feed.fullscreen_url.as_ref().zip(fullscreen[i].as_ref()),
+            Some((&feed.url, source, hardware_allowed)),
+            feed.fullscreen_url.as_ref().zip(fullscreen[i].as_ref())
+                .map(|(url, source)| (url, source, false)),
         ];
-        for (url, source) in streams.into_iter().flatten() {
+        for (url, source, hardware_allowed) in streams.into_iter().flatten() {
             let url = url.clone();
             let card = card.clone();
             let source = source.clone();
             let stop = shutdown.clone();
             feed_threads.push(std::thread::spawn(move || {
-                feed_thread(&url, card, source, displays, stop)
+                feed_thread(&url, card, source, displays, hardware_allowed, stop)
             }));
         }
     }
@@ -1364,7 +1388,8 @@ fn run_walls(
                     // feeds so their decoder contexts can be released.
                     for source in sources {
                         let wanted = walls.iter().any(|wall| {
-                            wall.watched && wall.pending_panel.is_none() && wall.shows(source)
+                            wall.watched && (source.persistent_grid ||
+                                (wall.pending_panel.is_none() && wall.shows(source)))
                         });
                         source.set_wanted(wanted);
                     }
@@ -1432,10 +1457,8 @@ fn run_walls(
             if changed {
                 for source in sources {
                     let wanted = walls.iter().any(|wall| {
-                        if !wall.watched {
-                            return false;
-                        }
-                        wall.pending_panel.is_none() && wall.shows(source)
+                        wall.watched && (source.persistent_grid ||
+                            (wall.pending_panel.is_none() && wall.shows(source)))
                     });
                     source.set_wanted(wanted);
                 }
@@ -1602,7 +1625,9 @@ fn run_walls(
 
         if panel_changed {
             for source in sources {
-                let wanted = walls.iter().any(|wall| wall.watched && wall.shows(source));
+                let wanted = walls.iter().any(|wall| {
+                    wall.watched && (source.persistent_grid || wall.shows(source))
+                });
                 source.set_wanted(wanted);
             }
         }
@@ -2080,6 +2105,7 @@ fn feed_thread(
     card: Arc<Card>,
     source: Arc<Source>,
     displays: usize,
+    hardware_allowed: bool,
     shutdown: Arc<AtomicBool>,
 ) {
     let mut backoff = Backoff::new();
@@ -2094,7 +2120,7 @@ fn feed_thread(
     let mut too_large = false;
     // Once a hardware decoder stalls, keep this feed on software rather than
     // reopening the same broken V4L2 session on every reconnect.
-    let mut force_software = false;
+    let mut force_software = !hardware_allowed;
 
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -2146,7 +2172,7 @@ fn feed_thread(
         // A later panel may have fewer simultaneous feeds, so let this camera
         // try hardware again after it has been deliberately taken off screen.
         if paused {
-            force_software = false;
+            force_software = !hardware_allowed;
         }
         if shutdown.load(Ordering::Acquire) {
             break;
