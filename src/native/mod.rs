@@ -77,7 +77,7 @@ struct Source {
     wanted: AtomicBool,
     /// True from just before opening a decoder until its session has fully
     /// returned and all decoder-owned frames/context have been dropped.
-    /// Panel changes use this as a barrier before opening the next panel.
+    /// Session shutdown uses this as a barrier before a decoder is replaced.
     session_active: AtomicBool,
     /// Serializes the wanted check with panel changes, so a feed cannot slip
     /// into Decoder::open after the renderer has observed it as idle.
@@ -106,7 +106,7 @@ impl Source {
     }
 
     /// Change demand under the same gate the feed thread uses before
-    /// opening a decoder. This makes stopping a panel a real barrier.
+    /// opening a decoder. This makes pausing/stopping a source a real barrier.
     fn set_wanted(&self, wanted: bool) {
         let _gate = self.session_gate.lock().unwrap();
         self.wanted.store(wanted, Ordering::Release);
@@ -2181,8 +2181,12 @@ fn feed_thread(
             force_software,
         );
         let paused = !source.wanted.load(Ordering::Relaxed);
-        // A later panel may have fewer simultaneous feeds, so let this camera
-        // try hardware again after it has been deliberately taken off screen.
+        let hardware_open_fell_back = source.decoder_info.lock().unwrap().fallback_reason.is_some();
+        if hardware_open_fell_back && !force_software {
+            force_software = true;
+        }
+        // After a global pause, let a hardware-assigned camera retry its
+        // preferred path; panel changes no longer pause persistent grid feeds.
         if paused {
             force_software = !hardware_allowed;
         }
@@ -2250,7 +2254,7 @@ fn feed_thread(
         // own.
         source.shown.lock().unwrap().take();
         // The decoder and its last published frame are both gone now. Only
-        // after this point may the next panel start opening hardware decoders.
+        // after this point may this source open its next decoder session.
         {
             let _gate = source.session_gate.lock().unwrap();
             source.session_active.store(false, Ordering::Release);
