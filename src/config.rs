@@ -354,6 +354,9 @@ impl Config {
             cfg.display.startup_panel = cfg.defaults.panel.clone();
         }
         cfg.validate()?;
+        if cfg.display.startup_panel.is_none() {
+            cfg.display.startup_panel = Some(cfg.initial_panel());
+        }
         Ok(cfg)
     }
 
@@ -510,9 +513,7 @@ impl Config {
                 return p.clone();
             }
         }
-        let mut keys: Vec<&String> = self.panels.keys().collect();
-        keys.sort();
-        keys.into_iter().next().cloned().unwrap_or_default()
+        self.ordered_panel_ids().into_iter().next().unwrap_or_default()
     }
 }
 
