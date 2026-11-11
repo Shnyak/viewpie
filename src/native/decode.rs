@@ -109,7 +109,10 @@ impl H264V4l2Slot {
                 return None;
             }
             match ACTIVE_H264_V4L2_SESSIONS.compare_exchange_weak(
-                active, active + 1, Ordering::AcqRel, Ordering::Acquire,
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
             ) {
                 Ok(_) => return Some(Self),
                 Err(actual) => active = actual,
