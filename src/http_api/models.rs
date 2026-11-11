@@ -125,7 +125,9 @@ impl SettingsPatch {
     pub fn merge(&self, base: &DisplaySettings) -> DisplaySettings {
         DisplaySettings {
             spacing: self.spacing.unwrap_or(base.spacing),
-            hardware_decoder_limit: self.hardware_decoder_limit.unwrap_or(base.hardware_decoder_limit),
+            hardware_decoder_limit: self
+                .hardware_decoder_limit
+                .unwrap_or(base.hardware_decoder_limit),
             pause_off_screen: self.pause_off_screen.unwrap_or(base.pause_off_screen),
             background: self
                 .background
