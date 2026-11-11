@@ -375,7 +375,9 @@ impl Card {
     pub fn plane_zpos(&self, plane: plane::Handle) -> Option<u64> {
         let props = self.get_properties(plane).ok()?;
         for (id, value) in props {
-            let info = self.get_property(id).ok()?;
+            let Ok(info) = self.get_property(id) else {
+                continue;
+            };
             if info.name().to_bytes() == b"zpos" {
                 return Some(value);
             }
@@ -649,7 +651,7 @@ impl Card {
         display_height: u32,
     ) -> Result<DebugOverlay, String> {
         let width = display_width.saturating_sub(24).min(640);
-        let height = display_height.saturating_sub(24).min(176);
+        let height = display_height.saturating_sub(24).min(224);
         if width < 120 || height < 48 {
             return Err("display is too small for a readable diagnostics overlay".into());
         }
@@ -701,7 +703,13 @@ impl Card {
         for pixel in bytes.chunks_exact_mut(4) {
             pixel.copy_from_slice(&0xff10_1820u32.to_le_bytes());
         }
-        let scale = if overlay.width >= 320 { 2usize } else { 1usize };
+        let scale = if overlay.width >= 480 && overlay.height >= 216 {
+            3usize
+        } else if overlay.width >= 320 {
+            2usize
+        } else {
+            1usize
+        };
         let char_width = 4 * scale;
         let line_height = 6 * scale;
         let max_chars = (overlay.width as usize).saturating_sub(20) / char_width;
