@@ -86,6 +86,8 @@ pub struct FeedConfig {
 pub struct DisplaySettings {
     /// Grid separator thickness in pixels (0-20).
     pub spacing: u32,
+    /// Maximum simultaneous hardware-decoded grid streams (0-16).
+    pub hardware_decoder_limit: u32,
     /// Automatically pause decoding when the screen is switched off (CEC/KMS).
     pub pause_off_screen: bool,
     /// Background color, `#RRGGBB`.
@@ -100,6 +102,7 @@ impl Default for DisplaySettings {
     fn default() -> Self {
         Self {
             spacing: 1,
+            hardware_decoder_limit: 6,
             pause_off_screen: true,
             background: "#000000".to_string(),
             rotation_interval: 20,
@@ -111,6 +114,11 @@ impl Default for DisplaySettings {
 impl DisplaySettings {
     /// Validate value ranges; returns the first error found.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.hardware_decoder_limit > 16 {
+            return Err(ConfigError::Validation(
+                "hardware_decoder_limit must be between 0 and 16".into(),
+            ));
+        }
         if self.spacing > 20 {
             return Err(ConfigError::Validation(
                 "spacing must be between 0 and 20".into(),
@@ -297,9 +305,6 @@ pub struct DefaultsConfig {
 /// Top-level configuration document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Config {
-    /// Maximum number of simultaneous hardware-decoded grid streams (0-16).
-    #[serde(default = "default_hardware_decoder_limit")]
-    pub hardware_decoder_limit: usize,
     #[serde(default)]
     pub display: DisplaySettings,
     #[serde(default)]
@@ -309,8 +314,6 @@ pub struct Config {
     #[serde(default)]
     pub defaults: DefaultsConfig,
 }
-
-fn default_hardware_decoder_limit() -> usize { 6 }
 
 impl Config {
     /// Load and validate configuration from a YAML string.
@@ -388,18 +391,13 @@ impl Config {
 
     /// Validate cross-references between panels and feeds.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.hardware_decoder_limit > 16 {
-            return Err(ConfigError::Validation(
-                "hardware_decoder_limit must be between 0 and 16".into(),
-            ));
-        }
         let explicit_hardware = self.feeds.values()
             .filter(|feed| feed.decoder == DecoderPreference::Hardware)
             .count();
-        if explicit_hardware > self.hardware_decoder_limit {
+        if explicit_hardware > self.display.hardware_decoder_limit as usize {
             return Err(ConfigError::Validation(format!(
                 "{explicit_hardware} cameras explicitly request hardware decoding, but hardware_decoder_limit is {}; increase the limit or mark some cameras software/auto",
-                self.hardware_decoder_limit
+                self.display.hardware_decoder_limit
             )));
         }
         if self.panels.is_empty() {
