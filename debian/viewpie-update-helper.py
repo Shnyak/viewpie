@@ -109,7 +109,7 @@ def read_deb_field(package, field):
     return value
 
 
-def install_latest_release():
+def install_latest_release(preserve_log=False):
     _write_status(
         status="running", phase="starting", message="Запуск установщика",
         started_at=__import__("datetime").datetime.now(
@@ -117,8 +117,9 @@ def install_latest_release():
         ).isoformat(),
         finished_at=None, exit_code=None,
     )
-    LOG_PATH.write_text("", encoding="utf-8")
-    os.chmod(LOG_PATH, 0o644)
+    if not preserve_log:
+        LOG_PATH.write_text("", encoding="utf-8")
+        os.chmod(LOG_PATH, 0o644)
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock:
         try:
@@ -233,6 +234,8 @@ def install_latest_release():
 
 
 def main():
+    if sys.argv[1:] == ["--apply", "--preserve-log"]:
+        return install_latest_release(preserve_log=True)
     if sys.argv[1:] == ["--apply"]:
         return install_latest_release()
 
@@ -248,7 +251,10 @@ def main():
         # package hooks may restart Viewpie and the socket listener, but must
         # not kill the worker that is performing the upgrade.
         unit = "viewpie-update-worker-" + uuid.uuid4().hex
-        event("queue", "$ systemd-run --unit=" + unit + " /usr/bin/python3 update-helper.py --apply")
+        STATE_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+        LOG_PATH.write_text("", encoding="utf-8")
+        os.chmod(LOG_PATH, 0o644)
+        event("queue", "$ systemd-run --unit=" + unit + " /usr/bin/python3 update-helper.py --apply --preserve-log")
         try:
             subprocess.run(
                 [
@@ -259,6 +265,7 @@ def main():
                     "/usr/bin/python3",
                     __file__,
                     "--apply",
+                    "--preserve-log",
                 ],
                 check=True,
                 timeout=15,
