@@ -1358,7 +1358,7 @@ fn source_wanted_for_state(
 /// Whether a source must keep decoding for at least one watched wall.
 /// Grid sources are persistent across panel transitions; fullscreen-only
 /// sources remain tied to the currently presented scene.
-fn source_wanted_for_wall(source: &Source, wall: &Wall) -> bool {
+fn source_wanted_for_wall(source: &Arc<Source>, wall: &Wall) -> bool {
     source_wanted_for_state(
         source.persistent_grid,
         wall.watched,
