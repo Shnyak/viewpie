@@ -5,6 +5,7 @@
 //! Control endpoints: pause / resume / grid / fullscreen / reload.
 
 use std::time::Duration;
+use tokio::sync::oneshot;
 
 use axum::extract::Json;
 use axum::extract::State;
@@ -63,52 +64,85 @@ pub async fn fullscreen(
             "wall is paused — call /api/resume first",
         ));
     }
-    // Camera must exist in the pool.
     if state.feeds_pool.get(&req.camera).await.is_none() {
         return Err(ApiError::not_found(format!(
             "camera {:?} not found",
             req.camera
         )));
     }
+
+    // Preserve the previous selection so a failed physical KMS transition
+    // cannot leave HA showing a fullscreen state that is not on the screen.
+    let previous = state.manager.fullscreen_camera().await;
     state
         .manager
         .enter_fullscreen(&req.camera)
         .await
         .map_err(ApiError::Panel)?;
 
-    // Determine timeout: explicit duration or global fullscreen_timeout.
-    let timeout = match req.duration_seconds {
-        Some(d) => Some(d),
-        None => {
-            let t = state.settings.read().await.fullscreen_timeout;
-            Some(t)
+    let (ack_tx, ack_rx) = oneshot::channel();
+    if state
+        .command_tx
+        .send(WallCommand::SetFullscreen(
+            req.camera.clone(),
+            req.duration_seconds,
+            ack_tx,
+        ))
+        .await
+        .is_err()
+    {
+        if let Some(camera) = previous.as_deref() {
+            let _ = state.manager.enter_fullscreen(camera).await;
+        } else {
+            let _ = state.manager.leave_fullscreen().await;
         }
+        return Err(ApiError::Unavailable(
+            "renderer command channel is closed".into(),
+        ));
+    }
+
+    let renderer_result = match tokio::time::timeout(Duration::from_secs(12), ack_rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("renderer acknowledgement channel closed".to_string()),
+        Err(_) => Err("timed out waiting for the camera to appear on the display".to_string()),
+    };
+    if let Err(error) = renderer_result {
+        if let Some(camera) = previous.as_deref() {
+            let _ = state.manager.enter_fullscreen(camera).await;
+        } else {
+            let _ = state.manager.leave_fullscreen().await;
+        }
+        return Err(ApiError::Unavailable(format!(
+            "fullscreen transition was not confirmed by the native renderer: {error}"
+        )));
+    }
+
+    // Start the timeout only after the native renderer confirms that a frame
+    // from the requested camera has been committed to the physical display.
+    let timeout = match req.duration_seconds {
+        Some(seconds) => Some(seconds),
+        None => Some(state.settings.read().await.fullscreen_timeout),
     };
     if let Some(seconds) = timeout {
         let st = state.clone();
         let cam = req.camera.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(seconds)).await;
-            // Only auto-return if we are still showing the same camera
-            // (a newer manual action supersedes this timer).
             if crate::http_api::state::current_fullscreen()
                 .await
                 .as_deref()
                 == Some(cam.as_str())
             {
                 info!(camera = %cam, secs = seconds, "fullscreen timeout — returning to grid");
-                if let Err(e) = st.manager.leave_fullscreen().await {
-                    error!("auto grid failed: {e}");
+                if let Err(error) = st.manager.leave_fullscreen().await {
+                    error!("auto grid failed: {error}");
                 } else {
                     let _ = st.command_tx.send(WallCommand::ReturnToGrid).await;
                 }
             }
         });
     }
-    let _ = state
-        .command_tx
-        .send(WallCommand::SetFullscreen(req.camera, req.duration_seconds))
-        .await;
+
     Ok((StatusCode::OK, Json(OkResponse::ok())))
 }
 
