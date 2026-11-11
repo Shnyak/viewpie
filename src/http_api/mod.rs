@@ -116,8 +116,19 @@ pub async fn run(
                     // panel selection stays in-process and never reconnects feeds.
                     if let Some(renderer) = &command_renderer {
                         let panel = st.manager.active_id().await;
-                        if let Err(e) = renderer.reload(&panel).await {
+                        let (fullscreen, screen_on) = {
+                            let wall = st.wall_state.read().await;
+                            (wall.fullscreen_camera.clone(), !wall.paused)
+                        };
+                        if let Err(e) = renderer.reload(&panel, fullscreen.as_deref()).await {
                             warn!("native renderer failed to reload configuration: {e}");
+                        } else if !screen_on {
+                            // A renderer restart reinitializes KMS power. Reapply
+                            // the user's persisted runtime state before returning
+                            // to the normal command loop.
+                            if let Err(e) = renderer.set_display_power(false).await {
+                                warn!("native renderer failed to restore screen-off state: {e}");
+                            }
                         }
                     }
                 }
