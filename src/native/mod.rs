@@ -27,7 +27,7 @@ mod present;
 use self::config::Config;
 use self::decode::{Decoder, FeedStats, Refused};
 use self::ffi::*;
-use self::present::{Card, Fb, ImportedFrame, Viewport};
+use self::present::{Card, DebugOverlay, Fb, ImportedFrame, Viewport};
 use drm::buffer::{Buffer, DrmFourcc, DrmModifier, Handle};
 use drm::control::{
     connector, crtc, framebuffer, plane, property, Device as ControlDevice, FbCmd2Flags,
@@ -526,6 +526,9 @@ struct Wall {
     /// afresh whenever the layout changes, and whenever the picture changes
     /// from the grid's stream to the one for fullscreen.
     fullscreen_tap: Option<(Tap, Duration)>,
+    /// Optional diagnostics plane, allocated only after every camera plane.
+    debug_overlay: Option<DebugOverlay>,
+    debug_overlay_updated_at: Instant,
 }
 
 /// A camera a display can show fullscreen.
@@ -926,6 +929,48 @@ fn run(config: &Config) -> Result<(), String> {
         walls.push(wall);
     }
 
+    // Only after every display has reserved its maximum camera-plane count
+    // may diagnostics take a spare plane. It is never allowed to reduce the
+    // number of cameras a configured panel can show.
+    if config.debug_overlay {
+        for wall in &mut walls {
+            let camera_zpos = wall
+                .plane_pool
+                .iter()
+                .filter_map(|&p| card.plane_zpos(p))
+                .max();
+            let usable = card.overlay_planes(wall.out.crtc).unwrap_or_default();
+            let candidate = camera_zpos.and_then(|highest_camera| {
+                spare.iter().position(|plane| {
+                    usable.contains(plane)
+                        && card
+                            .plane_zpos(*plane)
+                            .is_some_and(|zpos| zpos > highest_camera)
+                })
+            });
+            let Some(index) = candidate else {
+                eprintln!(
+                    "{}: diagnostics overlay disabled; no spare plane above all camera planes",
+                    wall.out.name
+                );
+                continue;
+            };
+            let plane = spare.remove(index);
+            claimed.push(plane);
+            match card.create_debug_overlay(plane, wall.size.0, wall.size.1) {
+                Ok(overlay) => {
+                    wall.debug_overlay = Some(overlay);
+                    println!("{}: diagnostics overlay enabled", wall.out.name);
+                }
+                Err(error) => {
+                    claimed.retain(|claimed_plane| *claimed_plane != plane);
+                    spare.push(plane);
+                    eprintln!("{}: diagnostics overlay unavailable: {error}", wall.out.name);
+                }
+            }
+        }
+    }
+
     // Every grid feed referenced by any panel starts once and stays wanted
     // while at least one display is watched. Panel selection is presentation-only.
     for source in &sources {
@@ -1235,6 +1280,8 @@ fn build(
         pressed: Instant::now(),
         laid_out: None,
         fullscreen_tap: None,
+        debug_overlay: None,
+        debug_overlay_updated_at: Instant::now(),
     })
 }
 
@@ -1639,10 +1686,44 @@ fn run_walls(
                 // without one a new frame would wait out the poll below. Such a
                 // commit is legal because Card::commit names the crtc whatever
                 // else a request says.
-                let request = ready
-                    .iter()
-                    .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb)));
-                match card.commit(wall.out.crtc, wall.crtc_active, request) {
+                if wall.debug_overlay.is_some()
+                    && wall.debug_overlay_updated_at.elapsed() >= Duration::from_secs(1)
+                {
+                    let lines = debug_overlay_lines(sources);
+                    let draw_result = wall
+                        .debug_overlay
+                        .as_mut()
+                        .map(|overlay| card.draw_debug_overlay(overlay, &lines));
+                    if let Some(Err(error)) = draw_result {
+                        eprintln!("{}: diagnostics overlay disabled: {error}", wall.out.name);
+                        wall.debug_overlay = None;
+                    } else {
+                        wall.debug_overlay_updated_at = Instant::now();
+                    }
+                }
+                let had_overlay = wall.debug_overlay.is_some();
+                let result = card.commit(
+                    wall.out.crtc,
+                    wall.crtc_active,
+                    ready.iter().map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
+                    wall.debug_overlay.as_ref(),
+                );
+                let result = if result.is_err() && had_overlay {
+                    eprintln!(
+                        "{}: diagnostics plane rejected by KMS; retrying camera-only commit",
+                        wall.out.name
+                    );
+                    wall.debug_overlay = None;
+                    card.commit(
+                        wall.out.crtc,
+                        wall.crtc_active,
+                        ready.iter().map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
+                        None,
+                    )
+                } else {
+                    result
+                };
+                match result {
                     Ok(()) => {
                         wall.commits += 1;
                         // Held until the flip: from here on the display may be
@@ -1977,6 +2058,78 @@ struct Marks {
 struct WallMark {
     commits: u64,
     turns: u64,
+}
+
+
+/// Text shown on the optional KMS plane. Keep the overlay compact: it is
+/// deliberately a small status panel, not a copy of the full journal.
+fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
+    let mut lines = vec!["CAMERA PATH CODEC RESOLUTION FPS ERRORS".to_string()];
+    for source in sources.iter().filter(|source| {
+        source.persistent_grid || source.wanted.load(Ordering::Relaxed)
+    }) {
+        let info = source.decoder_info.lock().unwrap().clone();
+        let path = match (info.decoder.as_deref(), info.mode.as_deref()) {
+            (Some(decoder), Some(mode)) => format!("{decoder}/{mode}"),
+            (Some(decoder), None) => decoder.to_string(),
+            _ => "WAIT".to_string(),
+        };
+        let codec = info.codec.unwrap_or_else(|| "?".to_string());
+        let resolution = match (info.width, info.height) {
+            (Some(width), Some(height)) => format!("{width}X{height}"),
+            _ => "?".to_string(),
+        };
+        let fps = info.fps.map(|value| format!("{value:.1}")).unwrap_or_else(|| "-".into());
+        let errors = source.stats.errors.load(Ordering::Relaxed).max(info.errors);
+        let state = if source.wanted.load(Ordering::Relaxed) {
+            info.state.unwrap_or_else(|| "CONNECTING".to_string())
+        } else {
+            "PAUSED".to_string()
+        };
+        lines.push(format!(
+            "{} {} {} {} {} E{} {}",
+            source.name, path, codec, resolution, fps, errors, state
+        ));
+    }
+    let cpu = debug_cpu_load_percent()
+        .map(|value| format!("{value:.0}%"))
+        .unwrap_or_else(|| "?".to_string());
+    let temp = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .map(|value| format!("{:.1}C", value / 1000.0))
+        .unwrap_or_else(|| "?".to_string());
+    lines.push(format!("CPU {cpu} TEMP {temp}"));
+    lines
+}
+
+/// CPU busy percentage between one-second overlay refreshes.
+fn debug_cpu_load_percent() -> Option<f64> {
+    static PREVIOUS: Mutex<Option<(u64, u64)>> = Mutex::new(None);
+    let raw = std::fs::read_to_string("/proc/stat").ok()?;
+    let values: Vec<u64> = raw
+        .lines()
+        .find(|line| line.starts_with("cpu "))?
+        .split_whitespace()
+        .skip(1)
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    if values.len() < 5 {
+        return None;
+    }
+    let total: u64 = values.iter().take(8).sum();
+    let idle = values[3] + values[4];
+    let mut previous = PREVIOUS.lock().ok()?;
+    let result = previous.and_then(|(old_total, old_idle)| {
+        let total_delta = total.saturating_sub(old_total);
+        let idle_delta = idle.saturating_sub(old_idle);
+        (total_delta > 0).then_some(
+            (total_delta.saturating_sub(idle_delta)) as f64 / total_delta as f64 * 100.0,
+        )
+    });
+    *previous = Some((total, idle));
+    result
 }
 
 /// Say what the last few seconds were like, in two parts: the feeds, then
