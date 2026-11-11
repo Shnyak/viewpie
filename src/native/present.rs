@@ -783,7 +783,7 @@ impl Card {
         crtc: crtc::Handle,
         crtc_active: property::Handle,
         viewports: impl IntoIterator<Item = (Viewport, Option<framebuffer::Handle>)>,
-        overlay: Option<&DebugOverlay>,
+        overlay: Option<(&DebugOverlay, bool)>,
     ) -> Result<(), String> {
         let mut req = AtomicModeReq::new();
         // The crtc, named whatever else this request says.
@@ -847,9 +847,13 @@ impl Card {
             }
         }
 
-        if let Some(overlay) = overlay {
+        if let Some((overlay, active)) = overlay {
             let p = &overlay.props;
-            for (prop, value) in [
+            if !active {
+                req.add_property(overlay.plane, p.fb_id, property::Value::Framebuffer(None));
+                req.add_property(overlay.plane, p.crtc_id, property::Value::CRTC(None));
+            } else {
+                for (prop, value) in [
                 (p.fb_id, property::Value::Framebuffer(Some(overlay.fb))),
                 (p.crtc_id, property::Value::CRTC(Some(crtc))),
                 (p.src_x, property::Value::UnsignedRange(0)),
@@ -873,7 +877,8 @@ impl Card {
                     property::Value::UnsignedRange(overlay.height as u64),
                 ),
             ] {
-                req.add_property(overlay.plane, prop, value);
+                    req.add_property(overlay.plane, prop, value);
+                }
             }
         }
 
