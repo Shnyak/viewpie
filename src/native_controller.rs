@@ -105,13 +105,11 @@ impl NativeRendererController {
             guard.take();
         }
         let current_renderer_state = self.renderer_state.subscribe().borrow().clone();
-        let already_visible = current_renderer_state
-            .as_ref()
-            .is_some_and(|state| {
-                state.get("status").and_then(|value| value.as_str()) == Some("committed")
-                    && state.get("mode").and_then(|value| value.as_str()) == Some("fullscreen")
-                    && state.get("camera").and_then(|value| value.as_str()) == Some(camera)
-            });
+        let already_visible = current_renderer_state.as_ref().is_some_and(|state| {
+            state.get("status").and_then(|value| value.as_str()) == Some("committed")
+                && state.get("mode").and_then(|value| value.as_str()) == Some("fullscreen")
+                && state.get("camera").and_then(|value| value.as_str()) == Some(camera)
+        });
         if already_visible && !exited && guard.is_some() {
             return Ok(());
         }
@@ -240,7 +238,9 @@ impl NativeRendererController {
                         Ok(status) => {
                             renderer_state.send_replace(Some(status));
                         }
-                        Err(error) => tracing::warn!("invalid native renderer state event: {error}"),
+                        Err(error) => {
+                            tracing::warn!("invalid native renderer state event: {error}")
+                        }
                     }
                 } else if let Some(payload) = line.strip_prefix("VIEWPIE_DECODER_STATUS ") {
                     match serde_json::from_str::<serde_json::Value>(payload) {
