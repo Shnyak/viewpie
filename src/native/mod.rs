@@ -3107,7 +3107,7 @@ mod tests {
         // Neither stream has a frame: a camera whose stream for fullscreen
         // is still connecting, and whose feed has gone away too.
         let camera = Camera {
-            feed: Arc::new(Source::new("porch")),
+            feed: Arc::new(Source::new("porch", true)),
             fullscreen: Some(Arc::new(Source::on_demand("porch (fullscreen)"))),
         };
         let size = (1920, 1080);
@@ -3179,7 +3179,7 @@ mod tests {
     fn rotating(feeds: usize, interval_ms: u64) -> Feeds {
         Feeds::new(
             (0..feeds)
-                .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}")))))
+                .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}"), true))))
                 .collect(),
             Duration::from_millis(interval_ms),
         )
@@ -3188,7 +3188,7 @@ mod tests {
     #[test]
     fn a_new_panel_starts_rotation_on_its_first_feed_at_switch_time() {
         let taps = (0..3)
-            .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}")))))
+            .map(|n| Tap::new(Arc::new(Source::new(&format!("feed{n}"), true))))
             .collect();
         let start = Duration::from_secs(123);
         let feeds = Feeds::new_at(taps, Duration::from_secs(8), start);
@@ -3226,7 +3226,7 @@ mod tests {
     /// thousands.
     #[test]
     fn frames_published_off_screen_are_not_skipped() {
-        let mut tap = Tap::new(Arc::new(Source::new("feed")));
+        let mut tap = Tap::new(Arc::new(Source::new("feed", true)));
         tap.count(1, true);
         tap.count(2, false);
         tap.count(4, false);
@@ -3253,7 +3253,7 @@ mod tests {
     /// on screen in it, whether or not the one before was said.
     #[test]
     fn a_tap_reports_its_rate_since_the_report_before() {
-        let mut tap = Tap::new(Arc::new(Source::new("feed")));
+        let mut tap = Tap::new(Arc::new(Source::new("feed", true)));
         let s = Duration::from_secs;
         for gen in 1..=250 {
             tap.count(gen, gen == 1);
@@ -3366,7 +3366,7 @@ mod tests {
 
     #[test]
     fn shutdown_interrupts_decoder_backoff_independently_of_pause_state() {
-        let source = Source::new("camera");
+        let source = Source::new("camera", true);
         let shutdown = AtomicBool::new(true);
         assert!(source.wanted.load(Ordering::Relaxed));
         assert!(!nap(&source, Duration::from_secs(30), &shutdown));
