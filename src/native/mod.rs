@@ -1435,10 +1435,7 @@ fn ensure_camera_index(
     let source_index = sources.iter().position(|source| source.name == name)?;
     cameras.push(Camera {
         feed: sources[source_index].clone(),
-        fullscreen: fullscreen_sources
-            .get(source_index)
-            .cloned()
-            .flatten(),
+        fullscreen: fullscreen_sources.get(source_index).cloned().flatten(),
     });
     Some(cameras.len() - 1)
 }
@@ -1536,7 +1533,9 @@ fn run_walls(
                             wall.show(Mode::Fullscreen(at));
                             panel_changed |= was != wall.mode;
                         } else {
-                            eprintln!("unknown camera requested for fullscreen: {camera}");
+                            eprintln!(
+                                            "unknown camera requested for fullscreen: {camera}"
+                                        );
                         }
                     }
                 }
@@ -3242,12 +3241,8 @@ mod tests {
             fullscreen: fullscreen_sources[0].clone(),
         }];
 
-        let index = ensure_camera_index(
-            &mut cameras,
-            &sources,
-            &fullscreen_sources,
-            "other_camera",
-        );
+        let index =
+            ensure_camera_index(&mut cameras, &sources, &fullscreen_sources, "other_camera");
 
         assert_eq!(index, Some(1));
         assert_eq!(cameras.len(), 2);
@@ -3257,12 +3252,7 @@ mod tests {
             fullscreen_sources[1].as_ref().unwrap()
         ));
         assert_eq!(
-            ensure_camera_index(
-                &mut cameras,
-                &sources,
-                &fullscreen_sources,
-                "other_camera"
-            ),
+            ensure_camera_index(&mut cameras, &sources, &fullscreen_sources, "other_camera"),
             Some(1),
             "repeated requests must not duplicate camera entries"
         );
