@@ -126,3 +126,25 @@ pub async fn status(State(state): State<AppState>) -> Result<Json<StatusResponse
         decoder_status,
     }))
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::{format_build_date, format_uptime};
+
+    #[test]
+    fn build_date_uses_day_month_short_year_and_time() {
+        assert_eq!(
+            format_build_date("2026-11-11T16:37:16+03:00"),
+            "11.11.26 16:37:16"
+        );
+    }
+
+    #[test]
+    fn uptime_uses_days_hours_and_minutes() {
+        assert_eq!(format_uptime(0), "0 сек.");
+        assert_eq!(format_uptime(125), "2 мин.");
+        assert_eq!(format_uptime(3_661), "1 ч. 1 мин.");
+        assert_eq!(format_uptime(90_061), "1 дн. 1 ч. 1 мин.");
+    }
+}
