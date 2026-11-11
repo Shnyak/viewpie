@@ -14,10 +14,11 @@ Target baseline: `v0.2.19-fork`. This document does not change runtime behavior.
 
 ## Configuration contract
 
-Add a top-level `hardware_decoder_limit` (integer, default `6`, range `0..=16`) and a `decoder` property to each feed:
+Add `display.hardware_decoder_limit` (integer, default `6`, range `0..=16`) and a `decoder` property to each feed:
 
 ```yaml
-hardware_decoder_limit: 6
+display:
+  hardware_decoder_limit: 6
 
 feeds:
   # Explicit preference: always use software for this camera.
