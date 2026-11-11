@@ -11,6 +11,7 @@ struct NativeConfig<'a> {
     spacing: u32,
     background: &'a str,
     pause_off_screen: bool,
+    debug_overlay: bool,
     hardware_decoder_limit: u32,
     feeds: &'a HashMap<String, FeedConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -67,6 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         spacing: cfg.display.spacing,
         background: &cfg.display.background,
         pause_off_screen: cfg.display.pause_off_screen,
+        debug_overlay: cfg.display.debug_overlay,
         hardware_decoder_limit: cfg.display.hardware_decoder_limit,
         feeds: &feeds,
         displays: Vec::new(),
