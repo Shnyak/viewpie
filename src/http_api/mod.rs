@@ -76,15 +76,20 @@ pub async fn run(
                 // these renderer-only commands. Do not apply the same transition
                 // twice: doing so resets fullscreen timing and can race a newer
                 // scene request while the native child is switching KMS planes.
-                WallCommand::SetFullscreen(cam, _dur) => {
-                    if let Some(renderer) = &command_renderer {
+                WallCommand::SetFullscreen(cam, _dur, acknowledgement) => {
+                    let result = if let Some(renderer) = &command_renderer {
                         let panel = st.manager.active_id().await;
-                        if let Err(e) = renderer.select_fullscreen(&cam, &panel).await {
-                            warn!("native renderer failed to enter fullscreen for {cam}: {e}");
-                        } else {
-                            info!(camera = %cam, "native renderer accepted fullscreen request");
-                        }
+                        renderer
+                            .select_fullscreen(&cam, &panel)
+                            .await
+                            .map_err(|error| error.to_string())
+                    } else {
+                        Ok(())
+                    };
+                    if let Err(error) = &result {
+                        warn!("native renderer failed to display fullscreen camera {cam}: {error}");
                     }
+                    let _ = acknowledgement.send(result);
                 }
                 WallCommand::ReturnToGrid => {
                     if let Some(renderer) = &command_renderer {
