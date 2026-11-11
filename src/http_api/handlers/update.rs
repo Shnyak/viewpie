@@ -33,9 +33,8 @@ fn package_architecture() -> &'static str {
 fn constant_time_eq(expected: &[u8], supplied: &[u8]) -> bool {
     let mut difference = expected.len() ^ supplied.len();
     for index in 0..expected.len().max(supplied.len()) {
-        difference |= usize::from(
-            *expected.get(index).unwrap_or(&0) ^ *supplied.get(index).unwrap_or(&0),
-        );
+        difference |=
+            usize::from(*expected.get(index).unwrap_or(&0) ^ *supplied.get(index).unwrap_or(&0));
     }
     difference == 0
 }
