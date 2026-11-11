@@ -81,6 +81,16 @@ pub struct FeedConfig {
     pub decoder: DecoderPreference,
 }
 
+/// Screen state policy applied during Viewpie startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenBootMode {
+    AlwaysOn,
+    AlwaysOff,
+    #[default]
+    Restore,
+}
+
 /// Display-wide settings that can be changed at runtime via the HTTP API.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -96,6 +106,10 @@ pub struct DisplaySettings {
     /// Panel to activate on startup; None keeps the legacy defaults.panel behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_panel: Option<String>,
+    /// Screen state to apply after a system reboot.
+    pub screen_boot_mode: ScreenBootMode,
+    /// Last manually selected screen state; persisted on every pause/resume.
+    pub last_screen_on: bool,
     /// Background color, `#RRGGBB`.
     pub background: String,
     /// Seconds between fullscreen rotations inside a viewport.
@@ -112,6 +126,8 @@ impl Default for DisplaySettings {
             pause_off_screen: true,
             debug_overlay: false,
             startup_panel: None,
+            screen_boot_mode: ScreenBootMode::Restore,
+            last_screen_on: true,
             background: "#000000".to_string(),
             rotation_interval: 20,
             fullscreen_timeout: 600,
