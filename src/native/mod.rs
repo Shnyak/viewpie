@@ -1716,7 +1716,8 @@ fn run_walls(
                         .is_some_and(|scene| scene_frames_ready(&scene.feeds, clock));
 
                     if incoming_ready {
-                        let mut incoming = wall.pending_scene.take().expect("prepared scene exists");
+                        let mut incoming =
+                            wall.pending_scene.take().expect("prepared scene exists");
                         let incoming_count = incoming.viewports.len();
                         // Read all incoming frames as one snapshot. If a source
                         // drops between the readiness check and this read, keep
@@ -1757,8 +1758,7 @@ fn run_walls(
                             panel_switched_this_pass = true;
                             println!(
                                 "{}: panel switched atomically to {}",
-                                wall.out.name,
-                                incoming.panel
+                                wall.out.name, incoming.panel
                             );
                         } else {
                             wall.pending_scene = Some(incoming);
