@@ -526,6 +526,8 @@ struct Wall {
     /// afresh whenever the layout changes, and whenever the picture changes
     /// from the grid's stream to the one for fullscreen.
     fullscreen_tap: Option<(Tap, Duration)>,
+    /// Last fullscreen camera confirmed by a successful KMS commit.
+    reported_fullscreen: Option<String>,
     /// Optional diagnostics plane, allocated only after every camera plane.
     debug_overlay: Option<DebugOverlay>,
     debug_overlay_active: bool,
@@ -1288,6 +1290,7 @@ fn build(
         pressed: Instant::now(),
         laid_out: None,
         fullscreen_tap: None,
+        reported_fullscreen: None,
         debug_overlay: None,
         debug_overlay_active: false,
         debug_overlay_detached: true,
@@ -1493,6 +1496,7 @@ fn run_walls(
                 RendererCommand::DisplayPower(on) => display_requested_on = on,
                 RendererCommand::SelectPanel(panel) => {
                     if let Some(wall) = walls.first_mut() {
+                        wall.reported_fullscreen = None;
                         if wall.panel_scenes.contains_key(&panel) {
                             wall.pending_fullscreen = None;
                             if wall.current_panel.as_deref() == Some(panel.as_str()) {
@@ -1521,6 +1525,7 @@ fn run_walls(
                 }
                 RendererCommand::SelectFullscreen(camera) => {
                     if let Some(wall) = walls.first_mut() {
+                        wall.reported_fullscreen = None;
                         if wall.pending_panel.is_some() {
                             wall.pending_fullscreen = Some(camera);
                         } else if let Some(at) = ensure_camera_index(
@@ -1739,6 +1744,8 @@ fn run_walls(
                         wall.debug_overlay_updated_at = Instant::now();
                     }
                 }
+                let fullscreen_frame_ready = matches!(wall.mode, Mode::Fullscreen(_))
+                    && ready.iter().any(|(_, _, shown)| shown.is_some());
                 let had_overlay = wall.debug_overlay_active;
                 let result = card.commit(
                     wall.out.crtc,
@@ -1774,6 +1781,24 @@ fn run_walls(
                         if wall.debug_overlay.is_some() {
                             wall.debug_overlay_detached = !wall.debug_overlay_active;
                         }
+                        if let Mode::Fullscreen(at) = wall.mode {
+                            let camera = wall.cameras[at].feed.name.clone();
+                            if fullscreen_frame_ready
+                                && wall.reported_fullscreen.as_deref() != Some(camera.as_str())
+                            {
+                                println!(
+                                    "VIEWPIE_RENDERER_STATE {}",
+                                    serde_json::json!({
+                                        "status": "committed",
+                                        "mode": "fullscreen",
+                                        "camera": camera,
+                                    })
+                                );
+                                wall.reported_fullscreen = Some(camera);
+                            }
+                        } else {
+                            wall.reported_fullscreen = None;
+                        }
                         wall.commits += 1;
                         // Held until the flip: from here on the display may be
                         // reading these, whatever their feeds do next. Recorded
@@ -1787,6 +1812,24 @@ fn run_walls(
                         });
                     }
                     Err(e) => {
+                        if fullscreen_frame_ready {
+                            if let Mode::Fullscreen(at) = wall.mode {
+                                let camera = wall.cameras[at].feed.name.clone();
+                                let marker = format!("!error:{camera}");
+                                if wall.reported_fullscreen.as_deref() != Some(marker.as_str()) {
+                                    println!(
+                                        "VIEWPIE_RENDERER_ERROR {}",
+                                        serde_json::json!({
+                                            "status": "error",
+                                            "mode": "fullscreen",
+                                            "camera": camera,
+                                            "error": e.to_string(),
+                                        })
+                                    );
+                                    wall.reported_fullscreen = Some(marker);
+                                }
+                            }
+                        }
                         // No flip will arrive for a commit that was refused, so
                         // this display stays due and tries again after the wait
                         // below.
