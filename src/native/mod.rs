@@ -938,9 +938,8 @@ fn run(config: &Config) -> Result<(), String> {
         walls.push(wall);
     }
 
-    // Only feeds used by the startup panel should connect. Other panel
-    // feeds are already represented by Source objects and will be enabled
-    // when their scene is selected.
+    // Every grid feed referenced by any panel starts once and stays wanted
+    // while at least one display is watched. Panel selection is presentation-only.
     for source in &sources {
         let wanted = source.persistent_grid && walls.iter().any(|wall| wall.watched);
         source.set_wanted(wanted);
@@ -1378,19 +1377,17 @@ fn run_walls(
                                 wall.show(Mode::Grid);
                                 panel_changed |= had_pending || was != wall.mode;
                             } else {
-                                // Stop feeds unique to the old panel. Do not
-                                // prewarm the incoming panel: on a Pi 3 that
-                                // overlaps V4L2 decoder contexts and forces the
-                                // new feeds into software decoding.
+                                // Grid feeds are persistent across scenes.
+                                // Only an on-demand fullscreen stream is stopped
+                                // while the panel's KMS scene is replaced.
                                 wall.pending_panel = Some(panel.clone());
                             }
                         } else {
                             eprintln!("unknown panel requested: {panel}");
                         }
                     }
-                    // A pending panel owns the transition. Keep feeds required
-                    // by other displays alive, but stop this wall's old-only
-                    // feeds so their decoder contexts can be released.
+                    // A pending panel owns the transition. Keep every grid
+                    // feed alive; only stop fullscreen-only sessions.
                     for source in sources {
                         let wanted = walls.iter().any(|wall| {
                             wall.watched && (source.persistent_grid ||
@@ -1482,10 +1479,10 @@ fn run_walls(
                 let mut ready = Vec::new();
                 if let Some(panel) = wall.pending_panel.clone() {
                     let scene = wall.panel_scenes[&panel].clone();
-                    // Do not detach the old scene until every feed it alone
-                    // needed has returned from feed_session. Returning drops
-                    // the Decoder; the old scanout references are then drained
-                    // by the detach flip below before the next panel is enabled.
+                    // Persistent grid decoders are deliberately not stopped.
+                    // Wait only for a fullscreen-only stream that was active
+                    // in the outgoing scene; its frame references still drain
+                    // through the detach flip below.
                     let outgoing_stopped = sources.iter().all(|source| {
                         !wall.shows(source)
                             || source.wanted.load(Ordering::Relaxed)
