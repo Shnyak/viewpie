@@ -88,6 +88,7 @@ pub async fn create_panel(
         return Err(ApiError::conflict(format!("panel {id:?} already exists")));
     }
     candidate.panels.insert(id.clone(), panel_config.clone());
+    candidate.defaults.panel_order = old_config.ordered_panel_ids();
     if !candidate.defaults.panel_order.contains(&id) {
         candidate.defaults.panel_order.push(id.clone());
     }
