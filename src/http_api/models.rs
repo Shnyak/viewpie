@@ -69,6 +69,12 @@ pub struct PanelSummary {
     pub camera_count: usize,
 }
 
+/// `PUT /api/panels/order` request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PanelOrderRequest {
+    pub order: Vec<String>,
+}
+
 /// `GET /api/panels` response.
 #[derive(Debug, Clone, Serialize)]
 pub struct PanelListResponse {
