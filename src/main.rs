@@ -15,7 +15,7 @@ use anyhow::Context;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use viewpie::config::{Config, ScreenBootMode};
+use viewpie::config::Config;
 use viewpie::http_api;
 use viewpie::kms::{DisplayBackend, HeadlessBackend};
 use viewpie::native_controller::NativeRendererController;
@@ -79,11 +79,10 @@ fn main() -> anyhow::Result<()> {
     };
 
     let backend: Arc<dyn DisplayBackend> = create_backend()?;
-    let start_screen_on = match cfg.display.screen_boot_mode {
-        ScreenBootMode::AlwaysOn => true,
-        ScreenBootMode::AlwaysOff => false,
-        ScreenBootMode::Restore => cfg.display.last_screen_on,
-    };
+    let start_screen_on = cfg
+        .display
+        .screen_boot_mode
+        .resolve(cfg.display.last_screen_on);
     let native_renderer = if cfg!(feature = "native-pipeline") {
         Some(Arc::new(NativeRendererController::new(
             config_path.clone(),
