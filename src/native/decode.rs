@@ -585,7 +585,11 @@ unsafe fn open_codec(
     let cma_total = cma_total.map_or_else(|| "unavailable".to_string(), |n| n.to_string());
     let cma_free = cma_free.map_or_else(|| "unavailable".to_string(), |n| n.to_string());
     eprintln!(
-        "VIEWPIE_DECODER_OPEN camera={camera} requested_decoder={name} hwaccel={hwaccel}          cma_total_kb={cma_total} cma_free_kb={cma_free} stage=before_avcodec_open2"
+        concat!(
+            "VIEWPIE_DECODER_OPEN camera={:?} requested_decoder={} hwaccel={} ",
+            "cma_total_kb={} cma_free_kb={} stage=before_avcodec_open2"
+        ),
+        camera, name, hwaccel, cma_total, cma_free
     );
 
     let r = avcodec_open2(ctx, codec, &mut opts);
@@ -597,12 +601,17 @@ unsafe fn open_codec(
     if r < 0 {
         let error = av_err(r);
         eprintln!(
-            "VIEWPIE_DECODER_OPEN camera={camera} requested_decoder={name} actual_decoder=none              hwaccel={hwaccel} cma_total_kb={cma_total} cma_free_kb={cma_free}              result=error av_error_code={r} error={error:?}"
+            concat!(
+                "VIEWPIE_DECODER_OPEN camera={:?} requested_decoder={} actual_decoder=none ",
+                "hwaccel={} cma_total_kb={} cma_free_kb={} result=error ",
+                "av_error_code={} error={:?}"
+            ),
+            camera, name, hwaccel, cma_total, cma_free, r, error
         );
         let msg = format!("open codec: {error}");
         return Err(fail(&mut ctx, msg));
     }
-    let actual_decoder = if (*ctx).codec.is_null() {
+    let actual_decoder = if (*ctx).codec.is_null() || (*(*ctx).codec).name.is_null() {
         "unknown".to_string()
     } else {
         std::ffi::CStr::from_ptr((*(*ctx).codec).name)
@@ -610,7 +619,11 @@ unsafe fn open_codec(
             .into_owned()
     };
     eprintln!(
-        "VIEWPIE_DECODER_OPEN camera={camera} requested_decoder={name} actual_decoder={actual_decoder}          hwaccel={hwaccel} cma_total_kb={cma_total} cma_free_kb={cma_free} result=ok"
+        concat!(
+            "VIEWPIE_DECODER_OPEN camera={:?} requested_decoder={} actual_decoder={} ",
+            "hwaccel={} cma_total_kb={} cma_free_kb={} result=ok"
+        ),
+        camera, name, actual_decoder, hwaccel, cma_total, cma_free
     );
     unknown.extend(left);
     Ok(ctx)
