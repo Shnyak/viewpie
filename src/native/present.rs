@@ -748,6 +748,33 @@ impl Card {
         Ok(())
     }
 
+    /// Detach the diagnostics plane and wait for its page flip before freeing
+    /// its framebuffer. This is also safe when an earlier attach was refused.
+    pub fn detach_debug_overlay(
+        &self,
+        crtc: crtc::Handle,
+        crtc_active: property::Handle,
+        overlay: &DebugOverlay,
+    ) -> Result<(), String> {
+        let mut req = AtomicModeReq::new();
+        req.add_property(crtc, crtc_active, property::Value::Boolean(true));
+        req.add_property(
+            overlay.plane,
+            overlay.props.fb_id,
+            property::Value::Framebuffer(None),
+        );
+        req.add_property(
+            overlay.plane,
+            overlay.props.crtc_id,
+            property::Value::CRTC(None),
+        );
+        self.atomic_commit(
+            AtomicCommitFlags::PAGE_FLIP_EVENT | AtomicCommitFlags::NONBLOCK,
+            req,
+        )
+        .map_err(|e| format!("could not detach diagnostics plane: {e}"))
+    }
+
     /// Put every viewport and the optional diagnostics plane on screen in one commit.
     ///
     /// Submits and returns: the flip it asks for arrives later on the card's
