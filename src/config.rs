@@ -395,7 +395,10 @@ impl Config {
         let explicit_hardware: Vec<&str> = self
             .feeds
             .iter()
-            .filter(|(_, feed)| feed.decoder == DecoderPreference::Hardware)
+            .filter(|(name, feed)| {
+                feed.decoder == DecoderPreference::Hardware
+                    && self.panels.values().any(|panel| panel.has_camera(name))
+            })
             .map(|(name, _)| name.as_str())
             .collect();
         if explicit_hardware.len() > self.display.hardware_decoder_limit as usize {
