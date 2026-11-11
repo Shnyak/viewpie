@@ -1,9 +1,9 @@
 #!/usr/bin/python3
 """Privileged, narrowly-scoped Viewpie self-updater.
 
-Started only through a systemd-activated Unix socket owned by group viewpie.
-The client can request one fixed operation; release metadata, architecture,
-asset selection and SHA-256 are independently verified here as root.
+The socket-activated front end accepts one fixed operation from the viewpie
+service account, then starts a separate transient systemd worker. The worker
+survives package hooks restarting the API and updater socket units.
 """
 import fcntl
 import hashlib
@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import uuid
 from pathlib import Path
 
 RELEASE_API = "https://api.github.com/repos/Shnyak/viewpie/releases/latest"
@@ -35,16 +36,7 @@ def request_json(url):
         return json.load(response)
 
 
-def main():
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=os.dup(3))
-    connection, _ = server.accept()
-    with connection:
-        command = connection.makefile("rb").readline(64).decode("ascii", "replace").strip()
-        if command != "INSTALL":
-            connection.sendall(b'{"ok":false,"error":"unsupported command"}\n')
-            return 2
-        connection.sendall(b"1")
-
+def install_latest_release():
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock:
         try:
@@ -132,6 +124,43 @@ def main():
                 package.unlink()
             except FileNotFoundError:
                 pass
+    return 0
+
+
+def main():
+    if sys.argv[1:] == ["--apply"]:
+        return install_latest_release()
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=os.dup(3))
+    connection, _ = server.accept()
+    with connection:
+        command = connection.makefile("rb").readline(64).decode("ascii", "replace").strip()
+        if command != "INSTALL":
+            connection.sendall(b"0")
+            return 2
+
+        # Run the actual dpkg transaction in a transient systemd unit. Debian's
+        # package hooks may restart Viewpie and the socket listener, but must
+        # not kill the worker that is performing the upgrade.
+        unit = "viewpie-update-worker-" + uuid.uuid4().hex
+        try:
+            subprocess.run(
+                [
+                    "systemd-run",
+                    "--quiet",
+                    "--collect",
+                    "--unit=" + unit,
+                    "/usr/bin/python3",
+                    __file__,
+                    "--apply",
+                ],
+                check=True,
+                timeout=15,
+            )
+        except Exception:
+            connection.sendall(b"0")
+            raise
+        connection.sendall(b"1")
     return 0
 
 
