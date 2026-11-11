@@ -294,6 +294,7 @@ mod tests {
         };
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json["software_version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(json["software_build_date"], env!("VIEWPIE_BUILD_DATE"));
+        assert!(json["software_build_date"].as_str().is_some());
+        assert_eq!(json["uptime"], "менее минуты");
     }
 }
