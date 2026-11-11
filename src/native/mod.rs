@@ -857,9 +857,10 @@ fn run(config: &Config) -> Result<(), String> {
         .feeds
         .iter()
         .map(|f| {
-            f.fullscreen_url
-                .as_ref()
-                .map(|_| Arc::new(Source::on_demand(&format!("{} (fullscreen)", f.name))))
+            Some(Arc::new(Source::on_demand(&format!(
+                "{} (fullscreen)",
+                f.name
+            ))))
         })
         .collect();
 
@@ -943,10 +944,13 @@ fn run(config: &Config) -> Result<(), String> {
         let hardware_allowed = hardware_feeds.contains(&feed.name);
         let streams = [
             Some((&feed.url, source, hardware_allowed)),
-            feed.fullscreen_url
-                .as_ref()
-                .zip(fullscreen[i].as_ref())
-                .map(|(url, source)| (url, source, false)),
+            Some((
+                feed.fullscreen_url.as_ref().unwrap_or(&feed.url),
+                fullscreen[i]
+                    .as_ref()
+                    .expect("fullscreen source exists for every camera"),
+                false,
+            )),
         ];
         for (url, source, hardware_allowed) in streams.into_iter().flatten() {
             let url = url.clone();

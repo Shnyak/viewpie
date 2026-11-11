@@ -13,6 +13,8 @@
 FROM debian:bookworm-slim
 
 ARG ARCH=arm64
+ARG VIEWPIE_BUILD_DATE=unknown
+ENV VIEWPIE_BUILD_DATE=${VIEWPIE_BUILD_DATE}
 
 # Use Bookworm's target libraries: the resulting ELF dependencies must match
 # Raspberry Pi OS Bookworm (libavcodec59/format59/util57 and glibc 2.36).

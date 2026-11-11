@@ -18,8 +18,10 @@ for t in $targets; do
         *) echo "unknown architecture $t (expected armhf or arm64)" >&2; exit 2 ;;
     esac
     echo "=== building for $t ==="
-    docker build --build-arg "ARCH=$t" -f Dockerfile.build \
-        -t "viewpie-build:$t" .
+    docker build \
+        --build-arg "ARCH=$t" \
+        --build-arg "VIEWPIE_BUILD_DATE=${VIEWPIE_BUILD_DATE:-unknown}" \
+        -f Dockerfile.build -t "viewpie-build:$t" .
     # docker cp needs a container, and create makes one without running it.
     cid=$(docker create "viewpie-build:$t")
     docker cp "$cid:/out/." dist/

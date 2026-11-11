@@ -1,3 +1,14 @@
+viewpie (0.2.24-fork-1) unstable; urgency=medium
+
+  * Decode fullscreen cameras from their configured main stream, falling
+    back to the camera URL when no separate fullscreen URL is configured.
+  * Force fullscreen decoding through the software decoder, leaving the
+    hardware decoder budget available for secondary grid streams.
+  * Pass the source commit timestamp into the Debian build container so
+    Software build date is populated in the status API.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Wed, 11 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.23-fork-1) unstable; urgency=medium
 
   * Allow Home Assistant to open any registered camera in fullscreen,
