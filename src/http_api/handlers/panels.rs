@@ -217,7 +217,6 @@ pub async fn reorder_panels(
     let old_config = state.config.read().await.clone();
     let mut requested = request.order;
     let mut expected = old_config.ordered_panel_ids();
-    requested.dedup();
     expected.sort();
     let mut actual = requested.clone();
     actual.sort();
