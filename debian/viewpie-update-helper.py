@@ -20,12 +20,60 @@ from pathlib import Path
 
 RELEASE_API = "https://api.github.com/repos/Shnyak/viewpie/releases/latest"
 CACHE_DIR = Path("/var/cache/viewpie-update")
+STATE_DIR = Path("/var/lib/viewpie")
+STATUS_PATH = STATE_DIR / "update-status.json"
+LOG_PATH = STATE_DIR / "update.log"
 LOCK_PATH = Path("/run/lock/viewpie-update.lock")
 USER_AGENT = "Viewpie-updater"
+CURRENT = {"status": "idle", "phase": "idle", "message": "Обновление ещё не запускалось"}
+
+
+def _write_status(**changes):
+    CURRENT.update(changes)
+    CURRENT["updated_at"] = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc
+    ).isoformat()
+    STATE_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    temp = STATUS_PATH.with_suffix(".tmp")
+    temp.write_text(json.dumps(CURRENT, ensure_ascii=False) + "\\n", encoding="utf-8")
+    os.chmod(temp, 0o644)
+    temp.replace(STATUS_PATH)
 
 
 def log(message):
-    print(message, file=sys.stderr, flush=True)
+    safe = str(message).replace("\\x00", "")
+    print(safe, file=sys.stderr, flush=True)
+    STATE_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    with LOG_PATH.open("a", encoding="utf-8") as stream:
+        stream.write(safe + "\\n")
+    os.chmod(LOG_PATH, 0o644)
+
+
+def event(phase, message, status="running", **extra):
+    _write_status(status=status, phase=phase, message=message, **extra)
+    log(f"[{phase}] {message}")
+
+
+def run_logged(command, *, timeout_seconds, phase):
+    printable = " ".join(str(part) for part in command)
+    event(phase, f"$ {printable}")
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            log(line.rstrip())
+        code = process.wait(timeout=timeout_seconds)
+    except Exception:
+        process.kill()
+        process.wait()
+        raise
+    log(f"[{phase}] exit code: {code}")
+    if code:
+        raise subprocess.CalledProcessError(code, command)
+    return code
 
 
 def request_json(url):
@@ -58,14 +106,24 @@ def read_deb_field(package, field):
 
 
 def install_latest_release():
+    _write_status(
+        status="running", phase="starting", message="Запуск установщика",
+        started_at=__import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).isoformat(),
+        finished_at=None, exit_code=None,
+    )
+    LOG_PATH.write_text("", encoding="utf-8")
+    os.chmod(LOG_PATH, 0o644)
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            log("Viewpie update already running")
+            event("lock", "Другое обновление уже выполняется", "failed", exit_code=1)
             return 1
 
+        event("release", "Получение метаданных последнего релиза")
         release = request_json(RELEASE_API)
         tag = str(release.get("tag_name", ""))
         version = tag[1:] if tag.startswith("v") else tag
@@ -75,6 +133,8 @@ def install_latest_release():
         arch = subprocess.check_output(
             ["dpkg", "--print-architecture"], text=True, timeout=10
         ).strip()
+        _write_status(version=version, architecture=arch)
+        event("prepare", f"Выбран релиз {version}, архитектура {arch}")
         installed_package_version = subprocess.check_output(
             ["dpkg-query", "-W", "-f=${Version}", "viewpie"],
             text=True,
@@ -82,7 +142,10 @@ def install_latest_release():
         ).strip()
         installed_release_version = installed_package_version.rsplit("-", 1)[0]
         if installed_release_version == version:
-            log("Viewpie is already at the latest release: " + version)
+            event("complete", "Уже установлена последняя версия " + version, "success",
+                  exit_code=0, finished_at=__import__("datetime").datetime.now(
+                      __import__("datetime").timezone.utc
+                  ).isoformat())
             return 0
         if arch not in ("armhf", "arm64"):
             raise RuntimeError("Unsupported Debian architecture: " + arch)
@@ -102,6 +165,7 @@ def install_latest_release():
         if not digest.startswith("sha256:") or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
             raise RuntimeError("GitHub release asset has no verifiable SHA-256 digest")
 
+        event("download", "Загрузка Debian-пакета " + str(asset.get("name", "")))
         CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix="viewpie-", suffix=".deb", dir=CACHE_DIR)
         os.fchmod(fd, 0o600)
@@ -119,6 +183,7 @@ def install_latest_release():
                         break
                     hasher.update(chunk)
                     out.write(chunk)
+            event("verify", "Проверка SHA-256")
             if hasher.hexdigest().lower() != digest.split(":", 1)[1].lower():
                 raise RuntimeError("Downloaded package SHA-256 does not match GitHub release metadata")
 
@@ -132,9 +197,14 @@ def install_latest_release():
             ):
                 raise RuntimeError("Downloaded package identity does not match the selected release")
 
-            log("Installing Viewpie " + version + " (" + arch + ")")
-            subprocess.run(["dpkg", "-i", str(package)], check=True, timeout=900)
-            log("Viewpie update completed: " + version)
+            event("verify", "SHA-256 и метаданные пакета подтверждены")
+            _write_status(package_version=package_version)
+            event("install", "Установка пакета " + package_version)
+            run_logged(["dpkg", "-i", str(package)], timeout_seconds=900, phase="dpkg")
+            event("complete", "Обновление Viewpie завершено: " + version, "success",
+                  exit_code=0, finished_at=__import__("datetime").datetime.now(
+                      __import__("datetime").timezone.utc
+                  ).isoformat())
         finally:
             try:
                 package.unlink()
@@ -184,5 +254,12 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        log("Viewpie update failed: " + str(exc))
+        message = "Viewpie update failed: " + str(exc)
+        try:
+            event("failed", message, "failed", error=str(exc), exit_code=1,
+                  finished_at=__import__("datetime").datetime.now(
+                      __import__("datetime").timezone.utc
+                  ).isoformat())
+        except Exception:
+            log(message)
         raise SystemExit(1)
