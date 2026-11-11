@@ -1,0 +1,13 @@
+[Unit]
+Description=Viewpie update request socket
+
+[Socket]
+ListenStream=/run/viewpie-update.sock
+SocketUser=root
+SocketGroup=viewpie
+SocketMode=0660
+RemoveOnStop=yes
+Service=viewpie-update.service
+
+[Install]
+WantedBy=sockets.target
