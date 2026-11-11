@@ -91,6 +91,8 @@ pub struct DisplaySettings {
     pub hardware_decoder_limit: u32,
     /// Automatically pause decoding when the screen is switched off (CEC/KMS).
     pub pause_off_screen: bool,
+    /// Render readable per-stream diagnostics over the camera wall.
+    pub debug_overlay: bool,
     /// Background color, `#RRGGBB`.
     pub background: String,
     /// Seconds between fullscreen rotations inside a viewport.
@@ -105,6 +107,7 @@ impl Default for DisplaySettings {
             spacing: 1,
             hardware_decoder_limit: 6,
             pause_off_screen: true,
+            debug_overlay: false,
             background: "#000000".to_string(),
             rotation_interval: 20,
             fullscreen_timeout: 600,
