@@ -211,11 +211,17 @@ impl Config {
                 feed.decoder == DecoderPreference::Hardware
                     && if panels.is_empty() {
                         displays.iter().any(|display| {
-                            display.viewports.iter().any(|viewport| viewport.feeds.contains(index))
+                            display
+                                .viewports
+                                .iter()
+                                .any(|viewport| viewport.feeds.contains(index))
                         })
                     } else {
                         panels.values().any(|panel| {
-                            panel.viewports.iter().any(|viewport| viewport.feeds.contains(index))
+                            panel
+                                .viewports
+                                .iter()
+                                .any(|viewport| viewport.feeds.contains(index))
                         })
                     }
             })
