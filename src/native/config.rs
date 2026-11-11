@@ -622,6 +622,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn per_camera_decoder_policy_and_hardware_budget_are_parsed() {
+        let yaml = r#"
+hardware_decoder_limit: 2
+feeds:
+  priority_a: {url: rtsp://a, decoder: hardware}
+  priority_b: {url: rtsp://b, decoder: hardware}
+  cpu_only: {url: rtsp://c, decoder: software}
+  automatic: rtsp://d
+displays:
+  - viewports:
+      - {feeds: [priority_a, priority_b, cpu_only, automatic]}
+"#;
+        let config = Config::parse(yaml).unwrap();
+        assert_eq!(config.hardware_decoder_limit, 2);
+        let decoder = |name: &str| config.feeds.iter().find(|feed| feed.name == name).unwrap().decoder;
+        assert_eq!(decoder("priority_a"), DecoderPreference::Hardware);
+        assert_eq!(decoder("priority_b"), DecoderPreference::Hardware);
+        assert_eq!(decoder("cpu_only"), DecoderPreference::Software);
+        assert_eq!(decoder("automatic"), DecoderPreference::Auto);
+
+        let over_limit = yaml.replace("hardware_decoder_limit: 2", "hardware_decoder_limit: 1");
+        let error = Config::parse(&over_limit).unwrap_err();
+        assert!(error.contains("priority_a") && error.contains("priority_b"));
+    }
+
+    #[test]
+    fn unknown_camera_decoder_policy_is_rejected() {
+        let yaml = r#"
+feeds:
+  a: {url: rtsp://a, decoder: gpu_magic}
+displays:
+  - viewports:
+      - {feeds: [a]}
+"#;
+        assert!(Config::parse(yaml).unwrap_err().contains("decoder must be auto, hardware, or software"));
+    }
+
+    #[test]
     fn active_fullscreen_must_name_a_camera_in_the_selected_panel() {
         let valid = r#"
 feeds:
