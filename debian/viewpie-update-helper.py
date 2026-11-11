@@ -62,6 +62,15 @@ def main():
         arch = subprocess.check_output(
             ["dpkg", "--print-architecture"], text=True, timeout=10
         ).strip()
+        installed_package_version = subprocess.check_output(
+            ["dpkg-query", "-W", "-f=${Version}", "viewpie"],
+            text=True,
+            timeout=10,
+        ).strip()
+        installed_release_version = installed_package_version.rsplit("-", 1)[0]
+        if installed_release_version == version:
+            log("Viewpie is already at the latest release: " + version)
+            return 0
         if arch not in ("armhf", "arm64"):
             raise RuntimeError("Unsupported Debian architecture: " + arch)
 
