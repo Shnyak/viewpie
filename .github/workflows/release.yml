@@ -217,7 +217,16 @@ jobs:
           pattern: deb-*
           merge-multiple: true
           path: dist
-      - name: Create the release
+      - name: Create or complete the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ steps.release.outputs.tag }}" dist/*.deb --generate-notes
+        run: |
+          tag="${{ steps.release.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.deb --clobber
+          else
+            gh release create "$tag" dist/*.deb --generate-notes || {
+              echo "Release may have been created by the parallel tag workflow; uploading assets"
+              gh release upload "$tag" dist/*.deb --clobber
+            }
+          fi
