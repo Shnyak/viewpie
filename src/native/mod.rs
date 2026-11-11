@@ -843,31 +843,7 @@ fn run(config: &Config) -> Result<(), String> {
     // is shown.
     // Choose hardware cameras before starting any worker. Explicit hardware
     // preferences win; auto feeds fill the remaining slots in stable name order.
-    let mut hardware_feeds: HashSet<String> = config
-        .feeds
-        .iter()
-        .enumerate()
-        .filter(|(index, feed)| {
-            config.displays_showing(*index) > 0
-                && feed.decoder == crate::config::DecoderPreference::Hardware
-        })
-        .map(|(_, feed)| feed.name.clone())
-        .collect();
-    let mut automatic_feeds: Vec<String> = config
-        .feeds
-        .iter()
-        .enumerate()
-        .filter(|(index, feed)| {
-            config.displays_showing(*index) > 0
-                && feed.decoder == crate::config::DecoderPreference::Auto
-        })
-        .map(|(_, feed)| feed.name.clone())
-        .collect();
-    automatic_feeds.sort();
-    let available_slots = config
-        .hardware_decoder_limit
-        .saturating_sub(hardware_feeds.len());
-    hardware_feeds.extend(automatic_feeds.into_iter().take(available_slots));
+    let hardware_feeds = hardware_feed_names(&config);
 
     let sources: Vec<Arc<Source>> = config
         .feeds
@@ -1341,6 +1317,35 @@ fn scene_parts(
 /// something. It also means never committing while a flip is outstanding,
 /// which the kernel refuses with EBUSY. A loop that retried instead spun at
 /// thousands of rejections a second.
+/// Resolve per-camera preferences into a stable set of grid feeds that
+/// may attempt hardware decoding. Fullscreen streams are deliberately excluded.
+fn hardware_feed_names(config: &config::Config) -> HashSet<String> {
+    let mut selected: HashSet<String> = config
+        .feeds
+        .iter()
+        .enumerate()
+        .filter(|(index, feed)| {
+            config.displays_showing(*index) > 0
+                && feed.decoder == crate::config::DecoderPreference::Hardware
+        })
+        .map(|(_, feed)| feed.name.clone())
+        .collect();
+    let mut automatic: Vec<String> = config
+        .feeds
+        .iter()
+        .enumerate()
+        .filter(|(index, feed)| {
+            config.displays_showing(*index) > 0
+                && feed.decoder == crate::config::DecoderPreference::Auto
+        })
+        .map(|(_, feed)| feed.name.clone())
+        .collect();
+    automatic.sort();
+    let remaining = config.hardware_decoder_limit.saturating_sub(selected.len());
+    selected.extend(automatic.into_iter().take(remaining));
+    selected
+}
+
 fn run_walls(
     card: &Arc<Card>,
     sources: &[Arc<Source>],
@@ -2940,6 +2945,31 @@ fn first_connected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_hardware_preferences_win_before_auto_feeds() {
+        let config = config::Config::parse(
+            r#"
+hardware_decoder_limit: 2
+feeds:
+  z_priority: {url: rtsp://z, decoder: hardware}
+  b_auto: rtsp://b
+  a_auto: rtsp://a
+  cpu_only: {url: rtsp://c, decoder: software}
+displays:
+  - viewports:
+      - {feeds: [z_priority, b_auto, a_auto, cpu_only]}
+"#,
+        )
+        .unwrap();
+
+        let selected = hardware_feed_names(&config);
+        assert_eq!(selected.len(), 2);
+        assert!(selected.contains("z_priority"));
+        assert!(selected.contains("a_auto"));
+        assert!(!selected.contains("b_auto"));
+        assert!(!selected.contains("cpu_only"));
+    }
 
     #[test]
     fn rtsp_user_information_is_redacted_from_logs() {
