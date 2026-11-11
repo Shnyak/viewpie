@@ -15,6 +15,12 @@ use std::process::Command;
 const LIBS: [&str; 3] = ["libavcodec", "libavformat", "libavutil"];
 
 fn main() {
+    // Embed the source commit timestamp supplied by the release workflow.
+    // Local builds remain explicit instead of reporting a fabricated date.
+    let build_date = std::env::var("VIEWPIE_BUILD_DATE").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=VIEWPIE_BUILD_DATE={build_date}");
+    println!("cargo:rerun-if-env-changed=VIEWPIE_BUILD_DATE");
+
     // Desktop/headless builds must not require system FFmpeg development headers.
     if std::env::var_os("CARGO_FEATURE_NATIVE_PIPELINE").is_none() {
         return;
