@@ -43,7 +43,7 @@ def main():
         if command != "INSTALL":
             connection.sendall(b'{"ok":false,"error":"unsupported command"}\n')
             return 2
-        connection.sendall(b'{"ok":true,"status":"started"}\n')
+        connection.sendall(b"1")
 
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("w") as lock:
