@@ -1,4 +1,4 @@
-viewpie (0.2.27-fork-1) unstable; urgency=medium
+viewpie (0.2.28-fork-1) unstable; urgency=medium
 
   * Fix updater Debian control-field parsing so verified packages can be
     identified and installed on Debian 12 / Raspberry Pi OS Bookworm.
