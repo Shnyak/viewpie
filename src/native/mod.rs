@@ -1533,9 +1533,7 @@ fn run_walls(
                             wall.show(Mode::Fullscreen(at));
                             panel_changed |= was != wall.mode;
                         } else {
-                            eprintln!(
-                                            "unknown camera requested for fullscreen: {camera}"
-                                        );
+                            eprintln!("unknown camera requested for fullscreen: {camera}");
                         }
                     }
                 }
