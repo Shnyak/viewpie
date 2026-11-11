@@ -18,7 +18,9 @@ use crate::http_api::state::{AppState, WallCommand};
 
 /// `POST /api/pause` — switch off the physical display without stopping decoders.
 pub async fn pause(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
-    state.persist_screen_state(false).await
+    state
+        .persist_screen_state(false)
+        .await
         .map_err(|e| ApiError::Internal(format!("could not persist screen state: {e}")))?;
     crate::http_api::state::set_paused(true).await;
     let _ = state.command_tx.send(WallCommand::Pause).await;
@@ -27,7 +29,9 @@ pub async fn pause(State(state): State<AppState>) -> Result<Json<OkResponse>, Ap
 
 /// `POST /api/resume` — switch the physical display back on.
 pub async fn resume(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
-    state.persist_screen_state(true).await
+    state
+        .persist_screen_state(true)
+        .await
         .map_err(|e| ApiError::Internal(format!("could not persist screen state: {e}")))?;
     crate::http_api::state::set_paused(false).await;
     let _ = state.command_tx.send(WallCommand::Resume).await;
