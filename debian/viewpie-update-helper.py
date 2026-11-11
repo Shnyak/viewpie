@@ -36,7 +36,7 @@ def request_json(url):
 
 
 def main():
-    server = socket.socket(fileno=os.dup(3))
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=os.dup(3))
     connection, _ = server.accept()
     with connection:
         command = connection.makefile("rb").readline(64).decode("ascii", "replace").strip()
