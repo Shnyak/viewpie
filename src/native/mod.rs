@@ -1697,7 +1697,6 @@ fn run_walls(
                 let clock = started.elapsed();
                 // A display is only due once its last commit has flipped, so
                 // on_screen is what its planes show now.
-                let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let mut ready = Vec::new();
                 let mut panel_switched_this_pass = false;
                 let mut panel_detach_submitted = false;
@@ -1824,6 +1823,7 @@ fn run_walls(
                     } else {
                         // The outgoing scene stays visible until every
                         // incoming viewport has a usable first frame.
+                        let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                         ready = match wall.mode {
                             Mode::Grid => {
                                 collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
