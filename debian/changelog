@@ -1,3 +1,12 @@
+viewpie (0.2.29-fork-1) unstable; urgency=medium
+
+  * Prepare incoming panel scenes before atomically replacing the visible KMS scene.
+  * Add configurable screen power restoration after HDMI disconnect and reconnect.
+  * Expose the hardware decoder budget in Home Assistant; default remains six.
+  * Keep cameras beyond the configured hardware budget on software decoding.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Thu, 12 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.28-fork-1) unstable; urgency=medium
 
   * Fix updater Debian control-field parsing so verified packages can be
