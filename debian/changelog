@@ -1,3 +1,13 @@
+viewpie (0.2.31-fork-1) unstable; urgency=medium
+
+  * Render the diagnostics overlay with antialiased DejaVu Sans, including
+    Cyrillic glyphs, instead of scaling a tiny hand-drawn bitmap font.
+  * Clear every reserved camera KMS plane and wait for its page flip before
+    attaching a newly selected panel, preventing stale cameras from remaining
+    visible in their previous grid positions.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Thu, 12 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.30-fork-1) unstable; urgency=medium
 
   * Interrupt FFmpeg RTSP open/read operations as soon as a fullscreen stream
