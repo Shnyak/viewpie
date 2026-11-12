@@ -6,7 +6,7 @@
 //! to KMS, the software one after an upload.
 
 use super::ffi::*;
-use std::ffi::CString;
+use std::ffi::{c_void, CString};
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -93,6 +93,8 @@ impl From<&str> for Refused {
 
 pub struct Decoder {
     fmt: *mut AVFormatContext,
+    /// Keeps the RTSP interrupt callback state alive until the format context closes.
+    _interrupt: Box<InterruptState>,
     codec_ctx: *mut AVCodecContext,
     pkt: *mut AVPacket,
     stream_index: c_int,
@@ -114,6 +116,28 @@ pub struct Decoder {
     /// Kept distinct from a quiet RTSP stream so hardware failures can fall
     /// back to software without treating ordinary camera disconnects as such.
     pub decoder_failed: bool,
+}
+
+// FFmpeg may block inside RTSP open/read even after a feed is no longer wanted.
+// Keep stable pointers to the owning thread's flags so libav can interrupt that
+// blocking operation immediately when fullscreen moves to another camera.
+struct InterruptState {
+    shutdown: *const AtomicBool,
+    wanted: *const AtomicBool,
+}
+
+unsafe extern "C" fn interrupt_callback(opaque: *mut c_void) -> c_int {
+    if opaque.is_null() {
+        return 0;
+    }
+    let state = unsafe { &*opaque.cast::<InterruptState>() };
+    let shutdown = unsafe { &*state.shutdown };
+    let wanted = unsafe { &*state.wanted };
+    if shutdown.load(Ordering::Acquire) || !wanted.load(Ordering::Relaxed) {
+        1
+    } else {
+        0
+    }
 }
 
 // The pointers are owned by this struct and touched only from the thread that
@@ -145,6 +169,8 @@ impl Decoder {
         stats: Arc<FeedStats>,
         limit: (u32, u32),
         held: usize,
+        wanted: &AtomicBool,
+        shutdown: &AtomicBool,
         force_software: bool,
     ) -> Result<Self, Refused> {
         unsafe {
@@ -175,7 +201,18 @@ impl Decoder {
             for name in ["timeout", "stimeout"] {
                 dict_set(&mut opts, name, "5000000");
             }
-            let mut fmt: *mut AVFormatContext = std::ptr::null_mut();
+            let mut interrupt = Box::new(InterruptState {
+                shutdown,
+                wanted,
+            });
+            let mut fmt = avformat_alloc_context();
+            if fmt.is_null() {
+                return Err("alloc format context".into());
+            }
+            (*fmt).interrupt_callback = AVIOInterruptCB {
+                callback: Some(interrupt_callback),
+                opaque: (&mut *interrupt as *mut InterruptState).cast::<c_void>(),
+            };
             let c_url = CString::new(url).map_err(|_| "url has a NUL")?;
             let r = avformat_open_input(&mut fmt, c_url.as_ptr(), std::ptr::null_mut(), &mut opts);
             // What open_input did not understand it leaves behind, so this is
@@ -186,6 +223,7 @@ impl Decoder {
             // timeout at all.
             let mut unknown = unused_options(&mut opts, url);
             if r < 0 {
+                avformat_close_input(&mut fmt);
                 return Err(format!("open RTSP stream: {}", av_err(r)).into());
             }
             let r = avformat_find_stream_info(fmt, std::ptr::null_mut());
@@ -301,6 +339,7 @@ impl Decoder {
             }
 
             Ok(Decoder {
+                _interrupt: interrupt,
                 unused,
                 decoder_name,
                 hardware_fallback,
@@ -748,4 +787,29 @@ fn v4l2_device(matches: impl Fn(&str) -> bool) -> bool {
 unsafe fn stream_codecpar(fmt: *mut AVFormatContext, idx: c_int) -> *const AVCodecParameters {
     let stream = *(*fmt).streams.offset(idx as isize);
     (*stream).codecpar
+}
+
+
+#[cfg(test)]
+mod interrupt_tests {
+    use super::*;
+
+    #[test]
+    fn rtsp_io_is_interrupted_as_soon_as_a_source_is_no_longer_wanted() {
+        let shutdown = AtomicBool::new(false);
+        let wanted = AtomicBool::new(true);
+        let state = InterruptState {
+            shutdown: &shutdown,
+            wanted: &wanted,
+        };
+        let opaque = &state as *const InterruptState as *mut c_void;
+
+        assert_eq!(unsafe { interrupt_callback(opaque) }, 0);
+        wanted.store(false, Ordering::Release);
+        assert_eq!(unsafe { interrupt_callback(opaque) }, 1);
+
+        wanted.store(true, Ordering::Release);
+        shutdown.store(true, Ordering::Release);
+        assert_eq!(unsafe { interrupt_callback(opaque) }, 1);
+    }
 }
