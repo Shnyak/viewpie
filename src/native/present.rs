@@ -703,7 +703,7 @@ impl Card {
             pixel.copy_from_slice(&0xff10_1820u32.to_le_bytes());
         }
         let font = diagnostics_font()?;
-        let font_size = if overlay.width >= 480 { 17.0 } else { 15.0 };
+        let font_size = if overlay.width >= 480 { 15.0 } else { 13.0 };
         let line_metrics = font
             .horizontal_line_metrics(font_size)
             .ok_or_else(|| "DejaVu Sans has no horizontal line metrics".to_string())?;
