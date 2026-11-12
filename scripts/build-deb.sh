@@ -22,6 +22,7 @@ sudo apt-get install -y --no-install-recommends debootstrap debian-archive-keyri
 ROOT=""
 cleanup() {
     if [ -n "$ROOT" ]; then
+        sudo umount "$ROOT/proc" 2>/dev/null || true
         sudo rm -rf "$ROOT"
     fi
 }
@@ -43,6 +44,7 @@ for t in $targets; do
     sudo cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
     sudo mkdir -p "$ROOT/src" "$ROOT/out"
     sudo cp -a . "$ROOT/src/"
+    sudo mount -t proc proc "$ROOT/proc"
 
     echo "=== cross-building $t inside Debian Bookworm chroot (no Docker) ==="
     sudo chroot "$ROOT" /usr/bin/env \
@@ -80,7 +82,7 @@ for t in $targets; do
         '
 
     sudo cp "$ROOT"/out/viewpie_*_"$t".deb dist/
-    sudo rm -rf "$ROOT"
+    cleanup
     ROOT=""
 done
 
