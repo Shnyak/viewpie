@@ -19,7 +19,7 @@ use drm::Device as BasicDevice;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsFd, BorrowedFd};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 /// A DRM device, opened for modesetting.
