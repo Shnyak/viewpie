@@ -1,3 +1,16 @@
+viewpie (0.2.32-fork-1) unstable; urgency=medium
+
+  * Keep the currently visible grid or fullscreen camera attached until the
+    newly selected fullscreen camera has produced its first usable frame.
+    Switching directly between fullscreen cameras reuses the existing plane,
+    avoiding an unnecessary blank interval.
+  * Bound the selection acknowledgement wait to six seconds and release the
+    controller lock before waiting, so a failed camera cannot block a later
+    selection. The camera decoder continues its existing bounded reconnect
+    backoff and can recover automatically.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Thu, 12 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.31-fork-1) unstable; urgency=medium
 
   * Render the diagnostics overlay with antialiased DejaVu Sans, including

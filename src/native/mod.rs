@@ -1842,15 +1842,37 @@ fn run_walls(
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let target = wall.watched.then_some(wall.mode);
                 if wall.pending_panel.is_none() && wall.laid_out != target {
-                    // Every plane let go of, once, and whatever comes next laid
-                    // out afresh once that has flipped. Paused, that is all until
-                    // someone is watching again: the planes would otherwise hold
-                    // the last frames, and with them the decoders' buffers, for
-                    // as long as the pause lasted.
-                    ready = let_go(&wall.viewports, showing, 0);
-                    if ready.is_empty() {
+                    let fullscreen_to_fullscreen = matches!(
+                        (wall.laid_out, target),
+                        (Some(Mode::Fullscreen(_)), Some(Mode::Fullscreen(_)))
+                    );
+                    if fullscreen_to_fullscreen {
+                        // Both cameras use the same single-plane layout. Keep
+                        // the old camera attached until the new one has a frame.
                         wall.laid_out = target;
                         wall.fullscreen_tap = None;
+                    } else if let Some(Mode::Fullscreen(at)) = target {
+                        if fullscreen_frame(&wall.cameras[at]).is_some() {
+                            // On the grid-to-fullscreen path, first wait for a
+                            // usable frame; only then release the grid planes.
+                            ready = let_go(&wall.viewports, showing, 0);
+                            if ready.is_empty() {
+                                wall.laid_out = target;
+                                wall.fullscreen_tap = None;
+                            }
+                        } else {
+                            // No first frame yet: keep every currently visible
+                            // plane untouched while the on-demand decoder retries.
+                            ready.clear();
+                        }
+                    } else {
+                        // Returning to the grid (or pausing) still needs a
+                        // clean plane pool before the next layout is attached.
+                        ready = let_go(&wall.viewports, showing, 0);
+                        if ready.is_empty() {
+                            wall.laid_out = target;
+                            wall.fullscreen_tap = None;
+                        }
                     }
                 }
                 if wall.pending_panel.is_none()
@@ -2257,6 +2279,17 @@ fn let_go(
 /// The grid's viewports present nothing meanwhile and count nothing, and
 /// the frame is left out of the commit when the plane is showing it
 /// already, as collect_ready does.
+fn fullscreen_frame(camera: &Camera) -> Option<(Arc<Source>, Arc<Shown>, u64)> {
+    if let Some(fullscreen) = camera.fullscreen.as_ref() {
+        let (shown, generation) = fullscreen.frame();
+        if let Some(shown) = shown {
+            return Some((fullscreen.clone(), shown, generation));
+        }
+    }
+    let (shown, generation) = camera.feed.frame();
+    shown.map(|shown| (camera.feed.clone(), shown, generation))
+}
+
 fn collect_fullscreen(
     viewports: &[Viewport],
     showing: impl Fn(usize) -> Option<*const Shown>,
@@ -2265,43 +2298,38 @@ fn collect_fullscreen(
     tap: &mut Option<(Tap, Duration)>,
     clock: Duration,
 ) -> Vec<(usize, Viewport, Option<Arc<Shown>>)> {
-    let mut ready = let_go(viewports, &showing, 1);
     let Some(first) = viewports.first() else {
-        return ready;
+        return Vec::new();
     };
-    let (source, (shown, gen)) = match camera.fullscreen.as_ref().map(|f| (f, f.frame())) {
-        Some(sharp @ (_, (Some(_), _))) => sharp,
-        _ => (&camera.feed, camera.feed.frame()),
+    // Do not detach the current scene while the requested camera is still
+    // connecting. The previous fullscreen frame (or the complete grid) stays
+    // on screen, and the decoder keeps retrying independently in the background.
+    let Some((source, shown, gen)) = fullscreen_frame(camera) else {
+        return Vec::new();
     };
-    match shown {
-        Some(shown) => {
-            let returning = !tap
-                .as_ref()
-                .is_some_and(|(t, _)| Arc::ptr_eq(&t.source, source));
-            if returning {
-                *tap = Some((Tap::new(source.clone()), clock));
-            }
-            if let Some((tap, _)) = tap {
-                tap.count(gen, returning);
-            }
-            if showing(0) != Some(Arc::as_ptr(&shown)) {
-                let t = Viewport {
-                    crtc_x: 0,
-                    crtc_y: 0,
-                    crtc_w: width,
-                    crtc_h: height,
-                    gap_w: 0,
-                    gap_h: 0,
-                    src_w: shown.width,
-                    src_h: shown.height,
-                    ..*first
-                };
-                ready.push((0, t, Some(shown)));
-            }
-        }
-        // The camera has gone away: the background, as on the grid.
-        None if showing(0).is_some() => ready.push((0, *first, None)),
-        None => {}
+    let mut ready = let_go(viewports, &showing, 1);
+    let returning = !tap
+        .as_ref()
+        .is_some_and(|(t, _)| Arc::ptr_eq(&t.source, &source));
+    if returning {
+        *tap = Some((Tap::new(source.clone()), clock));
+    }
+    if let Some((tap, _)) = tap {
+        tap.count(gen, returning);
+    }
+    if showing(0) != Some(Arc::as_ptr(&shown)) {
+        let t = Viewport {
+            crtc_x: 0,
+            crtc_y: 0,
+            crtc_w: width,
+            crtc_h: height,
+            gap_w: 0,
+            gap_h: 0,
+            src_w: shown.width,
+            src_h: shown.height,
+            ..*first
+        };
+        ready.push((0, t, Some(shown)));
     }
     ready
 }
@@ -3735,13 +3763,11 @@ displays:
         assert_eq!(ready[0].1.plane, viewports[1].plane);
     }
 
-    /// Fullscreen, every plane but the first is let go of, and the first
-    /// too while the camera has nothing to show, each once.
+    /// An unavailable fullscreen target must not detach the grid or the
+    /// previously visible camera while its decoder is still reconnecting.
     #[test]
-    fn fullscreen_lets_go_of_the_grid() {
+    fn fullscreen_keeps_the_current_scene_until_a_first_frame_exists() {
         let viewports = vec![viewport_at(1), viewport_at(2), viewport_at(3)];
-        // Neither stream has a frame: a camera whose stream for fullscreen
-        // is still connecting, and whose feed has gone away too.
         let camera = Camera {
             feed: Arc::new(Source::new("porch", true)),
             fullscreen: Some(Arc::new(Source::on_demand("porch (fullscreen)"))),
@@ -3756,9 +3782,10 @@ displays:
             &mut None,
             Duration::ZERO,
         );
-        let let_go: Vec<usize> = ready.iter().map(|(i, _, _)| *i).collect();
-        assert_eq!(let_go, [1, 2, 0]);
-        assert!(ready.iter().all(|(_, _, fb)| fb.is_none()));
+        assert!(
+            ready.is_empty(),
+            "no frame means no plane detach or replacement commit"
+        );
 
         let ready = collect_fullscreen(
             &viewports,
@@ -3768,7 +3795,7 @@ displays:
             &mut None,
             Duration::ZERO,
         );
-        assert!(ready.is_empty(), "nothing left attached to let go of");
+        assert!(ready.is_empty(), "an empty display stays untouched too");
     }
 
     #[test]
