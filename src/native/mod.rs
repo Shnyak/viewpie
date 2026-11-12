@@ -1742,7 +1742,9 @@ fn run_walls(
                         .as_ref()
                         .is_some_and(|scene| scene_frames_ready(&scene.feeds, clock));
 
-                    if panel_transition_stage(incoming_ready, wall.panel_detach_pending) == PanelTransitionStage::DetachOutgoing {
+                    if panel_transition_stage(incoming_ready, wall.panel_detach_pending)
+                        == PanelTransitionStage::DetachOutgoing
+                    {
                         // Do not rely on the old scene's viewport count or its
                         // cached per-slot frame references. Explicitly detach
                         // every reserved camera plane, including slots that
@@ -1770,7 +1772,9 @@ fn run_walls(
                         ready = detach;
                         panel_detach_submitted = true;
                         panel_switched_this_pass = true;
-                    } else if panel_transition_stage(incoming_ready, wall.panel_detach_pending) == PanelTransitionStage::AttachIncoming {
+                    } else if panel_transition_stage(incoming_ready, wall.panel_detach_pending)
+                        == PanelTransitionStage::AttachIncoming
+                    {
                         let mut incoming =
                             wall.pending_scene.take().expect("prepared scene exists");
                         let incoming_count = incoming.viewports.len();
@@ -1809,7 +1813,9 @@ fn run_walls(
                             ready.clear();
                             panel_switched_this_pass = true;
                         }
-                    } else if panel_transition_stage(incoming_ready, wall.panel_detach_pending) == PanelTransitionStage::KeepBlank {
+                    } else if panel_transition_stage(incoming_ready, wall.panel_detach_pending)
+                        == PanelTransitionStage::KeepBlank
+                    {
                         // The old plane pool has already been detached. Keep
                         // it blank while the incoming scene is being prepared
                         // or while one of its feeds retries.
