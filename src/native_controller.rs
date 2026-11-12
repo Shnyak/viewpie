@@ -153,7 +153,7 @@ impl NativeRendererController {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 anyhow::bail!(
-                    "native renderer did not confirm a visible frame for camera {camera} within 6 seconds"
+                    "camera {camera} has not produced a visible frame within 6 seconds; the previous picture was kept and the camera will continue reconnecting"
                 );
             }
             tokio::time::timeout(remaining, receiver.changed())
