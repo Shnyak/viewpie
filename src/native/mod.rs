@@ -2323,7 +2323,13 @@ fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
         };
         lines.push(format!(
             "{} {} {} {} {} e{} {}",
-            source.name.to_ascii_uppercase(), path, codec, resolution, fps, errors, state
+            source.name.to_ascii_uppercase(),
+            path,
+            codec,
+            resolution,
+            fps,
+            errors,
+            state
         ));
     }
     let cpu = debug_cpu_load_percent()
