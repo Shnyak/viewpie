@@ -1419,6 +1419,26 @@ fn scene_parts(
     Ok((viewports, feeds, cameras))
 }
 
+/// The four safe states of a panel replacement. "planes_detached" is set
+/// only after KMS accepted the full detach commit; the event loop also waits
+/// for its page flip before it can reach AttachIncoming.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PanelTransitionStage {
+    KeepOutgoing,
+    DetachOutgoing,
+    KeepBlank,
+    AttachIncoming,
+}
+
+fn panel_transition_stage(incoming_ready: bool, planes_detached: bool) -> PanelTransitionStage {
+    match (incoming_ready, planes_detached) {
+        (false, false) => PanelTransitionStage::KeepOutgoing,
+        (true, false) => PanelTransitionStage::DetachOutgoing,
+        (false, true) => PanelTransitionStage::KeepBlank,
+        (true, true) => PanelTransitionStage::AttachIncoming,
+    }
+}
+
 /// Whether every viewport in a prepared scene has a first frame ready.
 fn scene_frames_ready(feeds: &[Feeds], clock: Duration) -> bool {
     !feeds.is_empty()
@@ -1722,7 +1742,7 @@ fn run_walls(
                         .as_ref()
                         .is_some_and(|scene| scene_frames_ready(&scene.feeds, clock));
 
-                    if incoming_ready && !wall.panel_detach_pending {
+                    if panel_transition_stage(incoming_ready, wall.panel_detach_pending) == PanelTransitionStage::DetachOutgoing {
                         // Do not rely on the old scene's viewport count or its
                         // cached per-slot frame references. Explicitly detach
                         // every reserved camera plane, including slots that
@@ -1750,7 +1770,7 @@ fn run_walls(
                         ready = detach;
                         panel_detach_submitted = true;
                         panel_switched_this_pass = true;
-                    } else if incoming_ready {
+                    } else if panel_transition_stage(incoming_ready, wall.panel_detach_pending) == PanelTransitionStage::AttachIncoming {
                         let mut incoming =
                             wall.pending_scene.take().expect("prepared scene exists");
                         let incoming_count = incoming.viewports.len();
@@ -1789,7 +1809,7 @@ fn run_walls(
                             ready.clear();
                             panel_switched_this_pass = true;
                         }
-                    } else if wall.panel_detach_pending {
+                    } else if panel_transition_stage(incoming_ready, wall.panel_detach_pending) == PanelTransitionStage::KeepBlank {
                         // The old plane pool has already been detached. Keep
                         // it blank while the incoming scene is being prepared
                         // or while one of its feeds retries.
@@ -3421,6 +3441,16 @@ fn first_connected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_transition_never_attaches_before_the_old_plane_pool_is_detached() {
+        use PanelTransitionStage::*;
+
+        assert_eq!(panel_transition_stage(false, false), KeepOutgoing);
+        assert_eq!(panel_transition_stage(true, false), DetachOutgoing);
+        assert_eq!(panel_transition_stage(false, true), KeepBlank);
+        assert_eq!(panel_transition_stage(true, true), AttachIncoming);
+    }
 
     #[test]
     fn diagnostics_keep_only_camera_names_uppercase() {
