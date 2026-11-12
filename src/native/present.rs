@@ -708,7 +708,7 @@ impl Card {
             .horizontal_line_metrics(font_size)
             .ok_or_else(|| "DejaVu Sans has no horizontal line metrics".to_string())?;
         let line_height = line_metrics.new_line_size.ceil().max(1.0) as usize;
-        let max_lines = overlay.height.saturating_sub(16) as usize / line_height;
+        let max_lines = overlay.height as usize / line_height;
 
         for (line_index, line) in lines.iter().take(max_lines).enumerate() {
             let baseline = 8.0 + line_index as f32 * line_height as f32 + line_metrics.ascent;
