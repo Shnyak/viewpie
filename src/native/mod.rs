@@ -1902,8 +1902,6 @@ fn run_walls(
                                 == Some(wall.cameras[at].feed.name.as_str())
                             && wall.on_screen.first().is_some_and(|shown| shown.is_some())
                 );
-                let fullscreen_frame_ready =
-                    new_fullscreen_frame_ready || fullscreen_already_visible;
                 let had_overlay = wall.debug_overlay_active;
                 let result = card.commit(
                     wall.out.crtc,
