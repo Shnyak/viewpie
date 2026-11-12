@@ -1680,6 +1680,7 @@ fn run_walls(
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let mut ready = Vec::new();
                 let mut panel_switched_this_pass = false;
+                let mut panel_detach_submitted = false;
                 if let Some(panel) = wall.pending_panel.clone() {
                     // Build the incoming scene once, but keep it detached
                     // while its cameras publish their first frames.
@@ -1747,7 +1748,7 @@ fn run_walls(
                             ));
                         }
                         ready = detach;
-                        wall.panel_detach_pending = true;
+                        panel_detach_submitted = true;
                         panel_switched_this_pass = true;
                     } else if incoming_ready {
                         let mut incoming =
@@ -1909,6 +1910,11 @@ fn run_walls(
                 };
                 match result {
                     Ok(()) => {
+                        if panel_detach_submitted {
+                            // The detach is now accepted and its flip is owed.
+                            // Do not attach the incoming scene until that flip.
+                            wall.panel_detach_pending = true;
+                        }
                         if wall.debug_overlay.is_some() {
                             wall.debug_overlay_detached = !wall.debug_overlay_active;
                         }
