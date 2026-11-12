@@ -3462,7 +3462,7 @@ feeds:
   spare_priority: {url: rtsp://spare, decoder: hardware}
 displays:
   - viewports:
-      - {feeds: [z_priority, b_auto, a_auto, cpu_only]}
+      - {feeds: [z_priority, b_auto, a_auto, cpu_only, spare_priority]}
 "#,
         )
         .unwrap();
@@ -3470,10 +3470,10 @@ displays:
         let selected = hardware_feed_names(&config);
         assert_eq!(selected.len(), 2);
         assert!(selected.contains("z_priority"));
-        assert!(selected.contains("a_auto"));
+        assert!(selected.contains("spare_priority"));
+        assert!(!selected.contains("a_auto"));
         assert!(!selected.contains("b_auto"));
         assert!(!selected.contains("cpu_only"));
-        assert!(!selected.contains("spare_priority"));
     }
 
     #[test]
