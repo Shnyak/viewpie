@@ -222,11 +222,11 @@ def install_latest_release(preserve_log=False):
             _write_status(progress_percent=None)
             # The updater uses dpkg directly rather than apt resolving
             # dependencies. Ensure the diagnostics font is present first.
-            event("dependencies", "$ apt-get install -y --no-install-recommends fonts-dejavu-core")
+            event("install", "$ apt-get install -y --no-install-recommends fonts-dejavu-core")
             run_logged(
                 ["apt-get", "install", "-y", "--no-install-recommends", "fonts-dejavu-core"],
                 timeout_seconds=900,
-                phase="dependencies",
+                phase="install",
             )
             event("install", "$ dpkg -i " + package.name + " — установка " + package_version)
             run_logged(["dpkg", "-i", str(package)], timeout_seconds=900, phase="dpkg")
