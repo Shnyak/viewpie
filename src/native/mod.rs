@@ -2295,7 +2295,7 @@ struct WallMark {
 /// Text shown on the optional KMS plane. Keep the overlay compact: it is
 /// deliberately a small status panel, not a copy of the full journal.
 fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
-    let mut lines = vec!["CAMERA PATH CODEC RESOLUTION FPS ERRORS".to_string()];
+    let mut lines = vec!["camera path codec resolution fps errors".to_string()];
     for source in sources
         .iter()
         .filter(|source| source.persistent_grid || source.wanted.load(Ordering::Relaxed))
@@ -2304,11 +2304,11 @@ fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
         let path = match (info.decoder.as_deref(), info.mode.as_deref()) {
             (Some(decoder), Some(mode)) => format!("{decoder}/{mode}"),
             (Some(decoder), None) => decoder.to_string(),
-            _ => "WAIT".to_string(),
+            _ => "wait".to_string(),
         };
         let codec = info.codec.unwrap_or_else(|| "?".to_string());
         let resolution = match (info.width, info.height) {
-            (Some(width), Some(height)) => format!("{width}X{height}"),
+            (Some(width), Some(height)) => format!("{width}x{height}"),
             _ => "?".to_string(),
         };
         let fps = info
@@ -2317,13 +2317,13 @@ fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
             .unwrap_or_else(|| "-".into());
         let errors = source.stats.errors.load(Ordering::Relaxed).max(info.errors);
         let state = if source.wanted.load(Ordering::Relaxed) {
-            info.state.unwrap_or_else(|| "CONNECTING".to_string())
+            info.state.unwrap_or_else(|| "connecting".to_string())
         } else {
-            "PAUSED".to_string()
+            "paused".to_string()
         };
         lines.push(format!(
-            "{} {} {} {} {} E{} {}",
-            source.name, path, codec, resolution, fps, errors, state
+            "{} {} {} {} {} e{} {}",
+            source.name.to_ascii_uppercase(), path, codec, resolution, fps, errors, state
         ));
     }
     let cpu = debug_cpu_load_percent()
@@ -2334,7 +2334,7 @@ fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
         .and_then(|value| value.trim().parse::<f64>().ok())
         .map(|value| format!("{:.1}C", value / 1000.0))
         .unwrap_or_else(|| "?".to_string());
-    lines.push(format!("CPU {cpu} TEMP {temp}"));
+    lines.push(format!("cpu {cpu} temp {temp}"));
     lines
 }
 
@@ -2817,6 +2817,8 @@ fn feed_session(
         source.stats.clone(),
         limit,
         frames_held(displays),
+        &source.wanted,
+        shutdown,
         force_software,
     )?;
     {
@@ -3389,6 +3391,17 @@ fn first_connected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostics_keep_only_camera_names_uppercase() {
+        let source = Arc::new(Source::new("front_door", true));
+        let lines = debug_overlay_lines(&[source]);
+        assert_eq!(lines[0], "camera path codec resolution fps errors");
+        assert!(lines[1].starts_with("FRONT_DOOR "));
+        assert!(lines[1].contains(" wait "));
+        assert!(lines[1].ends_with(" connecting"));
+        assert!(lines.last().unwrap().starts_with("cpu "));
+    }
 
     #[test]
     fn fullscreen_can_resolve_a_registered_camera_outside_the_active_panel() {
