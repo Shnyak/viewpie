@@ -65,6 +65,8 @@ jobs:
       # make the result nondeterministic.
       - name: Run unit tests serially
         run: cargo test --locked -- --test-threads=1
+      - name: Run native-pipeline unit tests serially
+        run: cargo test --locked --features native-pipeline --lib -- --test-threads=1
 
   deb:
     needs: test
