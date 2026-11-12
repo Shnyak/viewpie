@@ -28,6 +28,8 @@ for t in $targets; do
     esac
 
     echo "=== preparing Debian Bookworm cross toolchain for $t ==="
+    sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+    sudo apt-get install -y --no-install-recommends debian-archive-keyring
     sudo dpkg --add-architecture "$t"
     sudo tee /etc/apt/sources.list.d/viewpie-bookworm-cross.list >/dev/null <<EOF
 deb [arch=amd64] http://deb.debian.org/debian bookworm main
