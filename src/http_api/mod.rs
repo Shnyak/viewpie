@@ -175,14 +175,44 @@ fn spawn_background_tasks(
     let st = state.clone();
     let screen_renderer = native_renderer.clone();
     tokio::spawn(async move {
+        let mut previous_connected = crate::kms::check_display_connected_via_kms().await;
         loop {
+            let connected = crate::kms::check_display_connected_via_kms().await;
+            let reconnected = matches!((previous_connected, connected), (Some(false), Some(true)));
+            if let Some(current) = connected {
+                previous_connected = Some(current);
+            }
+            if reconnected {
+                let (mode, last_screen_on) = {
+                    let settings = st.settings.read().await;
+                    (settings.screen_boot_mode, settings.last_screen_on)
+                };
+                let restore_on = mode.resolve(last_screen_on);
+                info!(
+                    screen_on = restore_on,
+                    ?mode,
+                    "display reconnected — applying screen power restore policy"
+                );
+                if let Err(error) = st.persist_screen_state(restore_on).await {
+                    error!("could not persist restored screen state: {error}");
+                }
+                crate::http_api::state::set_paused(!restore_on).await;
+                crate::http_api::state::set_auto_paused(false).await;
+                if let Some(renderer) = &screen_renderer {
+                    if let Err(error) = renderer.set_display_power(restore_on).await {
+                        error!("could not apply screen power restore policy: {error}");
+                    }
+                }
+            }
             let (pause_off, paused, auto_paused) = {
                 let s = st.settings.read().await;
                 let w = st.wall_state.read().await;
                 (s.pause_off_screen, w.paused, w.auto_paused)
             };
             if pause_off {
-                let screen_on = check_screen_via_kms().await;
+                // A physically disconnected display is off even if its
+                // connector's last DPMS value still reads "On".
+                let screen_on = connected != Some(false) && check_screen_via_kms().await;
                 if !screen_on && !paused && !auto_paused {
                     info!("screen switched off — turning HDMI DPMS off");
                     if let Some(renderer) = &screen_renderer {

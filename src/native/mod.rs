@@ -464,6 +464,10 @@ struct Wall {
     fullscreen_sources: Vec<Option<Arc<Source>>>,
     current_panel: Option<String>,
     pending_panel: Option<String>,
+    /// Prepared off-screen until every incoming viewport has a first frame.
+    pending_scene: Option<PendingScene>,
+    /// A panel's atomic replacement must flip before queued fullscreen runs.
+    panel_flip_pending: bool,
     pending_fullscreen: Option<String>,
     /// The feeds behind those viewports, indexed in lockstep.
     feeds: Vec<Feeds>,
@@ -537,6 +541,14 @@ struct Wall {
     debug_overlay_active: bool,
     debug_overlay_detached: bool,
     debug_overlay_updated_at: Instant,
+}
+
+/// A prepared panel that is not on screen yet.
+struct PendingScene {
+    panel: String,
+    viewports: Vec<Viewport>,
+    feeds: Vec<Feeds>,
+    cameras: Vec<Camera>,
 }
 
 /// A camera a display can show fullscreen.
@@ -639,6 +651,7 @@ impl Wall {
         for (i, shown) in commit.named {
             self.on_screen[i] = shown;
         }
+        self.panel_flip_pending = false;
         if let Some(camera) = self.pending_fullscreen_report.take() {
             if let Mode::Fullscreen(at) = self.mode {
                 if self.cameras[at].feed.name == camera {
@@ -1284,12 +1297,13 @@ fn build(
     )?;
     let crtc_active = card.crtc_active(out.crtc)?;
 
+    let plane_count = planes.len();
     Ok(Wall {
         out,
         crtc_active,
-        // Nothing is attached until the first commit that shows something:
-        // the planes were claimed, not configured.
-        on_screen: vec![None; viewports.len()],
+        // Track the whole reserved plane pool so outgoing extra planes can
+        // be detached in the same commit as the incoming panel.
+        on_screen: vec![None; plane_count],
         // Nothing has flipped yet, so nothing would ever be committed: the
         // first commit has to be made rather than waited for.
         in_flight: None,
@@ -1299,6 +1313,8 @@ fn build(
         fullscreen_sources: fullscreen.to_vec(),
         current_panel: active_panel,
         pending_panel: None,
+        pending_scene: None,
+        panel_flip_pending: false,
         pending_fullscreen: None,
         feeds,
         commits: 0,
@@ -1399,17 +1415,15 @@ fn scene_parts(
     Ok((viewports, feeds, cameras))
 }
 
-/// Drive every display from one loop, each paced by its own flips.
-///
-/// One loop rather than a thread per display. Each commit asks for a
-/// page-flip event, and that event is the cue to commit that display again,
-/// so a display that is slower, or in a different refresh rate, simply asks
-/// for its next commit later. A thread apiece would need the card locked
-/// around every commit and would spin whenever a display was not ready;
-/// waiting on the card's events blocks until one of them actually needs
-/// something. It also means never committing while a flip is outstanding,
-/// which the kernel refuses with EBUSY. A loop that retried instead spun at
-/// thousands of rejections a second.
+/// Whether every viewport in a prepared scene has a first frame ready.
+fn scene_frames_ready(feeds: &[Feeds], clock: Duration) -> bool {
+    !feeds.is_empty()
+        && feeds.iter().all(|feed| {
+            let tap = &feed.taps[feed.active(clock)];
+            tap.source.frame().0.is_some()
+        })
+}
+
 /// Resolve per-camera preferences into a stable set of grid feeds that
 /// may attempt hardware decoding. Fullscreen streams are deliberately excluded.
 fn hardware_feed_names(config: &config::Config) -> HashSet<String> {
@@ -1479,6 +1493,17 @@ fn source_wanted_for_wall(source: &Arc<Source>, wall: &Wall) -> bool {
     )
 }
 
+/// Drive every display from one loop, each paced by its own flips.
+///
+/// One loop rather than a thread per display. Each commit asks for a
+/// page-flip event, and that event is the cue to commit that display again,
+/// so a display that is slower, or in a different refresh rate, simply asks
+/// for its next commit later. A thread apiece would need the card locked
+/// around every commit and would spin whenever a display was not ready;
+/// waiting on the card's events blocks until one of them actually needs
+/// something. It also means never committing while a flip is outstanding,
+/// which the kernel refuses with EBUSY. A loop that retried instead spun at
+/// thousands of rejections a second.
 fn run_walls(
     card: &Arc<Card>,
     sources: &[Arc<Source>],
@@ -1526,14 +1551,15 @@ fn run_walls(
                             wall.pending_fullscreen = None;
                             if wall.current_panel.as_deref() == Some(panel.as_str()) {
                                 let had_pending = wall.pending_panel.take().is_some();
+                                wall.pending_scene = None;
                                 let was = wall.mode;
                                 wall.show(Mode::Grid);
                                 panel_changed |= had_pending || was != wall.mode;
                             } else {
-                                // Grid feeds are persistent across scenes.
-                                // Only an on-demand fullscreen stream is stopped
-                                // while the panel's KMS scene is replaced.
+                                // Prepare the incoming scene without disturbing
+                                // the currently visible panel.
                                 wall.pending_panel = Some(panel.clone());
+                                wall.pending_scene = None;
                             }
                         } else {
                             eprintln!("unknown panel requested: {panel}");
@@ -1626,30 +1652,133 @@ fn run_walls(
                 if wall.in_flight.is_some() {
                     continue;
                 }
+                // A fullscreen request queued during a panel change waits
+                // until the incoming panel's atomic commit has flipped.
+                if wall.pending_panel.is_none() && !wall.panel_flip_pending {
+                    if let Some(camera) = wall.pending_fullscreen.take() {
+                        if let Some(at) = ensure_camera_index(
+                            &mut wall.cameras,
+                            sources,
+                            &wall.fullscreen_sources,
+                            &camera,
+                        ) {
+                            wall.show(Mode::Fullscreen(at));
+                            panel_changed = true;
+                        } else {
+                            eprintln!("unknown camera requested for fullscreen: {camera}");
+                        }
+                    }
+                }
                 let clock = started.elapsed();
                 // A display is only due once its last commit has flipped, so
                 // on_screen is what its planes show now.
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
                 let mut ready = Vec::new();
+                let mut panel_switched_this_pass = false;
                 if let Some(panel) = wall.pending_panel.clone() {
-                    let scene = wall.panel_scenes[&panel].clone();
-                    // Persistent grid decoders are deliberately not stopped.
-                    // Wait only for a fullscreen-only stream that was active
-                    // in the outgoing scene; its frame references still drain
-                    // through the detach flip below.
-                    let outgoing_stopped = sources.iter().all(|source| {
-                        !wall.shows(source)
-                            || source.wanted.load(Ordering::Relaxed)
-                            || !source.session_active.load(Ordering::Acquire)
-                    });
-                    if outgoing_stopped || !wall.watched {
-                        // Keep the old scene's framebuffer references until its
-                        // detach commit has flipped. Only then may viewport indices
-                        // and their backing vectors be replaced.
-                        ready = let_go(&wall.viewports, showing, 0);
+                    // Build the incoming scene once, but keep it detached
+                    // while its cameras publish their first frames.
+                    if wall.pending_scene.is_none() {
+                        let scene = wall.panel_scenes[&panel].clone();
+                        let feed_count = wall.fullscreen_sources.len();
+                        match scene_parts(
+                            card,
+                            &sources[..feed_count],
+                            &wall.fullscreen_sources,
+                            &scene,
+                            &wall.plane_pool,
+                            wall.size,
+                            clock,
+                        ) {
+                            Ok((viewports, feeds, cameras)) => {
+                                wall.pending_scene = Some(PendingScene {
+                                    panel: panel.clone(),
+                                    viewports,
+                                    feeds,
+                                    cameras,
+                                });
+                            }
+                            Err(error) => {
+                                eprintln!("panel switch to '{panel}' refused: {error}");
+                                wall.pending_panel = None;
+                                wall.pending_scene = None;
+                                wall.pending_fullscreen = None;
+                                // Keep the currently displayed scene intact:
+                                // the invalid request must not blank the wall.
+                                panel_changed = true;
+                            }
+                        }
+                    }
+
+                    let incoming_ready = wall
+                        .pending_scene
+                        .as_ref()
+                        .is_some_and(|scene| scene_frames_ready(&scene.feeds, clock));
+
+                    if incoming_ready {
+                        let mut incoming =
+                            wall.pending_scene.take().expect("prepared scene exists");
+                        let incoming_count = incoming.viewports.len();
+                        // Read all incoming frames as one snapshot. If a source
+                        // drops between the readiness check and this read, keep
+                        // the old panel and retry rather than showing a partial one.
+                        let incoming_frames = collect_ready(
+                            &mut incoming.feeds,
+                            &incoming.viewports,
+                            |_| None,
+                            clock,
+                        );
+                        if incoming_frames.len() == incoming_count {
+                            drop(showing);
+                            let outgoing_viewports =
+                                std::mem::replace(&mut wall.viewports, incoming.viewports);
+                            let outgoing_showing = |i: usize| {
+                                wall.on_screen
+                                    .get(i)
+                                    .and_then(|frame| frame.as_ref().map(Arc::as_ptr))
+                            };
+                            ready = incoming_frames;
+                            // Detach outgoing planes beyond the new panel's
+                            // viewport count in this very same atomic commit.
+                            ready.extend(let_go(
+                                &outgoing_viewports,
+                                outgoing_showing,
+                                incoming_count,
+                            ));
+                            wall.feeds = incoming.feeds;
+                            wall.cameras = incoming.cameras;
+                            wall.current_panel = Some(incoming.panel.clone());
+                            wall.pending_panel = None;
+                            wall.mode = Mode::Grid;
+                            wall.laid_out = Some(Mode::Grid);
+                            wall.panel_flip_pending = true;
+                            wall.fullscreen_tap = None;
+                            wall.turns += 1;
+                            panel_changed = true;
+                            panel_switched_this_pass = true;
+                            println!(
+                                "{}: panel switched atomically to {}",
+                                wall.out.name, incoming.panel
+                            );
+                        } else {
+                            wall.pending_scene = Some(incoming);
+                            ready = match wall.mode {
+                                Mode::Grid => {
+                                    collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
+                                }
+                                Mode::Fullscreen(at) => collect_fullscreen(
+                                    &wall.viewports,
+                                    showing,
+                                    &wall.cameras[at],
+                                    wall.size,
+                                    &mut wall.fullscreen_tap,
+                                    clock,
+                                ),
+                            };
+                        }
                     } else {
-                        // Keep presenting the old scene while its decoder
-                        // sessions and scanout references are being released.
+                        // The outgoing scene stays visible until every
+                        // incoming viewport has a usable first frame.
                         ready = match wall.mode {
                             Mode::Grid => {
                                 collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
@@ -1663,61 +1792,6 @@ fn run_walls(
                                 clock,
                             ),
                         };
-                    }
-                    if ready.is_empty() && (outgoing_stopped || !wall.watched) {
-                        drop(showing);
-                        let scene = wall.panel_scenes[&panel].clone();
-                        let feed_count = wall.fullscreen_sources.len();
-                        match scene_parts(
-                            card,
-                            &sources[..feed_count],
-                            &wall.fullscreen_sources,
-                            &scene,
-                            &wall.plane_pool,
-                            wall.size,
-                            clock,
-                        ) {
-                            Ok((viewports, feeds, cameras)) => {
-                                wall.viewports = viewports;
-                                wall.feeds = feeds;
-                                wall.cameras = cameras;
-                                wall.on_screen = vec![None; wall.viewports.len()];
-                                wall.current_panel = Some(panel.clone());
-                                wall.pending_panel = None;
-                                wall.mode = Mode::Grid;
-                                if let Some(camera) = wall.pending_fullscreen.take() {
-                                    if let Some(at) = ensure_camera_index(
-                                        &mut wall.cameras,
-                                        sources,
-                                        &wall.fullscreen_sources,
-                                        &camera,
-                                    ) {
-                                        wall.show(Mode::Fullscreen(at));
-                                    } else {
-                                        eprintln!(
-                                            "unknown camera requested for fullscreen: {camera}"
-                                        );
-                                    }
-                                }
-                                wall.laid_out = None;
-                                wall.fullscreen_tap = None;
-                                wall.turns += 1;
-                                panel_changed = true;
-                                println!("{}: panel switched to {panel}", wall.out.name);
-                            }
-                            Err(error) => {
-                                // A malformed or unrenderable panel must not
-                                // take down the renderer. The old scene is
-                                // still intact and can be laid out again.
-                                eprintln!("panel switch to '{panel}' refused: {error}");
-                                wall.pending_panel = None;
-                                wall.pending_fullscreen = None;
-                                wall.mode = Mode::Grid;
-                                wall.laid_out = None;
-                                wall.fullscreen_tap = None;
-                                panel_changed = true;
-                            }
-                        }
                     }
                 }
                 let showing = |i: usize| wall.on_screen[i].as_ref().map(Arc::as_ptr);
@@ -1734,7 +1808,10 @@ fn run_walls(
                         wall.fullscreen_tap = None;
                     }
                 }
-                if wall.pending_panel.is_none() && wall.laid_out == target {
+                if wall.pending_panel.is_none()
+                    && wall.laid_out == target
+                    && !panel_switched_this_pass
+                {
                     ready = match target {
                         None => continue,
                         Some(Mode::Grid) => {
@@ -3378,6 +3455,20 @@ displays:
         assert!(!selected.contains("b_auto"));
         assert!(!selected.contains("cpu_only"));
         assert!(!selected.contains("spare_priority"));
+    }
+
+    #[test]
+    fn an_incoming_scene_waits_until_each_viewport_has_a_first_frame() {
+        let empty: Vec<Feeds> = Vec::new();
+        assert!(!scene_frames_ready(&empty, Duration::ZERO));
+
+        let source = Arc::new(Source::new("not_ready", true));
+        let feeds = vec![Feeds::new_at(
+            vec![Tap::new(source)],
+            Duration::from_secs(8),
+            Duration::ZERO,
+        )];
+        assert!(!scene_frames_ready(&feeds, Duration::ZERO));
     }
 
     #[test]
