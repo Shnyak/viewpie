@@ -96,41 +96,45 @@ impl NativeRendererController {
             anyhow::bail!("panel or camera id contains a line break");
         }
         let _operation = self.operation.lock().await;
-        let mut guard = self.child.lock().await;
-        let exited = match guard.as_mut() {
-            Some(running) => running.child.try_wait()?.is_some(),
-            None => false,
-        };
-        if exited {
-            guard.take();
+        {
+            let mut guard = self.child.lock().await;
+            let exited = match guard.as_mut() {
+                Some(running) => running.child.try_wait()?.is_some(),
+                None => false,
+            };
+            if exited {
+                guard.take();
+            }
+            let current_renderer_state = self.renderer_state.subscribe().borrow().clone();
+            let already_visible = current_renderer_state.as_ref().is_some_and(|state| {
+                state.get("status").and_then(|value| value.as_str()) == Some("committed")
+                    && state.get("mode").and_then(|value| value.as_str()) == Some("fullscreen")
+                    && state.get("camera").and_then(|value| value.as_str()) == Some(camera)
+            });
+            if already_visible && !exited && guard.is_some() {
+                return Ok(());
+            }
+            // Keep the last committed renderer state while a new camera
+            // connects. The native renderer retains its current KMS frame
+            // until the requested camera has produced a replacement.
+            if let Some(running) = guard.as_mut() {
+                let command = format!("FULLSCREEN {camera}\n");
+                running.stdin.write_all(command.as_bytes()).await?;
+                running.stdin.flush().await?;
+            } else {
+                drop(guard);
+                self.start_inner(panel, Some(camera)).await?;
+            }
         }
-        let current_renderer_state = self.renderer_state.subscribe().borrow().clone();
-        let already_visible = current_renderer_state.as_ref().is_some_and(|state| {
-            state.get("status").and_then(|value| value.as_str()) == Some("committed")
-                && state.get("mode").and_then(|value| value.as_str()) == Some("fullscreen")
-                && state.get("camera").and_then(|value| value.as_str()) == Some(camera)
-        });
-        if already_visible && !exited && guard.is_some() {
-            return Ok(());
-        }
-        // Clear the previous acknowledgement before sending a new request;
-        // the HTTP API waits for proof that a frame reached the physical KMS
-        // display, not merely that a command was written to the child pipe.
-        self.renderer_state.send_replace(None);
-        if let Some(running) = guard.as_mut() {
-            let command = format!("FULLSCREEN {camera}\n");
-            running.stdin.write_all(command.as_bytes()).await?;
-            running.stdin.flush().await?;
-        } else {
-            drop(guard);
-            self.start_inner(panel, Some(camera)).await?;
-        }
+        // Do not serialize later camera selections behind this bounded wait:
+        // another request can replace an unavailable camera immediately.
+        drop(_operation);
         self.wait_for_fullscreen(camera).await
     }
 
     async fn wait_for_fullscreen(&self, camera: &str) -> anyhow::Result<()> {
         let mut receiver = self.renderer_state.subscribe();
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(6);
         loop {
             if let Some(state) = receiver.borrow().clone() {
                 let reported_camera = state.get("camera").and_then(|value| value.as_str());
@@ -149,7 +153,7 @@ impl NativeRendererController {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 anyhow::bail!(
-                    "native renderer did not confirm a visible frame for camera {camera} within 10 seconds"
+                    "native renderer did not confirm a visible frame for camera {camera} within 6 seconds"
                 );
             }
             tokio::time::timeout(remaining, receiver.changed())
