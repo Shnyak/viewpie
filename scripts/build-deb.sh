@@ -1,31 +1,69 @@
 #!/bin/sh
-# Build viewpie's Debian packages and leave them in dist/.
+# Cross-build Viewpie Debian packages for Raspberry Pi OS Bookworm without Docker.
 #
-#   scripts/build-deb.sh              # both architectures
-#   scripts/build-deb.sh arm64        # just the Pi 5
+#   scripts/build-deb.sh armhf
+#   scripts/build-deb.sh arm64
 #
-# Needs only Docker: the build cross-compiles, so nothing is emulated and
-# nothing has to be installed on a Pi.
+# Run on an amd64 Debian/Ubuntu host with sudo, rustup and cargo installed.
+# Target libraries and cross toolchains come from Debian Bookworm so the
+# resulting packages retain the Bookworm ABI used by Raspberry Pi OS.
 set -eu
 
 cd "$(dirname "$0")/.."
 targets="${*:-armhf arm64}"
 mkdir -p dist
 
+if [ "$(dpkg --print-architecture)" != amd64 ]; then
+    echo "build host must be amd64; got $(dpkg --print-architecture)" >&2
+    exit 2
+fi
+command -v cargo >/dev/null 2>&1 || { echo "cargo is required" >&2; exit 2; }
+command -v rustup >/dev/null 2>&1 || { echo "rustup is required" >&2; exit 2; }
+
 for t in $targets; do
     case "$t" in
-        armhf|arm64) ;;
+        armhf) GNU=arm-linux-gnueabihf; RUST=armv7-unknown-linux-gnueabihf ;;
+        arm64) GNU=aarch64-linux-gnu; RUST=aarch64-unknown-linux-gnu ;;
         *) echo "unknown architecture $t (expected armhf or arm64)" >&2; exit 2 ;;
     esac
-    echo "=== building for $t ==="
-    docker build \
-        --build-arg "ARCH=$t" \
-        --build-arg "VIEWPIE_BUILD_DATE=${VIEWPIE_BUILD_DATE:-unknown}" \
-        -f Dockerfile.build -t "viewpie-build:$t" .
-    # docker cp needs a container, and create makes one without running it.
-    cid=$(docker create "viewpie-build:$t")
-    docker cp "$cid:/out/." dist/
-    docker rm "$cid" >/dev/null
+
+    echo "=== preparing Debian Bookworm cross toolchain for $t ==="
+    sudo dpkg --add-architecture "$t"
+    sudo tee /etc/apt/sources.list.d/viewpie-bookworm-cross.list >/dev/null <<EOF
+deb [arch=amd64] http://deb.debian.org/debian bookworm main
+deb [arch=$t] http://deb.debian.org/debian bookworm main
+EOF
+    sudo tee /etc/apt/preferences.d/viewpie-bookworm-cross >/dev/null <<'EOF'
+Package: *
+Pin: release n=bookworm
+Pin-Priority: 100
+EOF
+    sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+    sudo apt-get install -y --no-install-recommends \
+        debhelper dpkg-dev fakeroot pkg-config libclang-dev clang ca-certificates
+    sudo apt-get install -y --no-install-recommends -t bookworm \
+        "crossbuild-essential-$t" \
+        "libavcodec-dev:$t" \
+        "libavformat-dev:$t" \
+        "libavutil-dev:$t" \
+        "libssl-dev:$t"
+
+    rustup target add "$RUST"
+    target_env=$(printf '%s' "$RUST" | tr '[:lower:]-' '[:upper:]_')
+    cc_env=$(printf '%s' "$RUST" | tr '-' '_')
+    export "CARGO_TARGET_${target_env}_LINKER=$GNU-gcc"
+    export "CC_${cc_env}=$GNU-gcc"
+    export PKG_CONFIG_ALLOW_CROSS=1
+    export PKG_CONFIG_LIBDIR="/usr/lib/$GNU/pkgconfig:/usr/share/pkgconfig"
+    export PKG_CONFIG_SYSROOT_DIR=/
+    export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/ -I/usr/include/$GNU"
+    export VIEWPIE_RUST_TARGET="$RUST"
+    export VIEWPIE_BUILD_DATE="${VIEWPIE_BUILD_DATE:-unknown}"
+
+    echo "=== building Debian package for $t without Docker ==="
+    rm -f ../viewpie_*_"$t".deb
+    dpkg-buildpackage -us -uc -b -d -a"$t"
+    cp ../viewpie_*_"$t".deb dist/
 done
 
 ls -la dist/*.deb
