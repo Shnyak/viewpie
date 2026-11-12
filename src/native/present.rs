@@ -683,7 +683,7 @@ impl Card {
             width,
             height,
         };
-        self.draw_debug_overlay(&mut overlay, &["VIEWPIE DIAGNOSTICS".to_string()])?;
+        self.draw_debug_overlay(&mut overlay, &["viewpie diagnostics".to_string()])?;
         Ok(overlay)
     }
 
@@ -719,7 +719,7 @@ impl Card {
         {
             let y0 = 8 + line_index * line_height;
             for (char_index, ch) in line.chars().take(max_chars).enumerate() {
-                let glyph = glyph_3x5(ch.to_ascii_uppercase());
+                let glyph = glyph_3x5(ch);
                 let x0 = 8 + char_index * char_width;
                 for (row, bits) in glyph.iter().enumerate() {
                     for col in 0..3 {
@@ -955,6 +955,34 @@ impl Drop for DebugOverlay {
 
 fn glyph_3x5(ch: char) -> [u8; 5] {
     match ch {
+        // Lowercase glyphs use open, lighter shapes while retaining the same
+        // 3x5 cell and scale as the uppercase camera labels.
+        'a' => [0, 0b011, 0b001, 0b111, 0b011],
+        'b' => [0b100, 0b100, 0b110, 0b101, 0b110],
+        'c' => [0, 0b011, 0b100, 0b100, 0b011],
+        'd' => [0b001, 0b001, 0b011, 0b101, 0b011],
+        'e' => [0, 0b010, 0b101, 0b110, 0b011],
+        'f' => [0b011, 0b010, 0b111, 0b010, 0b010],
+        'g' => [0, 0b011, 0b101, 0b011, 0b001],
+        'h' => [0b100, 0b100, 0b110, 0b101, 0b101],
+        'i' => [0b010, 0, 0b110, 0b010, 0b111],
+        'j' => [0b001, 0, 0b001, 0b101, 0b010],
+        'k' => [0b100, 0b100, 0b101, 0b110, 0b101],
+        'l' => [0b110, 0b010, 0b010, 0b010, 0b111],
+        'm' => [0, 0b110, 0b111, 0b101, 0b101],
+        'n' => [0, 0b110, 0b101, 0b101, 0b101],
+        'o' => [0, 0b010, 0b101, 0b101, 0b010],
+        'p' => [0, 0b110, 0b101, 0b110, 0b100],
+        'q' => [0, 0b011, 0b101, 0b011, 0b001],
+        'r' => [0, 0b101, 0b110, 0b100, 0b100],
+        's' => [0, 0b011, 0b110, 0b001, 0b110],
+        't' => [0b010, 0b111, 0b010, 0b010, 0b011],
+        'u' => [0, 0b101, 0b101, 0b101, 0b011],
+        'v' => [0, 0b101, 0b101, 0b101, 0b010],
+        'w' => [0, 0b101, 0b101, 0b111, 0b010],
+        'x' => [0, 0b101, 0b010, 0b010, 0b101],
+        'y' => [0, 0b101, 0b101, 0b011, 0b001],
+        'z' => [0, 0b111, 0b001, 0b010, 0b111],
         'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
         'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
         'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
