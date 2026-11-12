@@ -723,11 +723,7 @@ impl Card {
                     for gx in 0..metrics.width {
                         let x = glyph_x + gx as i32;
                         let y = glyph_y + gy as i32;
-                        if x < 0
-                            || y < 0
-                            || x >= overlay.width as i32
-                            || y >= overlay.height as i32
-                        {
+                        if x < 0 || y < 0 || x >= overlay.width as i32 || y >= overlay.height as i32 {
                             continue;
                         }
                         let alpha = bitmap[gy * metrics.width + gx] as u32;
