@@ -220,6 +220,14 @@ def install_latest_release(preserve_log=False):
             event("verify", "SHA-256 и метаданные пакета подтверждены")
             _write_status(package_version=package_version)
             _write_status(progress_percent=None)
+            # The updater uses dpkg directly rather than apt resolving
+            # dependencies. Ensure the diagnostics font is present first.
+            event("dependencies", "$ apt-get install -y --no-install-recommends fonts-dejavu-core")
+            run_logged(
+                ["apt-get", "install", "-y", "--no-install-recommends", "fonts-dejavu-core"],
+                timeout_seconds=900,
+                phase="dependencies",
+            )
             event("install", "$ dpkg -i " + package.name + " — установка " + package_version)
             run_logged(["dpkg", "-i", str(package)], timeout_seconds=900, phase="dpkg")
             event("complete", "Обновление Viewpie завершено: " + version, "success",
