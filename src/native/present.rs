@@ -19,7 +19,7 @@ use drm::Device as BasicDevice;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsFd, BorrowedFd};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 /// A DRM device, opened for modesetting.
@@ -702,45 +702,54 @@ impl Card {
         for pixel in bytes.chunks_exact_mut(4) {
             pixel.copy_from_slice(&0xff10_1820u32.to_le_bytes());
         }
-        let scale = if overlay.width >= 480 && overlay.height >= 216 {
-            3usize
-        } else if overlay.width >= 320 {
-            2usize
-        } else {
-            1usize
-        };
-        let char_width = 4 * scale;
-        let line_height = 6 * scale;
-        let max_chars = (overlay.width as usize).saturating_sub(20) / char_width;
-        for (line_index, line) in lines
-            .iter()
-            .take(overlay.height as usize / line_height)
-            .enumerate()
-        {
-            let y0 = 8 + line_index * line_height;
-            for (char_index, ch) in line.chars().take(max_chars).enumerate() {
-                let glyph = glyph_3x5(ch);
-                let x0 = 8 + char_index * char_width;
-                for (row, bits) in glyph.iter().enumerate() {
-                    for col in 0..3 {
-                        if bits & (1 << (2 - col)) == 0 {
+        let font = diagnostics_font()?;
+        let font_size = if overlay.width >= 480 { 15.0 } else { 13.0 };
+        let line_metrics = font
+            .horizontal_line_metrics(font_size)
+            .ok_or_else(|| "DejaVu Sans has no horizontal line metrics".to_string())?;
+        let line_height = line_metrics.new_line_size.ceil().max(1.0) as usize;
+        let max_lines = overlay.height as usize / line_height;
+
+        for (line_index, line) in lines.iter().take(max_lines).enumerate() {
+            let baseline = 8.0 + line_index as f32 * line_height as f32 + line_metrics.ascent;
+            let mut pen_x = 8.0f32;
+            for ch in line.chars() {
+                let (metrics, bitmap) = font.rasterize(ch, font_size);
+                let glyph_x = (pen_x + metrics.xmin as f32).round() as i32;
+                let glyph_y =
+                    (baseline - metrics.ymin as f32 - metrics.height as f32).round() as i32;
+
+                for gy in 0..metrics.height {
+                    for gx in 0..metrics.width {
+                        let x = glyph_x + gx as i32;
+                        let y = glyph_y + gy as i32;
+                        if x < 0 || y < 0 || x >= overlay.width as i32 || y >= overlay.height as i32
+                        {
                             continue;
                         }
-                        for sy in 0..scale {
-                            for sx in 0..scale {
-                                let x = x0 + col * scale + sx;
-                                let y = y0 + row * scale + sy;
-                                if x >= overlay.width as usize || y >= overlay.height as usize {
-                                    continue;
-                                }
-                                let offset = y * pitch + x * 4;
-                                if offset + 4 <= bytes.len() {
-                                    bytes[offset..offset + 4]
-                                        .copy_from_slice(&0xfff2_f5f7u32.to_le_bytes());
-                                }
-                            }
+                        let alpha = bitmap[gy * metrics.width + gx] as u32;
+                        if alpha == 0 {
+                            continue;
                         }
+                        let offset = y as usize * pitch + x as usize * 4;
+                        if offset + 4 > bytes.len() {
+                            continue;
+                        }
+                        // XRGB8888 is stored little-endian as B, G, R, X.
+                        // Blend glyph coverage rather than expanding a one-bit
+                        // bitmap into large square pixels.
+                        for (channel, foreground) in [0xf7u32, 0xf5, 0xf2].into_iter().enumerate() {
+                            let background = bytes[offset + channel] as u32;
+                            bytes[offset + channel] =
+                                ((foreground * alpha + background * (255 - alpha)) / 255) as u8;
+                        }
+                        bytes[offset + 3] = 0xff;
                     }
+                }
+
+                pen_x += metrics.advance_width;
+                if pen_x >= overlay.width as f32 - 8.0 {
+                    break;
                 }
             }
         }
@@ -953,80 +962,19 @@ impl Drop for DebugOverlay {
     }
 }
 
-fn glyph_3x5(ch: char) -> [u8; 5] {
-    match ch {
-        // Lowercase glyphs use open, lighter shapes while retaining the same
-        // 3x5 cell and scale as the uppercase camera labels.
-        'a' => [0, 0b011, 0b001, 0b111, 0b011],
-        'b' => [0b100, 0b100, 0b110, 0b101, 0b110],
-        'c' => [0, 0b011, 0b100, 0b100, 0b011],
-        'd' => [0b001, 0b001, 0b011, 0b101, 0b011],
-        'e' => [0, 0b010, 0b101, 0b110, 0b011],
-        'f' => [0b011, 0b010, 0b111, 0b010, 0b010],
-        'g' => [0, 0b011, 0b101, 0b011, 0b001],
-        'h' => [0b100, 0b100, 0b110, 0b101, 0b101],
-        'i' => [0b010, 0, 0b110, 0b010, 0b111],
-        'j' => [0b001, 0, 0b001, 0b101, 0b010],
-        'k' => [0b100, 0b100, 0b101, 0b110, 0b101],
-        'l' => [0b110, 0b010, 0b010, 0b010, 0b111],
-        'm' => [0, 0b110, 0b111, 0b101, 0b101],
-        'n' => [0, 0b110, 0b101, 0b101, 0b101],
-        'o' => [0, 0b010, 0b101, 0b101, 0b010],
-        'p' => [0, 0b110, 0b101, 0b110, 0b100],
-        'q' => [0, 0b011, 0b101, 0b011, 0b001],
-        'r' => [0, 0b101, 0b110, 0b100, 0b100],
-        's' => [0, 0b011, 0b110, 0b001, 0b110],
-        't' => [0b010, 0b111, 0b010, 0b010, 0b011],
-        'u' => [0, 0b101, 0b101, 0b101, 0b011],
-        'v' => [0, 0b101, 0b101, 0b101, 0b010],
-        'w' => [0, 0b101, 0b101, 0b111, 0b010],
-        'x' => [0, 0b101, 0b010, 0b010, 0b101],
-        'y' => [0, 0b101, 0b101, 0b011, 0b001],
-        'z' => [0, 0b111, 0b001, 0b010, 0b111],
-        'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
-        'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
-        'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
-        'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
-        'E' => [0b111, 0b100, 0b110, 0b100, 0b111],
-        'F' => [0b111, 0b100, 0b110, 0b100, 0b100],
-        'G' => [0b011, 0b100, 0b101, 0b101, 0b011],
-        'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
-        'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
-        'J' => [0b001, 0b001, 0b001, 0b101, 0b010],
-        'K' => [0b101, 0b101, 0b110, 0b101, 0b101],
-        'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
-        'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
-        'N' => [0b101, 0b111, 0b111, 0b111, 0b101],
-        'O' => [0b010, 0b101, 0b101, 0b101, 0b010],
-        'P' => [0b110, 0b101, 0b110, 0b100, 0b100],
-        'Q' => [0b010, 0b101, 0b101, 0b111, 0b011],
-        'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
-        'S' => [0b011, 0b100, 0b010, 0b001, 0b110],
-        'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
-        'U' => [0b101, 0b101, 0b101, 0b101, 0b111],
-        'V' => [0b101, 0b101, 0b101, 0b101, 0b010],
-        'W' => [0b101, 0b101, 0b111, 0b111, 0b101],
-        'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
-        'Y' => [0b101, 0b101, 0b010, 0b010, 0b010],
-        'Z' => [0b111, 0b001, 0b010, 0b100, 0b111],
-        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
-        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
-        '2' => [0b110, 0b001, 0b010, 0b100, 0b111],
-        '3' => [0b110, 0b001, 0b010, 0b001, 0b110],
-        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
-        '5' => [0b111, 0b100, 0b110, 0b001, 0b110],
-        '6' => [0b011, 0b100, 0b110, 0b101, 0b010],
-        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
-        '8' => [0b010, 0b101, 0b010, 0b101, 0b010],
-        '9' => [0b010, 0b101, 0b011, 0b001, 0b110],
-        ':' => [0, 0b010, 0, 0b010, 0],
-        '.' => [0, 0, 0, 0, 0b010],
-        '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
-        '-' => [0, 0, 0b111, 0, 0],
-        '_' => [0, 0, 0, 0, 0b111],
-        '%' => [0b101, 0b001, 0b010, 0b100, 0b101],
-        '?' => [0b110, 0b001, 0b010, 0, 0b010],
-        _ => [0; 5],
+/// Load the packaged DejaVu Sans face once for the diagnostics overlay.
+/// The package depends on fonts-dejavu-core, so Cyrillic and antialiased
+/// glyphs are available consistently on supported Raspberry Pi images.
+fn diagnostics_font() -> Result<&'static fontdue::Font, String> {
+    static FONT: OnceLock<Result<fontdue::Font, String>> = OnceLock::new();
+    match FONT.get_or_init(|| {
+        let bytes = std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+            .map_err(|e| format!("could not read packaged DejaVu Sans font: {e}"))?;
+        fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
+            .map_err(|e| format!("could not parse packaged DejaVu Sans font: {e:?}"))
+    }) {
+        Ok(font) => Ok(font),
+        Err(error) => Err(error.clone()),
     }
 }
 

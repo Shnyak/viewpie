@@ -1,6 +1,6 @@
 [package]
 name = "viewpie"
-version = "0.2.30-fork"
+version = "0.2.31-fork"
 edition = "2021"
 description = "Fork of snoack/viewpie with HTTP REST API, panels and dynamic configuration (AI-generated modifications)"
 license = "GPL-3.0-or-later"
@@ -42,6 +42,7 @@ uuid = { version = "1", features = ["v4"] }
 yaml-rust2 = { version = "0.13", optional = true }
 rustix = { version = "1", features = ["event"], optional = true }
 libc = "0.2"
+fontdue = { version = "0.9.4", default-features = false, features = ["std"], optional = true }
 
 # The native FFmpeg/libav + DRM/KMS pipeline is enabled for ARM release builds
 # with `--features hw`. The optional feature keeps default desktop/headless
@@ -50,7 +51,7 @@ libc = "0.2"
 [features]
 default = []
 hw = ["dep:drm", "native-pipeline"]
-native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix"]
+native-pipeline = ["dep:drm", "dep:yaml-rust2", "dep:rustix", "dep:fontdue"]
 
 [dependencies.drm]
 # Версия drm 0.15 соответствует используемому API.
