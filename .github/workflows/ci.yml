@@ -71,7 +71,10 @@ jobs:
         arch: [armhf, arm64]
     steps:
       - uses: actions/checkout@v7
-      - name: The package must build
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-unknown-linux-gnueabihf,aarch64-unknown-linux-gnu
+      - name: Cross-build the Debian package without Docker
         run: ./scripts/build-deb.sh ${{ matrix.arch }}
       # Debian packages are the deployable artifacts. CI deliberately does
       # not build container images; the supported install path is the package.
