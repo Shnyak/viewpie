@@ -466,6 +466,9 @@ struct Wall {
     pending_panel: Option<String>,
     /// Prepared off-screen until every incoming viewport has a first frame.
     pending_scene: Option<PendingScene>,
+    /// A panel transition first detaches the complete reserved camera-plane pool.
+    /// The incoming scene is attached only after that detach has flipped.
+    panel_detach_pending: bool,
     /// A panel's atomic replacement must flip before queued fullscreen runs.
     panel_flip_pending: bool,
     pending_fullscreen: Option<String>,
@@ -1314,6 +1317,7 @@ fn build(
         current_panel: active_panel,
         pending_panel: None,
         pending_scene: None,
+        panel_detach_pending: false,
         panel_flip_pending: false,
         pending_fullscreen: None,
         feeds,
@@ -1552,6 +1556,7 @@ fn run_walls(
                             if wall.current_panel.as_deref() == Some(panel.as_str()) {
                                 let had_pending = wall.pending_panel.take().is_some();
                                 wall.pending_scene = None;
+                                wall.panel_detach_pending = false;
                                 let was = wall.mode;
                                 wall.show(Mode::Grid);
                                 panel_changed |= had_pending || was != wall.mode;
@@ -1702,6 +1707,7 @@ fn run_walls(
                                 eprintln!("panel switch to '{panel}' refused: {error}");
                                 wall.pending_panel = None;
                                 wall.pending_scene = None;
+                                wall.panel_detach_pending = false;
                                 wall.pending_fullscreen = None;
                                 // Keep the currently displayed scene intact:
                                 // the invalid request must not blank the wall.
@@ -1715,13 +1721,41 @@ fn run_walls(
                         .as_ref()
                         .is_some_and(|scene| scene_frames_ready(&scene.feeds, clock));
 
-                    if incoming_ready {
+                    if incoming_ready && !wall.panel_detach_pending {
+                        // Do not rely on the old scene's viewport count or its
+                        // cached per-slot frame references. Explicitly detach
+                        // every reserved camera plane, including slots that
+                        // may have been left attached by an earlier scene.
+                        let mut detach = Vec::with_capacity(wall.plane_pool.len());
+                        for (i, &plane) in wall.plane_pool.iter().enumerate() {
+                            let props = card.plane_props(plane)?;
+                            detach.push((
+                                i,
+                                Viewport {
+                                    plane,
+                                    props,
+                                    crtc_x: 0,
+                                    crtc_y: 0,
+                                    crtc_w: 0,
+                                    crtc_h: 0,
+                                    src_w: 0,
+                                    src_h: 0,
+                                    gap_w: 0,
+                                    gap_h: 0,
+                                },
+                                None,
+                            ));
+                        }
+                        ready = detach;
+                        wall.panel_detach_pending = true;
+                        panel_switched_this_pass = true;
+                    } else if incoming_ready {
                         let mut incoming =
                             wall.pending_scene.take().expect("prepared scene exists");
                         let incoming_count = incoming.viewports.len();
-                        // Read all incoming frames as one snapshot. If a source
-                        // drops between the readiness check and this read, keep
-                        // the old panel and retry rather than showing a partial one.
+                        // Read all incoming frames as one snapshot. The complete
+                        // old plane pool has already been detached and flipped,
+                        // so no camera from the previous grid can survive.
                         let incoming_frames = collect_ready(
                             &mut incoming.feeds,
                             &incoming.viewports,
@@ -1729,26 +1763,13 @@ fn run_walls(
                             clock,
                         );
                         if incoming_frames.len() == incoming_count {
-                            drop(showing);
-                            let outgoing_viewports =
-                                std::mem::replace(&mut wall.viewports, incoming.viewports);
-                            let outgoing_showing = |i: usize| {
-                                wall.on_screen
-                                    .get(i)
-                                    .and_then(|frame| frame.as_ref().map(Arc::as_ptr))
-                            };
+                            wall.viewports = incoming.viewports;
                             ready = incoming_frames;
-                            // Detach outgoing planes beyond the new panel's
-                            // viewport count in this very same atomic commit.
-                            ready.extend(let_go(
-                                &outgoing_viewports,
-                                outgoing_showing,
-                                incoming_count,
-                            ));
                             wall.feeds = incoming.feeds;
                             wall.cameras = incoming.cameras;
                             wall.current_panel = Some(incoming.panel.clone());
                             wall.pending_panel = None;
+                            wall.panel_detach_pending = false;
                             wall.mode = Mode::Grid;
                             wall.laid_out = Some(Mode::Grid);
                             wall.panel_flip_pending = true;
@@ -1757,24 +1778,15 @@ fn run_walls(
                             panel_changed = true;
                             panel_switched_this_pass = true;
                             println!(
-                                "{}: panel switched atomically to {}",
+                                "{}: panel switched to {} after clearing all camera planes",
                                 wall.out.name, incoming.panel
                             );
                         } else {
                             wall.pending_scene = Some(incoming);
-                            ready = match wall.mode {
-                                Mode::Grid => {
-                                    collect_ready(&mut wall.feeds, &wall.viewports, showing, clock)
-                                }
-                                Mode::Fullscreen(at) => collect_fullscreen(
-                                    &wall.viewports,
-                                    showing,
-                                    &wall.cameras[at],
-                                    wall.size,
-                                    &mut wall.fullscreen_tap,
-                                    clock,
-                                ),
-                            };
+                            // The outgoing scene was detached, so wait for
+                            // the incoming feeds rather than resurrecting it.
+                            ready.clear();
+                            panel_switched_this_pass = true;
                         }
                     } else {
                         // The outgoing scene stays visible until every
