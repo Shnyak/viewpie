@@ -201,10 +201,7 @@ impl Decoder {
             for name in ["timeout", "stimeout"] {
                 dict_set(&mut opts, name, "5000000");
             }
-            let mut interrupt = Box::new(InterruptState {
-                shutdown,
-                wanted,
-            });
+            let mut interrupt = Box::new(InterruptState { shutdown, wanted });
             let mut fmt = avformat_alloc_context();
             if fmt.is_null() {
                 return Err("alloc format context".into());
@@ -788,7 +785,6 @@ unsafe fn stream_codecpar(fmt: *mut AVFormatContext, idx: c_int) -> *const AVCod
     let stream = *(*fmt).streams.offset(idx as isize);
     (*stream).codecpar
 }
-
 
 #[cfg(test)]
 mod interrupt_tests {
