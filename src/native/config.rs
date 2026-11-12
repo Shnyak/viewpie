@@ -732,7 +732,7 @@ panels:
             .replace("active_fullscreen: b", "active_fullscreen: c");
         assert!(Config::parse(&not_in_panel)
             .unwrap_err()
-            .contains("active_fullscreen camera 'a' is not used"));
+            .contains("active_fullscreen camera 'c' is not used"));
     }
 
     #[test]

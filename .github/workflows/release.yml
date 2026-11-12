@@ -65,6 +65,8 @@ jobs:
       # make the result nondeterministic.
       - name: Run unit tests serially
         run: cargo test --locked -- --test-threads=1
+      - name: Run native-pipeline unit tests serially
+        run: cargo test --locked --features native-pipeline --lib -- --test-threads=1
 
   deb:
     needs: test
@@ -104,7 +106,7 @@ jobs:
           fi
       - name: Record source build date
         run: echo "VIEWPIE_BUILD_DATE=$(git log -1 --format=%cI)" >> "$GITHUB_ENV"
-      - name: Build the package
+      - name: Cross-build the package without Docker
         run: ./scripts/build-deb.sh ${{ matrix.arch }}
       - uses: actions/upload-artifact@v7
         with:

@@ -47,9 +47,12 @@ jobs:
           python3 -m py_compile debian/viewpie-update-helper.py
           sh -n debian/postinst
           sh -n debian/postrm
+          sh -n scripts/build-deb.sh
           bash -n scripts/bootstrap-update.sh
       - name: Run unit tests serially (they share process-wide singleton state)
         run: cargo test --locked -- --test-threads=1
+      - name: Run native-pipeline unit tests serially
+        run: cargo test --locked --features native-pipeline --lib -- --test-threads=1
       - name: Compile the native FFmpeg/DRM renderer
         run: cargo check --locked --features native-pipeline --bin viewpie-native
       - run: cargo fmt --check
@@ -69,7 +72,7 @@ jobs:
         arch: [armhf, arm64]
     steps:
       - uses: actions/checkout@v7
-      - name: The package must build
+      - name: Cross-build the Debian package without Docker
         run: ./scripts/build-deb.sh ${{ matrix.arch }}
       # Debian packages are the deployable artifacts. CI deliberately does
       # not build container images; the supported install path is the package.
