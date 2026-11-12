@@ -1788,6 +1788,12 @@ fn run_walls(
                             ready.clear();
                             panel_switched_this_pass = true;
                         }
+                    } else if wall.panel_detach_pending {
+                        // The old plane pool has already been detached. Keep
+                        // it blank while the incoming scene is being prepared
+                        // or while one of its feeds retries.
+                        ready.clear();
+                        panel_switched_this_pass = true;
                     } else {
                         // The outgoing scene stays visible until every
                         // incoming viewport has a usable first frame.
