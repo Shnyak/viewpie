@@ -30,10 +30,15 @@ for t in $targets; do
     echo "=== preparing Debian Bookworm cross toolchain for $t ==="
     sudo apt-get update -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
     sudo apt-get install -y --no-install-recommends debian-archive-keyring
+    # Ubuntu's runner sources must remain host-only. Otherwise apt tries to
+    # fetch armhf/arm64 indices from Ubuntu security mirrors while resolving
+    # the Debian Bookworm target sysroot.
+    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+        sudo sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+    fi
     sudo dpkg --add-architecture "$t"
     sudo tee /etc/apt/sources.list.d/viewpie-bookworm-cross.list >/dev/null <<EOF
-deb [arch=amd64] http://deb.debian.org/debian bookworm main
-deb [arch=$t] http://deb.debian.org/debian bookworm main
+deb [arch=amd64,$t signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian bookworm main
 EOF
     sudo tee /etc/apt/preferences.d/viewpie-bookworm-cross >/dev/null <<'EOF'
 Package: *
