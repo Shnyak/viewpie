@@ -873,7 +873,11 @@ impl Card {
                 line_height,
                 background,
             );
-            let foreground = if selected { [16, 24, 32] } else { [238, 242, 246] };
+            let foreground = if selected {
+                [16, 24, 32]
+            } else {
+                [238, 242, 246]
+            };
             let mut x = margin;
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
