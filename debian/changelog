@@ -1,4 +1,4 @@
-viewpie (0.2.39-fork-1) unstable; urgency=medium
+viewpie (0.3.0-1) unstable; urgency=medium
 
   * Keep fullscreen selection pending while the main stream reconnects after
     the first-frame wait, instead of rolling back to the grid and cancelling
