@@ -514,7 +514,8 @@ fn t08_panels_crud_validation() {
         "name": "Bad",
         "layout": oversized_layout,
         "viewports": [{"slot": "gate", "feeds": ["gate"]}]
-    }).to_string();
+    })
+    .to_string();
     let r = request("POST", "/api/panels", Some(&bad));
     assert_eq!(r.status, 400);
 
