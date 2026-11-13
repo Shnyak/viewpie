@@ -503,9 +503,20 @@ fn t08_panels_crud_validation() {
     let r = request("POST", "/api/panels", Some(body));
     assert_eq!(r.status, 409);
 
-    // Grid larger than 8x8 → 400
-    let bad = r#"{"id":"bad","name":"Bad","layout":"gate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate\ngate gate gate gate gate gate gate gate gate","viewports":[{"slot":"gate","feeds":["gate"]}]}"#;
-    let r = request("POST", "/api/panels", Some(bad));
+    // Grid larger than 16x16 → 400
+    let oversized_row = vec!["gate"; 17].join(" ");
+    let oversized_layout = std::iter::repeat(oversized_row)
+        .take(17)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bad = serde_json::json!({
+        "id": "bad",
+        "name": "Bad",
+        "layout": oversized_layout,
+        "viewports": [{"slot": "gate", "feeds": ["gate"]}]
+    })
+    .to_string();
+    let r = request("POST", "/api/panels", Some(&bad));
     assert_eq!(r.status, 400);
 
     // Unknown feed reference → 400

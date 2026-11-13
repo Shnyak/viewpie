@@ -245,7 +245,7 @@ impl PanelConfig {
         self.feed_names().iter().any(|f| f == camera)
     }
 
-    /// Validate the panel: grid 1x1..8x8, all slots defined,
+    /// Validate the panel: grid 1x1..16x16, all slots defined,
     /// every viewport slot referenced in the layout.
     /// Unique panel id when embedded in a JSON request body (YAML uses the map key).
     pub fn id_hint(&self) -> Option<&str> {
@@ -255,9 +255,9 @@ impl PanelConfig {
     pub fn validate(&self, known_feeds: &[String]) -> Result<(), ConfigError> {
         let grid = self.grid();
         let rows = grid.len();
-        if !(1..=8).contains(&rows) {
+        if !(1..=16).contains(&rows) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 1-8 rows, got {rows}"
+                "panel layout must have 1-16 rows, got {rows}"
             )));
         }
         let cols = grid[0].len();
@@ -268,9 +268,9 @@ impl PanelConfig {
                 ));
             }
         }
-        if !(1..=8).contains(&cols) {
+        if !(1..=16).contains(&cols) {
             return Err(ConfigError::Validation(format!(
-                "panel layout must have 1-8 columns, got {cols}"
+                "panel layout must have 1-16 columns, got {cols}"
             )));
         }
         let mut slots: HashMap<&str, &ViewportConfig> = HashMap::new();
@@ -653,26 +653,33 @@ panels:
     }
 
     #[test]
-    fn rejects_grid_larger_than_eight() {
-        let yaml = r#"
-feeds:
-  a: { url: "rtsp://x/a" }
-panels:
-  p:
-    layout: |
-      a a a a a a a a a
-      a a a a a a a a a
-      a a a a a a a a a
-      a a a a a a a a a
-      a a a a a a a a a
-      a a a a a a a a a
-      a a a a a a a a a
-      a a a a a a a a a
-      a a a a a a a a a
-    viewports:
-      - { slot: a, feeds: [a] }
-"#;
-        assert!(Config::from_yaml(yaml).is_err());
+    fn accepts_grid_16_by_16() {
+        let make_yaml = |size: usize| {
+            let row = vec!["a"; size].join(" ");
+            let layout = std::iter::repeat(row)
+                .take(size)
+                .collect::<Vec<_>>()
+                .join("\n      ");
+            format!(
+                "feeds:\n  a: {{ url: \"rtsp://x/a\" }}\npanels:\n  p:\n    layout: |\n      {layout}\n    viewports:\n      - {{ slot: a, feeds: [a] }}\n"
+            )
+        };
+        assert!(Config::from_yaml(&make_yaml(16)).is_ok());
+    }
+
+    #[test]
+    fn rejects_grid_larger_than_sixteen() {
+        let make_yaml = |size: usize| {
+            let row = vec!["a"; size].join(" ");
+            let layout = std::iter::repeat(row)
+                .take(size)
+                .collect::<Vec<_>>()
+                .join("\n      ");
+            format!(
+                "feeds:\n  a: {{ url: \"rtsp://x/a\" }}\npanels:\n  p:\n    layout: |\n      {layout}\n    viewports:\n      - {{ slot: a, feeds: [a] }}\n"
+            )
+        };
+        assert!(Config::from_yaml(&make_yaml(17)).is_err());
     }
 
     #[test]
