@@ -98,10 +98,10 @@ def run_logged(command, *, timeout_seconds, phase):
                     break
                 pending.extend(chunk)
                 while True:
-                    newline = pending.find(b"\\n")
+                    newline = pending.find(b"\n")
                     if newline < 0:
                         break
-                    line = bytes(pending[:newline]).decode("utf-8", errors="replace").rstrip("\\r")
+                    line = bytes(pending[:newline]).decode("utf-8", errors="replace").rstrip("\r")
                     del pending[:newline + 1]
                     log(line)
         remaining = deadline - time.monotonic()
