@@ -209,14 +209,10 @@ pub async fn snapshot_camera(
         .map_err(|error| ApiError::Unavailable(format!("could not start ffmpeg: {error}")))?;
 
     if !output.status.success() || output.stdout.len() < 4 {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        let detail = detail.trim();
-        let detail = detail.chars().take(400).collect::<String>();
-        return Err(ApiError::Unavailable(if detail.is_empty() {
-            format!("camera {name:?} did not produce a frame")
-        } else {
-            format!("could not capture camera {name:?}: {detail}")
-        }));
+        return Err(ApiError::Unavailable(format!(
+            "camera {name:?} could not produce a JPEG frame (ffmpeg exited with {})",
+            output.status
+        )));
     }
     if !output.stdout.starts_with(&[0xff, 0xd8]) || !output.stdout.ends_with(&[0xff, 0xd9]) {
         return Err(ApiError::Unavailable(format!("ffmpeg returned an invalid JPEG for camera {name:?}")));
