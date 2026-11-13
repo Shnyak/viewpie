@@ -25,7 +25,7 @@ class UpdateHelperTests(unittest.TestCase):
                 phase="test",
             )
         self.assertEqual(result, 0)
-        self.assertTrue(any("installer output" in line for line in lines))
+        self.assertIn("installer output", lines)
 
     def test_run_logged_enforces_deadline_while_process_is_running(self):
         started = time.monotonic()
