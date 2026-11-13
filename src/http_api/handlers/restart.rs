@@ -74,7 +74,6 @@ pub async fn restart(headers: HeaderMap) -> Result<Json<OkResponse>, ApiError> {
 mod tests {
     use super::*;
 
-
     #[test]
     fn capability_is_detected_from_proc_status() {
         let with_cap = "Name:\tviewpie\nCapEff:\t0000000000400000\n";
