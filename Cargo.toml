@@ -4,7 +4,7 @@ version = "0.3.1"
 edition = "2021"
 description = "Fork of snoack/viewpie with HTTP REST API, panels and dynamic configuration (AI-generated modifications)"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/snoack/viewpie"
+repository = "https://github.com/Shnyak/viewpie"
 default-run = "viewpie"
 
 [[bin]]
