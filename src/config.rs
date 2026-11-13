@@ -656,7 +656,10 @@ panels:
     fn accepts_grid_16_by_16() {
         let make_yaml = |size: usize| {
             let row = vec!["a"; size].join(" ");
-            let layout = std::iter::repeat(row).take(size).collect::<Vec<_>>().join("\n      ");
+            let layout = std::iter::repeat(row)
+                .take(size)
+                .collect::<Vec<_>>()
+                .join("\n      ");
             format!(
                 "feeds:\n  a: {{ url: \"rtsp://x/a\" }}\npanels:\n  p:\n    layout: |\n      {layout}\n    viewports:\n      - {{ slot: a, feeds: [a] }}\n"
             )
@@ -668,7 +671,10 @@ panels:
     fn rejects_grid_larger_than_sixteen() {
         let make_yaml = |size: usize| {
             let row = vec!["a"; size].join(" ");
-            let layout = std::iter::repeat(row).take(size).collect::<Vec<_>>().join("\n      ");
+            let layout = std::iter::repeat(row)
+                .take(size)
+                .collect::<Vec<_>>()
+                .join("\n      ");
             format!(
                 "feeds:\n  a: {{ url: \"rtsp://x/a\" }}\npanels:\n  p:\n    layout: |\n      {layout}\n    viewports:\n      - {{ slot: a, feeds: [a] }}\n"
             )
