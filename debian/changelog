@@ -1,9 +1,14 @@
-viewpie (0.2.38-fork-1) unstable; urgency=medium
+viewpie (0.2.39-fork-1) unstable; urgency=medium
 
-  * Support camera-wall panel layouts up to 16x16 cells.
-  * Keep decoder limits independent from layout dimensions.
+  * Keep fullscreen selection pending while the main stream reconnects after
+    the first-frame wait, instead of rolling back to the grid and cancelling
+    the transition.
+  * Preserve the previously visible picture until the selected fullscreen
+    camera produces its first usable frame.
+  * Treat the first-frame deadline as a pending transition while preserving
+    explicit renderer error handling.
 
- -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 13 Nov 2026 16:55:00 +0000
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 13 Nov 2026 18:00:00 +0000
 
 viewpie (0.2.37-fork-1) unstable; urgency=medium
 
