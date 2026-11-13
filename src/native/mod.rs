@@ -1004,7 +1004,7 @@ fn run(config: &Config) -> Result<(), String> {
                 Ok(overlay) => {
                     wall.debug_overlay = Some(overlay);
                     wall.debug_overlay_active = true;
-                    wall.debug_overlay_detached = false;
+                    wall.debug_overlay_detached = true;
                     println!("{}: diagnostics overlay enabled", wall.out.name);
                 }
                 Err(error) => {
@@ -1899,10 +1899,23 @@ fn run_walls(
                 // without one a new frame would wait out the poll below. Such a
                 // commit is legal because Card::commit names the crtc whatever
                 // else a request says.
+                let mut debug_overlay_refreshed = false;
+                // Keep diagnostics rendering off the critical path while a
+                // panel/fullscreen transition or page flip is in progress.
+                let diagnostics_transitioning = wall.pending_panel.is_some()
+                    || wall.panel_detach_pending
+                    || wall.in_flight.is_some()
+                    || wall.laid_out != target
+                    || panel_switched_this_pass;
                 if wall.debug_overlay.is_some()
+                    && !diagnostics_transitioning
                     && wall.debug_overlay_updated_at.elapsed() >= Duration::from_secs(1)
                 {
-                    let lines = debug_overlay_lines(sources);
+                    let fullscreen_camera = match wall.mode {
+                        Mode::Fullscreen(at) => Some(wall.cameras[at].feed.name.as_str()),
+                        Mode::Grid => None,
+                    };
+                    let lines = debug_overlay_lines(sources, fullscreen_camera);
                     let draw_result = wall
                         .debug_overlay
                         .as_mut()
@@ -1912,6 +1925,7 @@ fn run_walls(
                         wall.debug_overlay_active = false;
                     } else {
                         wall.debug_overlay_updated_at = Instant::now();
+                        debug_overlay_refreshed = true;
                     }
                 }
                 let new_fullscreen_frame_ready = matches!(wall.mode, Mode::Fullscreen(_))
@@ -1924,16 +1938,27 @@ fn run_walls(
                                 == Some(wall.cameras[at].feed.name.as_str())
                             && wall.on_screen.first().is_some_and(|shown| shown.is_some())
                 );
-                let had_overlay = wall.debug_overlay_active;
+                // The diagnostics plane remains attached between refreshes.
+                // Do not re-submit its KMS properties with every camera frame:
+                // commit it only for a text refresh or an attach/detach transition.
+                let overlay_commit_needed = !diagnostics_transitioning
+                    && (debug_overlay_refreshed
+                        || wall.debug_overlay_detached == wall.debug_overlay_active);
+                let overlay_for_commit = if overlay_commit_needed {
+                    wall.debug_overlay
+                        .as_ref()
+                        .map(|overlay| (overlay, wall.debug_overlay_active))
+                } else {
+                    None
+                };
+                let had_overlay = overlay_for_commit.is_some_and(|(_, active)| active);
                 let result = card.commit(
                     wall.out.crtc,
                     wall.crtc_active,
                     ready
                         .iter()
                         .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
-                    wall.debug_overlay
-                        .as_ref()
-                        .map(|overlay| (overlay, wall.debug_overlay_active)),
+                    overlay_for_commit,
                 );
                 let result = if result.is_err() && had_overlay {
                     eprintln!(
@@ -1949,7 +1974,7 @@ fn run_walls(
                         ready
                             .iter()
                             .map(|(_, t, shown)| (*t, shown.as_ref().map(|s| s.fb.fb))),
-                        wall.debug_overlay.as_ref().map(|overlay| (overlay, false)),
+                        overlay_for_commit.map(|(overlay, _)| (overlay, false)),
                     )
                 } else {
                     result
@@ -1961,7 +1986,7 @@ fn run_walls(
                             // Do not attach the incoming scene until that flip.
                             wall.panel_detach_pending = true;
                         }
-                        if wall.debug_overlay.is_some() {
+                        if overlay_for_commit.is_some() {
                             wall.debug_overlay_detached = !wall.debug_overlay_active;
                         }
                         if let Mode::Fullscreen(at) = wall.mode {
@@ -2370,44 +2395,8 @@ struct WallMark {
 
 /// Text shown on the optional KMS plane. Keep the overlay compact: it is
 /// deliberately a small status panel, not a copy of the full journal.
-fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
-    let mut lines = vec!["camera path codec resolution fps errors".to_string()];
-    for source in sources
-        .iter()
-        .filter(|source| source.persistent_grid || source.wanted.load(Ordering::Relaxed))
-    {
-        let info = source.decoder_info.lock().unwrap().clone();
-        let path = match (info.decoder.as_deref(), info.mode.as_deref()) {
-            (Some(decoder), Some(mode)) => format!("{decoder}/{mode}"),
-            (Some(decoder), None) => decoder.to_string(),
-            _ => "wait".to_string(),
-        };
-        let codec = info.codec.unwrap_or_else(|| "?".to_string());
-        let resolution = match (info.width, info.height) {
-            (Some(width), Some(height)) => format!("{width}x{height}"),
-            _ => "?".to_string(),
-        };
-        let fps = info
-            .fps
-            .map(|value| format!("{value:.1}"))
-            .unwrap_or_else(|| "-".into());
-        let errors = source.stats.errors.load(Ordering::Relaxed).max(info.errors);
-        let state = if source.wanted.load(Ordering::Relaxed) {
-            info.state.unwrap_or_else(|| "connecting".to_string())
-        } else {
-            "paused".to_string()
-        };
-        lines.push(format!(
-            "{} {} {} {} {} e{} {}",
-            source.name.to_ascii_uppercase(),
-            path,
-            codec,
-            resolution,
-            fps,
-            errors,
-            state
-        ));
-    }
+fn debug_overlay_lines(sources: &[Arc<Source>], fullscreen_camera: Option<&str>) -> Vec<String> {
+    let mut lines = Vec::new();
     let cpu = debug_cpu_load_percent()
         .map(|value| format!("{value:.0}%"))
         .unwrap_or_else(|| "?".to_string());
@@ -2416,7 +2405,69 @@ fn debug_overlay_lines(sources: &[Arc<Source>]) -> Vec<String> {
         .and_then(|value| value.trim().parse::<f64>().ok())
         .map(|value| format!("{:.1}C", value / 1000.0))
         .unwrap_or_else(|| "?".to_string());
-    lines.push(format!("cpu {cpu} temp {temp}"));
+    lines.push(format!("CPU: {cpu}    TEMP: {temp}"));
+
+    // A camera may have both a persistent grid source and an on-demand
+    // fullscreen source. Keep one row per camera, preferring its wanted feed.
+    let mut cameras: Vec<(String, DecoderInfo, bool, String)> = Vec::new();
+    for source in sources {
+        let wanted = source.wanted.load(Ordering::Relaxed);
+        let priority = wanted && source.on_demand;
+        let camera_name = source
+            .name
+            .strip_suffix(" (fullscreen)")
+            .unwrap_or(&source.name)
+            .to_string();
+        let info = source.decoder_info.lock().unwrap().clone();
+        let state = if wanted {
+            info.state
+                .clone()
+                .unwrap_or_else(|| "connecting".to_string())
+        } else {
+            "paused".to_string()
+        };
+        if let Some(existing) = cameras.iter_mut().find(|row| row.0 == camera_name) {
+            if priority && !existing.2 {
+                *existing = (camera_name, info, priority, state);
+            }
+        } else {
+            cameras.push((camera_name, info, priority, state));
+        }
+    }
+    cameras.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
+
+    let show_status = cameras.iter().any(|row| row.3 != "active");
+    if show_status {
+        lines.push("CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS".to_string());
+    } else {
+        lines.push("CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS".to_string());
+    }
+    for (name, info, _wanted, state) in cameras {
+        let decoder_type = match info.mode.as_deref() {
+            Some("hardware") => "Hardware",
+            Some("software") => "Software",
+            _ => "—",
+        };
+        let codec = info.codec.unwrap_or_else(|| "—".to_string());
+        let resolution = match (info.width, info.height) {
+            (Some(width), Some(height)) => format!("{width}x{height}"),
+            _ => "—".to_string(),
+        };
+        let fps = info
+            .fps
+            .map(|value| format!("{value:.1}"))
+            .unwrap_or_else(|| "—".to_string());
+        let name = if fullscreen_camera == Some(name.as_str()) {
+            format!("*{name}")
+        } else {
+            name
+        };
+        let mut row = format!("{name}\t{decoder_type}\t{codec}\t{resolution}\t{fps}");
+        if show_status {
+            row.push_str(&format!("\t{state}"));
+        }
+        lines.push(row);
+    }
     lines
 }
 
@@ -3485,14 +3536,12 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_keep_only_camera_names_uppercase() {
+    fn diagnostics_table_keeps_camera_names_readable_and_shows_connecting_state() {
         let source = Arc::new(Source::new("front_door", true));
-        let lines = debug_overlay_lines(&[source]);
-        assert_eq!(lines[0], "camera path codec resolution fps errors");
-        assert!(lines[1].starts_with("FRONT_DOOR "));
-        assert!(lines[1].contains(" wait "));
-        assert!(lines[1].ends_with(" connecting"));
-        assert!(lines.last().unwrap().starts_with("cpu "));
+        let lines = debug_overlay_lines(&[source], None);
+        assert!(lines[0].starts_with("CPU: "));
+        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS");
+        assert!(lines[2].starts_with("front_door\t—\t—\t—\t—\tconnecting"));
     }
 
     #[test]
@@ -4071,5 +4120,33 @@ displays:
             Duration::from_millis(500),
             "a feed that ran for a while reconnects promptly when it drops"
         );
+    }
+
+    #[test]
+    fn diagnostics_table_lists_all_cameras_and_status_for_non_active_feeds() {
+        let active = Arc::new(Source::new("front", true));
+        {
+            let mut info = active.decoder_info.lock().unwrap();
+            info.mode = Some("hardware".into());
+            info.state = Some("active".into());
+            info.codec = Some("H.264".into());
+            info.width = Some(1920);
+            info.height = Some(1080);
+            info.fps = Some(25.0);
+        }
+        let paused = Arc::new(Source::new("yard", true));
+        paused.set_wanted(false);
+        let lines = debug_overlay_lines(&[active, paused], Some("front"));
+        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS");
+        assert!(lines[2].starts_with("*front\tHardware\tH.264\t1920x1080\t25.0\tactive"));
+        assert!(lines[3].starts_with("yard\t—\t—\t—\t—\tpaused"));
+    }
+
+    #[test]
+    fn diagnostics_table_hides_status_when_all_cameras_are_active() {
+        let camera = Arc::new(Source::new("front", true));
+        camera.decoder_info.lock().unwrap().state = Some("active".into());
+        let lines = debug_overlay_lines(&[camera], None);
+        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS");
     }
 }

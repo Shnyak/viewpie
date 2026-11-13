@@ -649,8 +649,8 @@ impl Card {
         display_width: u32,
         display_height: u32,
     ) -> Result<DebugOverlay, String> {
-        let width = display_width.saturating_sub(24).min(640);
-        let height = display_height.saturating_sub(24).min(224);
+        let width = display_width.saturating_sub(24).min(960);
+        let height = display_height.saturating_sub(24).min(520);
         if width < 120 || height < 48 {
             return Err("display is too small for a readable diagnostics overlay".into());
         }
@@ -699,63 +699,162 @@ impl Card {
             .map_dumb_buffer(&mut overlay.buffer)
             .map_err(|e| format!("could not map diagnostics buffer: {e}"))?;
         let bytes = map.as_mut();
-        for pixel in bytes.chunks_exact_mut(4) {
-            pixel.copy_from_slice(&0xff10_1820u32.to_le_bytes());
-        }
+        fill_overlay_rect(
+            bytes,
+            pitch,
+            overlay.width,
+            overlay.height,
+            0,
+            0,
+            overlay.width,
+            overlay.height,
+            0xff101820,
+        );
+
         let font = diagnostics_font()?;
-        let font_size = if overlay.width >= 480 { 15.0 } else { 13.0 };
-        let line_metrics = font
-            .horizontal_line_metrics(font_size)
-            .ok_or_else(|| "DejaVu Sans has no horizontal line metrics".to_string())?;
-        let line_height = line_metrics.new_line_size.ceil().max(1.0) as usize;
-        let max_lines = overlay.height as usize / line_height;
+        let font_size = if overlay.width >= 800 { 15.0 } else { 13.0 };
+        let line_height = 26u32;
+        let margin = 10u32;
+        let widths: &[u32] = if overlay.width >= 850 {
+            &[220, 120, 100, 150, 80, 120]
+        } else if overlay.width >= 700 {
+            &[180, 105, 85, 125, 65, 100]
+        } else {
+            &[150, 85, 70, 105, 55, 80]
+        };
 
-        for (line_index, line) in lines.iter().take(max_lines).enumerate() {
-            let baseline = 8.0 + line_index as f32 * line_height as f32 + line_metrics.ascent;
-            let mut pen_x = 8.0f32;
-            for ch in line.chars() {
-                let (metrics, bitmap) = font.rasterize(ch, font_size);
-                let glyph_x = (pen_x + metrics.xmin as f32).round() as i32;
-                let glyph_y =
-                    (baseline - metrics.ymin as f32 - metrics.height as f32).round() as i32;
+        if let Some(cpu) = lines.first() {
+            draw_overlay_text(
+                bytes,
+                pitch,
+                overlay.width,
+                overlay.height,
+                font,
+                cpu,
+                margin as i32,
+                21,
+                font_size,
+                [245, 245, 245],
+                overlay.width.saturating_sub(8),
+            );
+        }
+        let Some(header) = lines.get(1) else {
+            return Ok(());
+        };
+        let headers: Vec<&str> = header.split('\t').collect();
+        let table_y = 34u32;
+        fill_overlay_rect(
+            bytes,
+            pitch,
+            overlay.width,
+            overlay.height,
+            0,
+            table_y,
+            overlay.width,
+            line_height,
+            0xff34495e,
+        );
+        let mut x = margin;
+        for (index, value) in headers.iter().enumerate() {
+            let cell_width = widths.get(index).copied().unwrap_or(80);
+            draw_overlay_text(
+                bytes,
+                pitch,
+                overlay.width,
+                overlay.height,
+                font,
+                value,
+                x as i32,
+                (table_y + 20) as i32,
+                font_size,
+                [255, 255, 255],
+                x.saturating_add(cell_width).min(overlay.width),
+            );
+            if index + 1 < headers.len() {
+                fill_overlay_rect(
+                    bytes,
+                    pitch,
+                    overlay.width,
+                    overlay.height,
+                    x.saturating_add(cell_width).saturating_sub(1),
+                    table_y,
+                    1,
+                    line_height,
+                    0xff607080,
+                );
+            }
+            x += cell_width;
+        }
 
-                for gy in 0..metrics.height {
-                    for gx in 0..metrics.width {
-                        let x = glyph_x + gx as i32;
-                        let y = glyph_y + gy as i32;
-                        if x < 0 || y < 0 || x >= overlay.width as i32 || y >= overlay.height as i32
-                        {
-                            continue;
-                        }
-                        let alpha = bitmap[gy * metrics.width + gx] as u32;
-                        if alpha == 0 {
-                            continue;
-                        }
-                        let offset = y as usize * pitch + x as usize * 4;
-                        if offset + 4 > bytes.len() {
-                            continue;
-                        }
-                        // XRGB8888 is stored little-endian as B, G, R, X.
-                        // Blend glyph coverage rather than expanding a one-bit
-                        // bitmap into large square pixels.
-                        for (channel, foreground) in [0xf7u32, 0xf5, 0xf2].into_iter().enumerate() {
-                            let background = bytes[offset + channel] as u32;
-                            bytes[offset + channel] =
-                                ((foreground * alpha + background * (255 - alpha)) / 255) as u8;
-                        }
-                        bytes[offset + 3] = 0xff;
-                    }
+        for (row_index, line) in lines.iter().skip(2).enumerate() {
+            let y = table_y + line_height * (row_index as u32 + 1);
+            if y + line_height > overlay.height {
+                break;
+            }
+            let mut cells: Vec<&str> = line.split('\t').collect();
+            let selected = cells.first().is_some_and(|name| name.starts_with('*'));
+            if selected {
+                if let Some(name) = cells.first_mut() {
+                    *name = name.trim_start_matches('*');
                 }
-
-                pen_x += metrics.advance_width;
-                if pen_x >= overlay.width as f32 - 8.0 {
-                    break;
+            }
+            let background = if selected {
+                0xffe8eef5
+            } else if row_index % 2 == 0 {
+                0xff202d3a
+            } else {
+                0xff192430
+            };
+            fill_overlay_rect(
+                bytes,
+                pitch,
+                overlay.width,
+                overlay.height,
+                0,
+                y,
+                overlay.width,
+                line_height,
+                background,
+            );
+            let foreground = if selected {
+                [20, 30, 40]
+            } else {
+                [238, 242, 246]
+            };
+            let mut x = margin;
+            for (index, value) in cells.iter().enumerate() {
+                let cell_width = widths.get(index).copied().unwrap_or(80);
+                draw_overlay_text(
+                    bytes,
+                    pitch,
+                    overlay.width,
+                    overlay.height,
+                    font,
+                    value,
+                    x as i32,
+                    (y + 20) as i32,
+                    font_size,
+                    foreground,
+                    x.saturating_add(cell_width).min(overlay.width),
+                );
+                if index + 1 < cells.len() {
+                    fill_overlay_rect(
+                        bytes,
+                        pitch,
+                        overlay.width,
+                        overlay.height,
+                        x.saturating_add(cell_width).saturating_sub(1),
+                        y,
+                        1,
+                        line_height,
+                        if selected { 0xffaab5c0 } else { 0xff3b4b5a },
+                    );
                 }
+                x += cell_width;
             }
         }
         Ok(())
     }
-
     /// Detach the diagnostics plane and wait for its page flip before freeing
     /// its framebuffer. This is also safe when an earlier attach was refused.
     pub fn detach_debug_overlay(
@@ -959,6 +1058,86 @@ impl Drop for DebugOverlay {
             eprintln!("could not release diagnostics framebuffer: {e}");
         }
         self.card.drop_buffer(self.buffer.handle());
+    }
+}
+
+/// Fill a clipped rectangle in an XRGB8888 diagnostics buffer.
+fn fill_overlay_rect(
+    bytes: &mut [u8],
+    pitch: usize,
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    colour: u32,
+) {
+    let right = x.saturating_add(w).min(width);
+    let bottom = y.saturating_add(h).min(height);
+    for py in y.min(height)..bottom {
+        for px in x.min(width)..right {
+            let offset = py as usize * pitch + px as usize * 4;
+            if offset + 4 <= bytes.len() {
+                bytes[offset..offset + 4].copy_from_slice(&colour.to_le_bytes());
+            }
+        }
+    }
+}
+
+/// Draw antialiased DejaVu Sans text, clipped to the diagnostics surface.
+fn draw_overlay_text(
+    bytes: &mut [u8],
+    pitch: usize,
+    width: u32,
+    height: u32,
+    font: &fontdue::Font,
+    text: &str,
+    x: i32,
+    baseline: i32,
+    font_size: f32,
+    foreground: [u8; 3],
+    clip_right: u32,
+) {
+    let mut pen_x = x as f32;
+    for ch in text.chars() {
+        let (metrics, bitmap) = font.rasterize(ch, font_size);
+        let glyph_x = (pen_x + metrics.xmin as f32).round() as i32;
+        let glyph_y =
+            (baseline as f32 - metrics.ymin as f32 - metrics.height as f32).round() as i32;
+        for gy in 0..metrics.height {
+            for gx in 0..metrics.width {
+                let px = glyph_x + gx as i32;
+                let py = glyph_y + gy as i32;
+                if px < 0
+                    || py < 0
+                    || px >= width as i32
+                    || px >= clip_right as i32
+                    || py >= height as i32
+                {
+                    continue;
+                }
+                let alpha = bitmap[gy * metrics.width + gx] as u32;
+                if alpha == 0 {
+                    continue;
+                }
+                let offset = py as usize * pitch + px as usize * 4;
+                if offset + 4 > bytes.len() {
+                    continue;
+                }
+                for channel in 0..3 {
+                    let background = bytes[offset + channel] as u32;
+                    let foreground = foreground[channel] as u32;
+                    bytes[offset + channel] =
+                        ((foreground * alpha + background * (255 - alpha)) / 255) as u8;
+                }
+                bytes[offset + 3] = 0xff;
+            }
+        }
+        pen_x += metrics.advance_width;
+        if pen_x >= (clip_right as f32 - 4.0).min(width as f32 - 8.0) {
+            break;
+        }
     }
 }
 
