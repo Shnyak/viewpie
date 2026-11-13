@@ -10,10 +10,10 @@ use tokio::process::Command;
 
 use axum::body::Body;
 use axum::extract::Json;
-use axum::http::header;
-use axum::response::Response;
 use axum::extract::{Path, State};
+use axum::http::header;
 use axum::http::StatusCode;
+use axum::response::Response;
 use tracing::{info, warn};
 
 use crate::http_api::errors::ApiError;
@@ -195,9 +195,40 @@ pub async fn snapshot_camera(
         .ok_or_else(|| ApiError::not_found(format!("camera {name:?} not found")))?;
     let mut command = Command::new("ffmpeg");
     command
-        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-timeout", "7000000", "-threads", "1", "-i"])
+        .args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-rtsp_transport",
+            "tcp",
+            "-timeout",
+            "7000000",
+            "-threads",
+            "1",
+            "-i",
+        ])
         .arg(&feed.config.url)
-        .args(["-an", "-sn", "-dn", "-frames:v", "1", "-vf", "scale=w='min(640,iw)':h=-2", "-threads", "1", "-q:v", "5", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
+        .args([
+            "-an",
+            "-sn",
+            "-dn",
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=w='min(640,iw)':h=-2",
+            "-filter_threads",
+            "1",
+            "-threads",
+            "1",
+            "-q:v",
+            "5",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "pipe:1",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -215,7 +246,9 @@ pub async fn snapshot_camera(
         )));
     }
     if !output.stdout.starts_with(&[0xff, 0xd8]) || !output.stdout.ends_with(&[0xff, 0xd9]) {
-        return Err(ApiError::Unavailable(format!("ffmpeg returned an invalid JPEG for camera {name:?}")));
+        return Err(ApiError::Unavailable(format!(
+            "ffmpeg returned an invalid JPEG for camera {name:?}"
+        )));
     }
 
     Response::builder()
