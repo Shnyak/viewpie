@@ -1,3 +1,11 @@
+viewpie (0.2.35-fork-1) unstable; urgency=medium
+
+  * Add a bounded, one-shot JPEG snapshot endpoint for the camera layout editor.
+  * Use the configured RTSP stream, limit previews to 640 pixels wide and one decoder thread, and terminate the process after one frame.
+  * Add ffmpeg as an explicit runtime dependency for the preview endpoint.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 13 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.34-fork-1) unstable; urgency=medium
 
   * Keep the diagnostics table height proportional to the actual camera rows.
