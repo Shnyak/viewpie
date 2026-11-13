@@ -127,7 +127,7 @@ pub async fn fullscreen(
                 current.fullscreen_camera.as_deref(),
                 current.fullscreen_started.clone(),
                 &cam,
-                selection_started,
+                Some(selection_started),
             );
             drop(current);
 
