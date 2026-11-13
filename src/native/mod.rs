@@ -2415,18 +2415,24 @@ fn debug_overlay_lines(
     let mut cameras: Vec<(String, DecoderInfo, bool, String)> = Vec::new();
     for source in sources {
         let wanted = source.wanted.load(Ordering::Relaxed);
+        let priority = wanted && source.on_demand;
+        let camera_name = source
+            .name
+            .strip_suffix(" (fullscreen)")
+            .unwrap_or(&source.name)
+            .to_string();
         let info = source.decoder_info.lock().unwrap().clone();
         let state = if wanted {
             info.state.clone().unwrap_or_else(|| "connecting".to_string())
         } else {
             "paused".to_string()
         };
-        if let Some(existing) = cameras.iter_mut().find(|row| row.0 == source.name) {
-            if wanted && !existing.2 {
-                *existing = (source.name.clone(), info, wanted, state);
+        if let Some(existing) = cameras.iter_mut().find(|row| row.0 == camera_name) {
+            if priority && !existing.2 {
+                *existing = (camera_name, info, priority, state);
             }
         } else {
-            cameras.push((source.name.clone(), info, wanted, state));
+            cameras.push((camera_name, info, priority, state));
         }
     }
     cameras.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
@@ -3527,14 +3533,12 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_keep_only_camera_names_uppercase() {
+    fn diagnostics_table_keeps_camera_names_readable_and_shows_connecting_state() {
         let source = Arc::new(Source::new("front_door", true));
-        let lines = debug_overlay_lines(&[source]);
-        assert_eq!(lines[0], "camera path codec resolution fps errors");
-        assert!(lines[1].starts_with("FRONT_DOOR "));
-        assert!(lines[1].contains(" wait "));
-        assert!(lines[1].ends_with(" connecting"));
-        assert!(lines.last().unwrap().starts_with("cpu "));
+        let lines = debug_overlay_lines(&[source], None);
+        assert!(lines[0].starts_with("CPU: "));
+        assert_eq!(lines[1], "CAMERA\tTYPE\tCODEC\tRESOLUTION\tFPS\tSTATUS");
+        assert!(lines[2].starts_with("front_door\t—\t—\t—\t—\tconnecting"));
     }
 
     #[test]
