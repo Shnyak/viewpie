@@ -34,6 +34,7 @@ Depends: ${shlibs:Depends},
          ${misc:Depends},
          adduser,
          fonts-dejavu-core,
+         ffmpeg,
          python3
 Description: Camera wall for Raspberry Pi, on one atomic KMS commit
  Viewpie decodes RTSP camera feeds with ffmpeg and scans them out on KMS

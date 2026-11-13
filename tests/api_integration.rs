@@ -535,3 +535,12 @@ fn t09_reload() {
     let r = request("GET", "/api/status", None);
     assert_eq!(r.status, 200);
 }
+
+#[test]
+fn snapshot_endpoint_rejects_unknown_camera_without_starting_decoder() {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    start_server();
+    let response = request("GET", "/api/cameras/not-a-camera/snapshot", None);
+    assert_eq!(response.status, 404);
+    assert!(response.body.contains("not found"));
+}
