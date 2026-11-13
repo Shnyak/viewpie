@@ -2,21 +2,18 @@
 //! Token-protected host restart endpoint.
 use std::time::Duration;
 
-use axum::http::{header::AUTHORIZATION, HeaderMap};
+use axum::http::HeaderMap;
 use axum::Json;
 use tracing::error;
 
+use crate::http_api::auth::{authorize, token_configured};
 use crate::http_api::errors::ApiError;
 use crate::http_api::models::OkResponse;
 
-const RESTART_TOKEN_ENV: &str = "VIEWPIE_RESTART_TOKEN";
 const REBOOT_DELAY: Duration = Duration::from_millis(750);
 
 pub fn restart_available() -> bool {
-    let token_configured = std::env::var(RESTART_TOKEN_ENV)
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    token_configured && has_cap_sys_boot()
+    token_configured() && has_cap_sys_boot()
 }
 
 fn has_cap_sys_boot() -> bool {
@@ -40,30 +37,8 @@ fn has_cap_sys_boot_in_status(status: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn constant_time_eq(expected: &[u8], supplied: &[u8]) -> bool {
-    let mut difference = expected.len() ^ supplied.len();
-    for index in 0..expected.len().max(supplied.len()) {
-        difference |=
-            usize::from(*expected.get(index).unwrap_or(&0) ^ *supplied.get(index).unwrap_or(&0));
-    }
-    difference == 0
-}
-
 pub async fn restart(headers: HeaderMap) -> Result<Json<OkResponse>, ApiError> {
-    let expected = std::env::var(RESTART_TOKEN_ENV).unwrap_or_default();
-    if expected.trim().is_empty() {
-        return Err(ApiError::Unavailable(
-            "restart token is not configured on the Viewpie service".into(),
-        ));
-    }
-    let supplied = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .unwrap_or("");
-    if !constant_time_eq(expected.trim().as_bytes(), supplied.as_bytes()) {
-        return Err(ApiError::Unauthorized);
-    }
+    authorize(&headers)?;
     if !has_cap_sys_boot() {
         return Err(ApiError::Unavailable(
             "Viewpie service does not have CAP_SYS_BOOT; restart is disabled".into(),

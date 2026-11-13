@@ -104,18 +104,33 @@ impl Reply {
     }
 }
 
+const API_TOKEN: &str = "viewpie-test-api-token";
+
 fn request(method: &str, path: &str, body: Option<&str>) -> Reply {
+    request_with_token(method, path, body, Some(API_TOKEN))
+}
+
+fn request_without_token(method: &str, path: &str, body: Option<&str>) -> Reply {
+    request_with_token(method, path, body, None)
+}
+
+fn request_with_token(method: &str, path: &str, body: Option<&str>, token: Option<&str>) -> Reply {
     let addr = server_addr();
     let mut stream = TcpStream::connect(&addr).expect("connect to headless server");
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
         .unwrap();
+    let authorization = token
+        .map(|value| format!("Authorization: Bearer {value}\\r\\n"))
+        .unwrap_or_default();
     let req = match body {
         Some(b) => format!(
-            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{b}",
+            "{method} {path} HTTP/1.1\\r\\nHost: {addr}\\r\\nContent-Type: application/json\\r\\n{authorization}Content-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{b}",
             b.len()
         ),
-        None => format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"),
+        None => format!(
+            "{method} {path} HTTP/1.1\\r\\nHost: {addr}\\r\\n{authorization}Connection: close\\r\\n\\r\\n"
+        ),
     };
     stream.write_all(req.as_bytes()).expect("write request");
     stream.flush().unwrap();
@@ -129,7 +144,6 @@ fn request(method: &str, path: &str, body: Option<&str>) -> Reply {
         .unwrap_or("0")
         .parse()
         .unwrap();
-    // headers until empty line
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap() == 0 || line.trim().is_empty() {
@@ -226,6 +240,7 @@ fn start_server() {
         let child = Command::new(bin_path())
             .arg(&cfg_path)
             .env("VIEWPIE_API_BIND", server_addr())
+            .env("VIEWPIE_RESTART_TOKEN", API_TOKEN)
             .env("RUST_LOG", "warn")
             .stdout(Stdio::from(log.try_clone().unwrap()))
             .stderr(Stdio::from(log))
@@ -257,6 +272,14 @@ fn start_server() {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[test]
+fn t00_api_requires_bearer_token_for_status_and_camera_routes() {
+    start_server();
+    assert_eq!(request_without_token("GET", "/api/status", None).status, 401);
+    assert_eq!(request_with_token("GET", "/api/cameras", None, Some("wrong-token")).status, 401);
+    assert_eq!(request("GET", "/api/status", None).status, 200);
+}
 
 #[test]
 fn t01_status_endpoint() {

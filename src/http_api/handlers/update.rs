@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! GitHub release discovery and narrowly-scoped package installation.
-use axum::http::{header::AUTHORIZATION, HeaderMap};
+use axum::http::HeaderMap;
 use axum::Json;
 use serde_json::{json, Value};
 use tokio::{
@@ -9,9 +9,9 @@ use tokio::{
     time::{timeout, Duration},
 };
 
+use crate::http_api::auth::authorize;
 use crate::http_api::errors::ApiError;
 
-const RESTART_TOKEN_ENV: &str = "VIEWPIE_RESTART_TOKEN";
 const RELEASE_API: &str = "https://api.github.com/repos/Shnyak/viewpie/releases/latest";
 const UPDATE_SOCKET: &str = "/run/viewpie-update.sock";
 
@@ -28,33 +28,6 @@ fn package_architecture() -> &'static str {
     {
         "unsupported"
     }
-}
-
-fn constant_time_eq(expected: &[u8], supplied: &[u8]) -> bool {
-    let mut difference = expected.len() ^ supplied.len();
-    for index in 0..expected.len().max(supplied.len()) {
-        difference |=
-            usize::from(*expected.get(index).unwrap_or(&0) ^ *supplied.get(index).unwrap_or(&0));
-    }
-    difference == 0
-}
-
-fn authorize(headers: &HeaderMap) -> Result<(), ApiError> {
-    let expected = std::env::var(RESTART_TOKEN_ENV).unwrap_or_default();
-    if expected.trim().is_empty() {
-        return Err(ApiError::Unavailable(
-            "update token is not configured on the Viewpie service".into(),
-        ));
-    }
-    let supplied = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .unwrap_or("");
-    if !constant_time_eq(expected.trim().as_bytes(), supplied.as_bytes()) {
-        return Err(ApiError::Unauthorized);
-    }
-    Ok(())
 }
 
 /// Return the latest stable release and whether this architecture has a
