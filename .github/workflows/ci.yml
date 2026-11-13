@@ -45,6 +45,7 @@ jobs:
       - name: Validate the package installer helper
         run: |
           python3 -m py_compile debian/viewpie-update-helper.py
+          python3 -m unittest tests/test_update_helper.py
           sh -n debian/postinst
           sh -n debian/postrm
           sh -n scripts/build-deb.sh

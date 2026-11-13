@@ -10,10 +10,13 @@ import hashlib
 import json
 import os
 import re
+import selectors
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import uuid
 from pathlib import Path
@@ -60,23 +63,104 @@ def event(phase, message, status="running", **extra):
 def run_logged(command, *, timeout_seconds, phase):
     printable = " ".join(str(part) for part in command)
     event(phase, f"$ {printable}")
+    environment = os.environ.copy()
+    environment.update({
+        "DEBIAN_FRONTEND": "noninteractive",
+        "DEBIAN_PRIORITY": "critical",
+        "APT_LISTCHANGES_FRONTEND": "none",
+    })
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=environment,
+        bufsize=0,
+        start_new_session=True,
     )
+    assert process.stdout is not None
+    descriptor = process.stdout.fileno()
+    os.set_blocking(descriptor, False)
+    selector = selectors.DefaultSelector()
+    selector.register(descriptor, selectors.EVENT_READ)
+    pending = bytearray()
+    deadline = time.monotonic() + timeout_seconds
     try:
-        assert process.stdout is not None
-        for line in process.stdout:
-            log(line.rstrip())
-        code = process.wait(timeout=timeout_seconds)
-    except Exception:
-        process.kill()
-        process.wait()
+        # Drain output incrementally, but keep the deadline active while either
+        # the process runs or a child keeps the pipe open after its parent exits.
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"{phase} exceeded its {timeout_seconds}s deadline")
+            for _key, _mask in selector.select(min(remaining, 1.0)):
+                chunk = os.read(descriptor, 65536)
+                if not chunk:
+                    selector.unregister(descriptor)
+                    break
+                pending.extend(chunk)
+                while True:
+                    newline = pending.find(b"\\n")
+                    if newline < 0:
+                        break
+                    line = bytes(pending[:newline]).decode("utf-8", errors="replace").rstrip("\\r")
+                    del pending[:newline + 1]
+                    log(line)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"{phase} exceeded its {timeout_seconds}s deadline")
+        code = process.wait(timeout=remaining)
+    except BaseException:
+        # apt-get may have spawned dpkg/debconf children. Terminate the whole
+        # process group so a timed-out update cannot leave package locks held.
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
         raise
+    finally:
+        selector.close()
+        process.stdout.close()
+    if pending:
+        log(bytes(pending).decode("utf-8", errors="replace").rstrip("\\r"))
     log(f"[{phase}] exit code: {code}")
     if code:
         raise subprocess.CalledProcessError(code, command)
     return code
+
+
+def package_is_installed(name):
+    """Return true only when dpkg reports the package fully installed."""
+    try:
+        status = subprocess.check_output(
+            ["dpkg-query", "-W", "-f=${db:Status-Status}", name],
+            text=True,
+            timeout=10,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return False
+    return status == "installed"
+
+
+def missing_runtime_packages():
+    """Only request runtime packages that are genuinely absent."""
+    return [name for name in ("fonts-dejavu-core", "ffmpeg") if not package_is_installed(name)]
+
+
+def installed_package_version(name):
+    if not package_is_installed(name):
+        return "not installed"
+    return subprocess.check_output(
+        ["dpkg-query", "-W", "-f=${Version}", name],
+        text=True,
+        timeout=10,
+    ).strip()
 
 
 def request_json(url):
@@ -221,16 +305,38 @@ def install_latest_release(preserve_log=False):
             event("verify", "SHA-256 и метаданные пакета подтверждены")
             _write_status(package_version=package_version)
             _write_status(progress_percent=None)
-            # The updater uses dpkg directly rather than apt resolving
-            # dependencies. Ensure the diagnostics font is present first.
-            event("install", "$ apt-get install -y --no-install-recommends fonts-dejavu-core ffmpeg")
+            # Install runtime prerequisites only when absent. In particular,
+            # never upgrade an already-installed FFmpeg as a side effect of a
+            # Viewpie update: decoder behavior depends on the distro build.
+            missing = missing_runtime_packages()
+            if missing:
+                event("dependencies", "Missing runtime packages: " + ", ".join(missing))
+                run_logged(["apt-get", "update"], timeout_seconds=900, phase="apt-update")
+                run_logged(
+                    ["apt-get", "install", "-y", "--no-install-recommends", "--no-upgrade", *missing],
+                    timeout_seconds=900,
+                    phase="dependencies",
+                )
+            else:
+                event("dependencies", "FFmpeg and diagnostics fonts are already installed; leaving their versions unchanged")
+            ffmpeg_version = installed_package_version("ffmpeg")
+            _write_status(ffmpeg_version=ffmpeg_version)
+            event("dependencies", "Using FFmpeg " + ffmpeg_version + "; no FFmpeg upgrade requested")
+
+            # Let apt resolve the local package's dependencies and configure
+            # the transaction as a whole. --no-upgrade prevents this Viewpie
+            # update from silently replacing existing runtime libraries.
+            event("install", "$ apt-get install local package " + package.name + " — " + package_version)
             run_logged(
-                ["apt-get", "install", "-y", "--no-install-recommends", "fonts-dejavu-core", "ffmpeg"],
+                [
+                    "apt-get", "install", "-y", "--no-install-recommends", "--no-upgrade",
+                    "-o", "Dpkg::Options::=--force-confdef",
+                    "-o", "Dpkg::Options::=--force-confold",
+                    str(package),
+                ],
                 timeout_seconds=900,
                 phase="install",
             )
-            event("install", "$ dpkg -i " + package.name + " — установка " + package_version)
-            run_logged(["dpkg", "-i", str(package)], timeout_seconds=900, phase="dpkg")
             event("complete", "Обновление Viewpie завершено: " + version, "success",
                   reboot_pending=True, exit_code=0,
                   finished_at=__import__("datetime").datetime.now(
