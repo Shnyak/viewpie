@@ -775,7 +775,10 @@ impl Card {
         let mut x = margin;
         for (index, value) in headers.iter().enumerate() {
             let cell_width = widths.get(index).copied().unwrap_or(80);
-            let text: String = value.chars().take(char_limits.get(index).copied().unwrap_or(5)).collect();
+            let text: String = value
+            .chars()
+            .take(char_limits.get(index).copied().unwrap_or(5))
+            .collect();
             draw_overlay_text(
                 bytes,
                 pitch,
@@ -835,15 +838,14 @@ impl Card {
                 line_height,
                 background,
             );
-            let foreground = if selected {
-                [0, 0, 0]
-            } else {
-                [238, 242, 246]
-            };
+            let foreground = if selected { [0, 0, 0] } else { [238, 242, 246] };
             let mut x = margin;
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
-                let text: String = value.chars().take(char_limits.get(index).copied().unwrap_or(5)).collect();
+                let text: String = value
+                    .chars()
+                    .take(char_limits.get(index).copied().unwrap_or(5))
+                    .collect();
                 draw_overlay_text(
                     bytes,
                     pitch,
