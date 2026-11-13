@@ -776,6 +776,9 @@ impl Card {
         for (index, value) in headers.iter().enumerate() {
             let cell_width = widths.get(index).copied().unwrap_or(80);
             let text: String = value
+                .chars()
+                .take(char_limits.get(index).copied().unwrap_or(5))
+                .collect();
             .chars()
             .take(char_limits.get(index).copied().unwrap_or(5))
             .collect();
@@ -843,6 +846,9 @@ impl Card {
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
                 let text: String = value
+                    .chars()
+                    .take(char_limits.get(index).copied().unwrap_or(5))
+                    .collect();
                     .chars()
                     .take(char_limits.get(index).copied().unwrap_or(5))
                     .collect();
