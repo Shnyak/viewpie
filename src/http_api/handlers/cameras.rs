@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
+
 use crate::http_api::errors::ApiError;
 use crate::http_api::models::{CameraDto, CameraTestResponse, OkResponse};
 use crate::http_api::state::{AppState, WallCommand};
