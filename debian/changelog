@@ -1,3 +1,18 @@
+viewpie (0.3.2-1) unstable; urgency=medium
+
+  * Require Bearer authentication for every HTTP API endpoint, reusing the
+    existing Viewpie service token.
+  * Complete panel switches after a 10-second first-frame deadline when one or
+    more incoming cameras never produce a frame, leaving only missing viewports
+    blank instead of hanging indefinitely.
+  * Enforce updater timeouts while reading process output and terminate the
+    complete package-manager process group on timeout.
+  * Resolve local package dependencies through APT while pinning the installed
+    FFmpeg version so Viewpie updates cannot silently replace the decoder stack.
+  * Document API security and the persistent camera-pool architecture.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Sat, 14 Nov 2026 00:00:00 +0000
+
 viewpie (0.3.1-1) unstable; urgency=medium
 
   * Reset the fullscreen inactivity timer whenever a camera is selected through
