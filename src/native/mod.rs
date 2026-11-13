@@ -2459,7 +2459,8 @@ fn debug_overlay_lines(sources: &[Arc<Source>], fullscreen_camera: Option<&str>)
             name
         };
         let errors = info.errors.to_string();
-        let row = format!("{name}\t{decoder_type}\t{codec}\t{resolution}\t{fps}\t{state}\t{errors}");
+        let row =
+            format!("{name}\t{decoder_type}\t{codec}\t{resolution}\t{fps}\t{state}\t{errors}");
         lines.push(row);
     }
     lines
@@ -3534,7 +3535,10 @@ mod tests {
         let source = Arc::new(Source::new("front_door", true));
         let lines = debug_overlay_lines(&[source], None);
         assert!(lines[0].starts_with("CPU: "));
-        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR");
+        assert_eq!(
+            lines[1],
+            "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR"
+        );
         assert!(lines[2].starts_with("front_door\t—\t—\t—\t—\tconnecting\t0"));
     }
 
@@ -4131,7 +4135,10 @@ displays:
         let paused = Arc::new(Source::new("yard", true));
         paused.set_wanted(false);
         let lines = debug_overlay_lines(&[active, paused], Some("front"));
-        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR");
+        assert_eq!(
+            lines[1],
+            "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR"
+        );
         assert!(lines[2].starts_with("*front\tHardware\tH.264\t1920x1080\t25.0\tactive\t0"));
         assert!(lines[3].starts_with("yard\t—\t—\t—\t—\tpaused\t0"));
     }
@@ -4141,7 +4148,10 @@ displays:
         let camera = Arc::new(Source::new("front", true));
         camera.decoder_info.lock().unwrap().state = Some("active".into());
         let lines = debug_overlay_lines(&[camera], None);
-        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR");
+        assert_eq!(
+            lines[1],
+            "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR"
+        );
         assert!(lines[2].ends_with("\tactive\t0"));
     }
 }
