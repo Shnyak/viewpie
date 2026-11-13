@@ -111,6 +111,7 @@ def read_deb_field(package, field):
 
 def install_latest_release(preserve_log=False):
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    reboot_after_success = False
     with LOCK_PATH.open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -234,11 +235,24 @@ def install_latest_release(preserve_log=False):
                   exit_code=0, finished_at=__import__("datetime").datetime.now(
                       __import__("datetime").timezone.utc
                   ).isoformat())
+            reboot_after_success = True
         finally:
             try:
                 package.unlink()
             except FileNotFoundError:
                 pass
+    if reboot_after_success:
+        # The verified package is installed and its success journal is durable.
+        # Request a full host reboot only after releasing the updater lock and
+        # deleting the temporary package; a failed install never reaches here.
+        log("[reboot] Установка успешна. Запрашиваю полную перезагрузку Raspberry Pi.")
+        subprocess.Popen(
+            ["systemctl", "reboot"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
     return 0
 
 
