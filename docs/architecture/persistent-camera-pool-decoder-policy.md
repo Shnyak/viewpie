@@ -1,7 +1,7 @@
 # Persistent camera pool and per-camera decoder policy
 
-Status: implemented in the native renderer and shipped in `v0.3.1`.
-Target baseline: `v0.3.1`. This document records the shipped architecture and its acceptance checklist.
+Status: the persistent camera pool and per-camera decoder policy shipped in `v0.3.1`. The panel first-frame deadline below is proposed in PR #50 for the next release.
+Target baseline: `v0.3.1`. This document records the shipped architecture and the pending panel-transition improvement.
 
 ## Goals
 
@@ -65,7 +65,7 @@ The Home Assistant camera manager will expose a per-camera selector (Automatic /
 - Do not set outgoing-only camera sources to `wanted=false`.
 - Do not wait for outgoing decoder sessions to stop; they are not being stopped.
 - Keep the outgoing panel visible while waiting for incoming frames. Once every viewport has a frame, detach the old KMS planes, wait for the detach flip, replace viewport geometry, then commit the new panel.
-- A missing incoming frame cannot hold a panel switch forever: after a 10-second first-frame deadline, show the available cameras and leave missing viewports blank. The renderer logs how many viewports were blanked.
+- Pending PR #50: a missing incoming frame will not hold a panel switch forever. After a 10-second first-frame deadline, the renderer will show available cameras and leave missing viewports blank, logging how many viewports were blanked.
 - Reuse the same source and decoder for a camera shared by multiple panels and for a camera returning to a previously viewed panel.
 
 Expected result: switching latency is a KMS scene transition (normally one or a few display flips), not RTSP connection + keyframe + decoder startup latency.
