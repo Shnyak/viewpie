@@ -55,6 +55,14 @@ class UpdateHelperTests(unittest.TestCase):
         self.assertEqual(captured["DEBIAN_FRONTEND"], "noninteractive")
         self.assertEqual(captured["APT_LISTCHANGES_FRONTEND"], "none")
 
+    def test_local_package_install_pins_ffmpeg_but_allows_viewpie_upgrade(self):
+        command = helper.package_install_command(
+            Path("/tmp/viewpie-new.deb"), "7:5.1.8-0+deb12u1+rpt1"
+        )
+        self.assertIn("/tmp/viewpie-new.deb", command)
+        self.assertEqual(command[-1], "ffmpeg=7:5.1.8-0+deb12u1+rpt1")
+        self.assertNotIn("--no-upgrade", command)
+
     def test_only_missing_runtime_packages_are_requested(self):
         with patch.object(helper, "package_is_installed", side_effect=lambda name: name == "ffmpeg"):
             self.assertEqual(helper.missing_runtime_packages(), ["fonts-dejavu-core"])
