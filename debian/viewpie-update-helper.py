@@ -163,6 +163,19 @@ def installed_package_version(name):
     ).strip()
 
 
+def package_install_command(package, ffmpeg_version):
+    """Upgrade Viewpie while pinning FFmpeg to its currently installed build."""
+    if ffmpeg_version == "not installed":
+        raise RuntimeError("FFmpeg must be installed before updating Viewpie")
+    return [
+        "apt-get", "install", "-y", "--no-install-recommends",
+        "-o", "Dpkg::Options::=--force-confdef",
+        "-o", "Dpkg::Options::=--force-confold",
+        str(package),
+        "ffmpeg=" + ffmpeg_version,
+    ]
+
+
 def request_json(url):
     req = urllib.request.Request(
         url, headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}
@@ -329,12 +342,7 @@ def install_latest_release(preserve_log=False):
             # update from silently replacing existing runtime libraries.
             event("install", "$ apt-get install local package " + package.name + " — " + package_version)
             run_logged(
-                [
-                    "apt-get", "install", "-y", "--no-install-recommends", "--no-upgrade",
-                    "-o", "Dpkg::Options::=--force-confdef",
-                    "-o", "Dpkg::Options::=--force-confold",
-                    str(package),
-                ],
+                package_install_command(package, ffmpeg_version),
                 timeout_seconds=900,
                 phase="install",
             )
