@@ -74,16 +74,11 @@ pub async fn fullscreen(
     // Preserve the previous selection so a failed physical KMS transition
     // cannot leave HA showing a fullscreen state that is not on the screen.
     let previous = state.manager.fullscreen_camera().await;
-    state
+    let selection_started = state
         .manager
-        .enter_fullscreen(&req.camera)
+        .enter_fullscreen_with_timestamp(&req.camera)
         .await
         .map_err(ApiError::Panel)?;
-
-    // Every selection gets its own timestamp. A timeout belonging to an older
-    // visit to the same camera must not end a newer fullscreen session (A → B
-    // → A). Capture it before waiting for the renderer acknowledgement.
-    let selection_started = state.wall_state.read().await.fullscreen_started;
 
     let (ack_tx, ack_rx) = oneshot::channel();
     if state
@@ -130,7 +125,7 @@ pub async fn fullscreen(
             let current = st.wall_state.read().await;
             let is_current = fullscreen_selection_is_current(
                 current.fullscreen_camera.as_deref(),
-                current.fullscreen_started.clone(),
+                current.fullscreen_started,
                 &cam,
                 selection_started,
             );
