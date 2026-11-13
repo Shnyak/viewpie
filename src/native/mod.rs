@@ -2432,9 +2432,9 @@ fn debug_overlay_lines(
 
     let show_status = cameras.iter().any(|row| row.3 != "active");
     if show_status {
-        lines.push("CAMERA\\tTYPE\\tCODEC\\tRESOLUTION\\tFPS\\tSTATUS".to_string());
+        lines.push("CAMERA\tTYPE\tCODEC\tRESOLUTION\tFPS\tSTATUS".to_string());
     } else {
-        lines.push("CAMERA\\tTYPE\\tCODEC\\tRESOLUTION\\tFPS".to_string());
+        lines.push("CAMERA\tTYPE\tCODEC\tRESOLUTION\tFPS".to_string());
     }
     for (name, info, _wanted, state) in cameras {
         let decoder_type = match info.mode.as_deref() {
@@ -2454,8 +2454,8 @@ fn debug_overlay_lines(
         } else {
             name
         };
-        let mut row = format!("{name}\\t{decoder_type}\\t{codec}\\t{resolution}\\t{fps}");
-        if show_status { row.push_str(&format!("\\t{state}")); }
+        let mut row = format!("{name}\t{decoder_type}\t{codec}\t{resolution}\t{fps}");
+        if show_status { row.push_str(&format!("\t{state}")); }
         lines.push(row);
     }
     lines
@@ -4129,9 +4129,9 @@ displays:
         let paused = Arc::new(Source::new("yard", true));
         paused.set_wanted(false);
         let lines = debug_overlay_lines(&[active, paused], Some("front"));
-        assert_eq!(lines[1], "CAMERA\\tTYPE\\tCODEC\\tRESOLUTION\\tFPS\\tSTATUS");
-        assert!(lines[2].starts_with("*front\\tHardware\\tH.264\\t1920x1080\\t25.0\\tactive"));
-        assert!(lines[3].starts_with("yard\\t—\\t—\\t—\\t—\\tpaused"));
+        assert_eq!(lines[1], "CAMERA\tTYPE\tCODEC\tRESOLUTION\tFPS\tSTATUS");
+        assert!(lines[2].starts_with("*front\tHardware\tH.264\t1920x1080\t25.0\tactive"));
+        assert!(lines[3].starts_with("yard\t—\t—\t—\t—\tpaused"));
     }
 
     #[test]
@@ -4139,6 +4139,6 @@ displays:
         let camera = Arc::new(Source::new("front", true));
         camera.decoder_info.lock().unwrap().state = Some("active".into());
         let lines = debug_overlay_lines(&[camera], None);
-        assert_eq!(lines[1], "CAMERA\\tTYPE\\tCODEC\\tRESOLUTION\\tFPS");
+        assert_eq!(lines[1], "CAMERA\tTYPE\tCODEC\tRESOLUTION\tFPS");
     }
 }
