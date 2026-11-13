@@ -4,19 +4,19 @@
 
 //! Camera (feed) CRUD + connectivity test endpoints.
 
-use std::process::Stdio;
-use std::time::{Duration, Instant};
-use tokio::process::Command;
-
 use axum::body::Body;
 use axum::extract::Json;
 use axum::extract::{Path, State};
 use axum::http::header;
 use axum::http::StatusCode;
 use axum::response::Response;
+
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use tokio::process::Command;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
-
 use crate::http_api::errors::ApiError;
 use crate::http_api::models::{CameraDto, CameraTestResponse, OkResponse};
 use crate::http_api::state::{AppState, WallCommand};
