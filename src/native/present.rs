@@ -649,8 +649,8 @@ impl Card {
         display_width: u32,
         display_height: u32,
     ) -> Result<DebugOverlay, String> {
-        let width = display_width.saturating_sub(24).min(640);
-        let height = display_height.saturating_sub(24).min(224);
+        let width = display_width.saturating_sub(24).min(960);
+        let height = display_height.saturating_sub(24).min(520);
         if width < 120 || height < 48 {
             return Err("display is too small for a readable diagnostics overlay".into());
         }
