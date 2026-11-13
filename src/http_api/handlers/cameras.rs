@@ -195,7 +195,7 @@ pub async fn snapshot_camera(
         .ok_or_else(|| ApiError::not_found(format!("camera {name:?} not found")))?;
     let mut command = Command::new("ffmpeg");
     command
-        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-timeout", "7000000", "-i"])
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-timeout", "7000000", "-threads", "1", "-i"])
         .arg(&feed.config.url)
         .args(["-an", "-sn", "-dn", "-frames:v", "1", "-vf", "scale=w='min(640,iw)':h=-2", "-threads", "1", "-q:v", "5", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
         .stdin(Stdio::null())
