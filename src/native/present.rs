@@ -738,7 +738,9 @@ impl Card {
                 overlay.width.saturating_sub(8),
             );
         }
-        let Some(header) = lines.get(1) else { return Ok(()); };
+        let Some(header) = lines.get(1) else {
+            return Ok(());
+        };
         let headers: Vec<&str> = header.split('\t').collect();
         let table_y = 34u32;
         fill_overlay_rect(
@@ -814,7 +816,11 @@ impl Card {
                 line_height,
                 background,
             );
-            let foreground = if selected { [20, 30, 40] } else { [238, 242, 246] };
+            let foreground = if selected {
+                [20, 30, 40]
+            } else {
+                [238, 242, 246]
+            };
             let mut x = margin;
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
@@ -1058,8 +1064,15 @@ impl Drop for DebugOverlay {
 
 /// Fill a clipped rectangle in an XRGB8888 diagnostics buffer.
 fn fill_overlay_rect(
-    bytes: &mut [u8], pitch: usize, width: u32, height: u32,
-    x: u32, y: u32, w: u32, h: u32, colour: u32,
+    bytes: &mut [u8],
+    pitch: usize,
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    colour: u32,
 ) {
     let right = x.saturating_add(w).min(width);
     let bottom = y.saturating_add(h).min(height);
@@ -1075,7 +1088,10 @@ fn fill_overlay_rect(
 
 /// Draw antialiased DejaVu Sans text, clipped to the diagnostics surface.
 fn draw_overlay_text(
-    bytes: &mut [u8], pitch: usize, width: u32, height: u32,
+    bytes: &mut [u8],
+    pitch: usize,
+    width: u32,
+    height: u32,
     font: &fontdue::Font,
     text: &str,
     x: i32,
@@ -1088,7 +1104,8 @@ fn draw_overlay_text(
     for ch in text.chars() {
         let (metrics, bitmap) = font.rasterize(ch, font_size);
         let glyph_x = (pen_x + metrics.xmin as f32).round() as i32;
-        let glyph_y = (baseline as f32 - metrics.ymin as f32 - metrics.height as f32).round() as i32;
+        let glyph_y =
+            (baseline as f32 - metrics.ymin as f32 - metrics.height as f32).round() as i32;
         for gy in 0..metrics.height {
             for gx in 0..metrics.width {
                 let px = glyph_x + gx as i32;
@@ -1102,9 +1119,13 @@ fn draw_overlay_text(
                     continue;
                 }
                 let alpha = bitmap[gy * metrics.width + gx] as u32;
-                if alpha == 0 { continue; }
+                if alpha == 0 {
+                    continue;
+                }
                 let offset = py as usize * pitch + px as usize * 4;
-                if offset + 4 > bytes.len() { continue; }
+                if offset + 4 > bytes.len() {
+                    continue;
+                }
                 for channel in 0..3 {
                     let background = bytes[offset + channel] as u32;
                     let foreground = foreground[channel] as u32;
