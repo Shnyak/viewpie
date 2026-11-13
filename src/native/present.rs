@@ -1061,7 +1061,6 @@ impl Drop for DebugOverlay {
     }
 }
 
-
 /// Fill a clipped rectangle in an XRGB8888 diagnostics buffer.
 fn fill_overlay_rect(
     bytes: &mut [u8],
