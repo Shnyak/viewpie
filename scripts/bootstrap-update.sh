@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.27-fork"
+VERSION="0.2.34-fork"
 TAG="v\${VERSION}"
 REPOSITORY="Shnyak/viewpie"
 BASE_URL="https://github.com/\${REPOSITORY}/releases/download/\${TAG}"
@@ -101,4 +101,6 @@ fi
 
 echo
 echo "SUCCESS: Viewpie \${VERSION} (\${ARCH}) is installed."
-echo "The Raspberry Pi has not been rebooted. Reboot separately after checking the service."
+echo "The package is installed. Raspberry Pi will reboot automatically in 3 seconds."
+sleep 3
+systemctl reboot
