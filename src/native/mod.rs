@@ -549,6 +549,7 @@ struct Wall {
 /// A prepared panel that is not on screen yet.
 struct PendingScene {
     panel: String,
+    started_at: Instant,
     viewports: Vec<Viewport>,
     feeds: Vec<Feeds>,
     cameras: Vec<Camera>,
@@ -1458,6 +1459,12 @@ fn scene_frames_ready(feeds: &[Feeds], clock: Duration) -> bool {
         })
 }
 
+const PANEL_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn panel_transition_ready(incoming_ready: bool, waiting: Duration) -> bool {
+    incoming_ready || waiting >= PANEL_FIRST_FRAME_TIMEOUT
+}
+
 /// Resolve per-camera preferences into a stable set of grid feeds that
 /// may attempt hardware decoding. Fullscreen streams are deliberately excluded.
 fn hardware_feed_names(config: &config::Config) -> HashSet<String> {
@@ -1728,6 +1735,7 @@ fn run_walls(
                             Ok((viewports, feeds, cameras)) => {
                                 wall.pending_scene = Some(PendingScene {
                                     panel: panel.clone(),
+                                    started_at: Instant::now(),
                                     viewports,
                                     feeds,
                                     cameras,
@@ -1746,10 +1754,12 @@ fn run_walls(
                         }
                     }
 
-                    let incoming_ready = wall
-                        .pending_scene
-                        .as_ref()
-                        .is_some_and(|scene| scene_frames_ready(&scene.feeds, clock));
+                    let incoming_ready = wall.pending_scene.as_ref().is_some_and(|scene| {
+                        panel_transition_ready(
+                            scene_frames_ready(&scene.feeds, clock),
+                            scene.started_at.elapsed(),
+                        )
+                    });
 
                     if panel_transition_stage(incoming_ready, wall.panel_detach_pending)
                         == PanelTransitionStage::DetachOutgoing
@@ -1790,12 +1800,38 @@ fn run_walls(
                         // Read all incoming frames as one snapshot. The complete
                         // old plane pool has already been detached and flipped,
                         // so no camera from the previous grid can survive.
-                        let incoming_frames = collect_ready(
-                            &mut incoming.feeds,
-                            &incoming.viewports,
-                            |_| None,
-                            clock,
-                        );
+                        let frame_timeout_elapsed =
+                            incoming.started_at.elapsed() >= PANEL_FIRST_FRAME_TIMEOUT;
+                        let timed_out =
+                            frame_timeout_elapsed && !scene_frames_ready(&incoming.feeds, clock);
+                        let incoming_frames = if timed_out {
+                            let missing_viewports = incoming
+                                .feeds
+                                .iter()
+                                .filter(|feed| {
+                                    let tap = &feed.taps[feed.active(clock)];
+                                    tap.source.frame().0.is_none()
+                                })
+                                .count();
+                            eprintln!(
+                                "{}: panel '{}' first-frame timeout after {}s; showing available cameras and leaving {} viewport(s) blank",
+                                wall.out.name,
+                                incoming.panel,
+                                PANEL_FIRST_FRAME_TIMEOUT.as_secs(),
+                                missing_viewports,
+                            );
+                            // The outgoing planes have already been detached.
+                            // Treat every incoming slot as needing a commit so
+                            // feeds without a first frame are explicitly blank.
+                            collect_ready(
+                                &mut incoming.feeds,
+                                &incoming.viewports,
+                                |_| Some(std::ptr::null()),
+                                clock,
+                            )
+                        } else {
+                            collect_ready(&mut incoming.feeds, &incoming.viewports, |_| None, clock)
+                        };
                         if incoming_frames.len() == incoming_count {
                             wall.viewports = incoming.viewports;
                             ready = incoming_frames;
@@ -3654,6 +3690,14 @@ displays:
             Duration::ZERO,
         )];
         assert!(!scene_frames_ready(&feeds, Duration::ZERO));
+    }
+
+    #[test]
+    fn panel_transition_stops_waiting_after_first_frame_deadline() {
+        assert!(panel_transition_ready(true, Duration::ZERO));
+        assert!(!panel_transition_ready(false, Duration::from_secs(9)));
+        assert!(panel_transition_ready(false, Duration::from_secs(10)));
+        assert!(panel_transition_ready(false, Duration::from_secs(30)));
     }
 
     #[test]
