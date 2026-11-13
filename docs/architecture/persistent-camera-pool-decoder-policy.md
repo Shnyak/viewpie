@@ -1,7 +1,7 @@
 # Persistent camera pool and per-camera decoder policy
 
-Status: proposed architecture for the next native renderer implementation.
-Target baseline: `v0.2.19-fork`. This document does not change runtime behavior.
+Status: the persistent camera pool and per-camera decoder policy shipped in `v0.3.1`. The panel first-frame deadline below is proposed in PR #50 for the next release.
+Target baseline: `v0.3.1`. This document records the shipped architecture and the pending panel-transition improvement.
 
 ## Goals
 
@@ -64,7 +64,8 @@ The Home Assistant camera manager will expose a per-camera selector (Automatic /
 - Keep all grid sources wanted while at least one configured display is being watched.
 - Do not set outgoing-only camera sources to `wanted=false`.
 - Do not wait for outgoing decoder sessions to stop; they are not being stopped.
-- Detach the old KMS planes, wait for the detach flip, replace viewport geometry, then commit the new panel using already-published frames.
+- Keep the outgoing panel visible while waiting for incoming frames. Once every viewport has a frame, detach the old KMS planes, wait for the detach flip, replace viewport geometry, then commit the new panel.
+- Pending PR #50: a missing incoming frame will not hold a panel switch forever. After a 10-second first-frame deadline, the renderer will show available cameras and leave missing viewports blank, logging how many viewports were blanked.
 - Reuse the same source and decoder for a camera shared by multiple panels and for a camera returning to a previously viewed panel.
 
 Expected result: switching latency is a KMS scene transition (normally one or a few display flips), not RTSP connection + keyframe + decoder startup latency.
@@ -86,7 +87,9 @@ Changes to a camera URL, its decoder preference, the hardware limit, or the came
 - Do not change Pi kernel settings, CMA, GPU memory, systemd, or boot configuration as part of this feature.
 - Do not merge or publish a release until CI and code review pass.
 
-## Acceptance tests
+## Acceptance checklist
+
+This list records the design's acceptance criteria. Software tests run in CI; final validation of decoder stability, KMS plane capacity and camera recovery still requires the target Raspberry Pi hardware.
 
 1. A two-panel fixture with disjoint camera sets starts every unique camera once at startup.
 2. Switching between panels does not change the decoder session generation/connection count for any grid camera.

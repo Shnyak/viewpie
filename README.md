@@ -43,6 +43,8 @@ cargo run --release --features native-pipeline --bin viewpie-native -- /etc/view
 
 Базовый URL: `http://<rpi-ip>:8080`. Все ответы — JSON.
 
+**Авторизация обязательна для всех маршрутов `/api/*`.** Передавайте токен установки в заголовке `Authorization: Bearer <token>`. Токен создаётся при первой установке пакета и хранится в `/etc/viewpie/restart.env` с правами root-only. Интеграция Home Assistant отправляет его автоматически; для собственных клиентов используйте тот же заголовок. Не помещайте токен в URL и не публикуйте его в логах. API использует обычный HTTP без шифрования: ограничьте порт 8080 доверенной локальной сетью, не публикуйте его в интернете; для недоверенных сетей используйте TLS reverse proxy.
+
 ### Управление
 
 | Метод | Путь | Описание |
@@ -91,17 +93,23 @@ cargo run --release --features native-pipeline --bin viewpie-native -- /etc/view
 Пример интеграции с Home Assistant:
 
 ```yaml
+# secrets.yaml: viewpie_authorization: "Bearer <token from /etc/viewpie/restart.env>"
 rest_command:
   viewpie_pause:
     url: http://10.0.0.20:8080/api/pause
     method: POST
+    headers:
+      Authorization: !secret viewpie_authorization
   viewpie_show_outside:
     url: http://10.0.0.20:8080/api/panels/outside/activate
     method: POST
+    headers:
+      Authorization: !secret viewpie_authorization
   viewpie_fullscreen_gate:
     url: http://10.0.0.20:8080/api/fullscreen
     method: POST
     headers:
+      Authorization: !secret viewpie_authorization
       content-type: application/json
     body: '{"camera": "gate", "duration_seconds": 60}'
 ```
