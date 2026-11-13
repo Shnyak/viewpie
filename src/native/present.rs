@@ -699,8 +699,17 @@ impl Card {
             .map_dumb_buffer(&mut overlay.buffer)
             .map_err(|e| format!("could not map diagnostics buffer: {e}"))?;
         let bytes = map.as_mut();
-        fill_overlay_rect(bytes, pitch, overlay.width, overlay.height,
-            0, 0, overlay.width, overlay.height, 0xff101820);
+        fill_overlay_rect(
+            bytes,
+            pitch,
+            overlay.width,
+            overlay.height,
+            0,
+            0,
+            overlay.width,
+            overlay.height,
+            0xff101820,
+        );
 
         let font = diagnostics_font()?;
         let font_size = if overlay.width >= 800 { 15.0 } else { 13.0 };
@@ -715,25 +724,71 @@ impl Card {
         };
 
         if let Some(cpu) = lines.first() {
-            draw_overlay_text(bytes, pitch, overlay.width, overlay.height, font,
-                cpu, margin as i32, 21, font_size, [245, 245, 245]);
+            draw_overlay_text(
+                bytes,
+                pitch,
+                overlay.width,
+                overlay.height,
+                font,
+                cpu,
+                margin as i32,
+                21,
+                font_size,
+                [245, 245, 245],
+                overlay.width.saturating_sub(8),
+            );
         }
         let Some(header) = lines.get(1) else { return Ok(()); };
         let headers: Vec<&str> = header.split('\t').collect();
         let table_y = 34u32;
-        fill_overlay_rect(bytes, pitch, overlay.width, overlay.height, 0, table_y,
-            overlay.width, line_height, 0xff34495e);
+        fill_overlay_rect(
+            bytes,
+            pitch,
+            overlay.width,
+            overlay.height,
+            0,
+            table_y,
+            overlay.width,
+            line_height,
+            0xff34495e,
+        );
         let mut x = margin;
         for (index, value) in headers.iter().enumerate() {
             let cell_width = widths.get(index).copied().unwrap_or(80);
-            draw_overlay_text(bytes, pitch, overlay.width, overlay.height, font,
-                value, x as i32, (table_y + 20) as i32, font_size, [255, 255, 255]);
+            draw_overlay_text(
+                bytes,
+                pitch,
+                overlay.width,
+                overlay.height,
+                font,
+                value,
+                x as i32,
+                (table_y + 20) as i32,
+                font_size,
+                [255, 255, 255],
+                x.saturating_add(cell_width).min(overlay.width),
+            );
+            if index + 1 < headers.len() {
+                fill_overlay_rect(
+                    bytes,
+                    pitch,
+                    overlay.width,
+                    overlay.height,
+                    x.saturating_add(cell_width).saturating_sub(1),
+                    table_y,
+                    1,
+                    line_height,
+                    0xff607080,
+                );
+            }
             x += cell_width;
         }
 
         for (row_index, line) in lines.iter().skip(2).enumerate() {
             let y = table_y + line_height * (row_index as u32 + 1);
-            if y + line_height > overlay.height { break; }
+            if y + line_height > overlay.height {
+                break;
+            }
             let mut cells: Vec<&str> = line.split('\t').collect();
             let selected = cells.first().is_some_and(|name| name.starts_with('*'));
             if selected {
@@ -748,14 +803,47 @@ impl Card {
             } else {
                 0xff192430
             };
-            fill_overlay_rect(bytes, pitch, overlay.width, overlay.height, 0, y,
-                overlay.width, line_height, background);
+            fill_overlay_rect(
+                bytes,
+                pitch,
+                overlay.width,
+                overlay.height,
+                0,
+                y,
+                overlay.width,
+                line_height,
+                background,
+            );
             let foreground = if selected { [20, 30, 40] } else { [238, 242, 246] };
             let mut x = margin;
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
-                draw_overlay_text(bytes, pitch, overlay.width, overlay.height, font,
-                    value, x as i32, (y + 20) as i32, font_size, foreground);
+                draw_overlay_text(
+                    bytes,
+                    pitch,
+                    overlay.width,
+                    overlay.height,
+                    font,
+                    value,
+                    x as i32,
+                    (y + 20) as i32,
+                    font_size,
+                    foreground,
+                    x.saturating_add(cell_width).min(overlay.width),
+                );
+                if index + 1 < cells.len() {
+                    fill_overlay_rect(
+                        bytes,
+                        pitch,
+                        overlay.width,
+                        overlay.height,
+                        x.saturating_add(cell_width).saturating_sub(1),
+                        y,
+                        1,
+                        line_height,
+                        if selected { 0xffaab5c0 } else { 0xff3b4b5a },
+                    );
+                }
                 x += cell_width;
             }
         }
@@ -988,8 +1076,13 @@ fn fill_overlay_rect(
 /// Draw antialiased DejaVu Sans text, clipped to the diagnostics surface.
 fn draw_overlay_text(
     bytes: &mut [u8], pitch: usize, width: u32, height: u32,
-    font: &fontdue::Font, text: &str, x: i32, baseline: i32, font_size: f32,
+    font: &fontdue::Font,
+    text: &str,
+    x: i32,
+    baseline: i32,
+    font_size: f32,
     foreground: [u8; 3],
+    clip_right: u32,
 ) {
     let mut pen_x = x as f32;
     for ch in text.chars() {
@@ -1000,7 +1093,14 @@ fn draw_overlay_text(
             for gx in 0..metrics.width {
                 let px = glyph_x + gx as i32;
                 let py = glyph_y + gy as i32;
-                if px < 0 || py < 0 || px >= width as i32 || py >= height as i32 { continue; }
+                if px < 0
+                    || py < 0
+                    || px >= width as i32
+                    || px >= clip_right as i32
+                    || py >= height as i32
+                {
+                    continue;
+                }
                 let alpha = bitmap[gy * metrics.width + gx] as u32;
                 if alpha == 0 { continue; }
                 let offset = py as usize * pitch + px as usize * 4;
@@ -1015,7 +1115,9 @@ fn draw_overlay_text(
             }
         }
         pen_x += metrics.advance_width;
-        if pen_x >= width as f32 - 8.0 { break; }
+        if pen_x >= (clip_right as f32 - 4.0).min(width as f32 - 8.0) {
+            break;
+        }
     }
 }
 
