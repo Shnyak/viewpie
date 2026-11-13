@@ -152,16 +152,13 @@ impl NativeRendererController {
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
-                anyhow::bail!(
-                    "camera {camera} has not produced a visible frame within 6 seconds; the previous picture was kept and the camera will continue reconnecting"
-                );
+                return pending_fullscreen_timeout(camera);
             }
-            tokio::time::timeout(remaining, receiver.changed())
-                .await
-                .map_err(|_| anyhow::anyhow!(
-                    "native renderer did not confirm a visible frame for camera {camera} within 10 seconds"
-                ))?
-                .map_err(|_| anyhow::anyhow!("native renderer status channel closed"))?;
+            match tokio::time::timeout(remaining, receiver.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => anyhow::bail!("native renderer status channel closed"),
+                Err(_) => return pending_fullscreen_timeout(camera),
+            }
         }
     }
 
@@ -295,5 +292,27 @@ impl NativeRendererController {
             let _ = running.child.kill().await;
             let _ = running.child.wait().await;
         }
+    }
+}
+
+/// A slow or reconnecting camera is not a failed selection. The renderer
+/// keeps the previous picture visible and continues trying the requested
+/// fullscreen stream; the API must not roll the selection back just because
+/// its first-frame acknowledgement exceeded the short synchronous wait.
+fn pending_fullscreen_timeout(camera: &str) -> anyhow::Result<()> {
+    tracing::warn!(
+        camera,
+        "fullscreen frame is still pending; keeping the requested selection while the renderer reconnects"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod fullscreen_wait_tests {
+    use super::*;
+
+    #[test]
+    fn missing_first_frame_is_pending_not_a_failed_selection() {
+        assert!(pending_fullscreen_timeout("front_door").is_ok());
     }
 }

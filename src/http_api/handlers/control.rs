@@ -109,8 +109,10 @@ pub async fn fullscreen(
         )));
     }
 
-    // Start the timeout only after the native renderer confirms that a frame
-    // from the requested camera has been committed to the physical display.
+    // Start the timeout after the renderer accepts the selection. If the
+    // first fullscreen frame is still reconnecting, the previous picture stays
+    // visible and the renderer continues retrying without rolling the request
+    // back; this timer still bounds how long fullscreen remains selected.
     let timeout = match req.duration_seconds {
         Some(seconds) => Some(seconds),
         None => Some(state.settings.read().await.fullscreen_timeout),
