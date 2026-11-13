@@ -295,7 +295,6 @@ impl NativeRendererController {
     }
 }
 
-
 /// A slow or reconnecting camera is not a failed selection. The renderer
 /// keeps the previous picture visible and continues trying the requested
 /// fullscreen stream; the API must not roll the selection back just because
