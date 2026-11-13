@@ -650,7 +650,8 @@ impl Card {
         display_height: u32,
         camera_rows: usize,
     ) -> Result<DebugOverlay, String> {
-        let width = display_width.saturating_sub(24).min(960);
+        // Keep the diagnostics panel compact; the table sizes its columns from actual values.
+        let width = display_width.saturating_sub(24).min(480);
         let line_height = 26u32;
         let desired_height = 34u32
             .saturating_add(line_height.saturating_mul(camera_rows.saturating_add(1) as u32))
@@ -719,9 +720,8 @@ impl Card {
         let font = diagnostics_font()?;
         let line_height = 26u32;
         let margin = 10u32;
-        // Keep separators close to the text; the old 8 px gap amplified
-        // already oversized columns on the compact diagnostics overlay.
-        let column_gap = 3u32;
+        // Leave roughly one centimetre between diagnostic columns for readability.
+        let column_gap = 38u32;
         let char_limits = [16usize, 10, 10, 15, 8, 12, 5];
         let headers: Vec<&str> = lines
             .get(1)
