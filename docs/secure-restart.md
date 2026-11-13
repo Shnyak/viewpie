@@ -50,8 +50,9 @@ prerequisites only when absent, and pins the exact installed FFmpeg package vers
 Viewpie itself can be upgraded, but FFmpeg cannot be silently replaced as a
 side effect of that update.
 The FFmpeg package version is recorded in the update journal. If the new
-Viewpie package requires a dependency upgrade, the transaction fails rather
-than changing the existing FFmpeg/runtime stack without an explicit decision.
+Viewpie package requires a newer FFmpeg version, the pinned APT transaction
+fails rather than changing FFmpeg without an explicit decision. APT still
+resolves and installs other missing package dependencies.
 
 After a successful package installation, the helper requests a full Raspberry
 Pi reboot. This is intentional: it ensures the running renderer and loaded
