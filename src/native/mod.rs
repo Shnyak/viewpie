@@ -2409,7 +2409,7 @@ fn debug_overlay_lines(sources: &[Arc<Source>], fullscreen_camera: Option<&str>)
 
     // A camera may have both a persistent grid source and an on-demand
     // fullscreen source. Keep one row per camera, preferring its wanted feed.
-    let mut cameras: Vec<(String, DecoderInfo, bool, String)> = Vec::new();
+    let mut cameras: Vec<(String, DecoderInfo, bool, String, u64)> = Vec::new();
     for source in sources {
         let wanted = source.wanted.load(Ordering::Relaxed);
         let priority = wanted && source.on_demand;
@@ -2420,29 +2420,23 @@ fn debug_overlay_lines(sources: &[Arc<Source>], fullscreen_camera: Option<&str>)
             .to_string();
         let info = source.decoder_info.lock().unwrap().clone();
         let state = if wanted {
-            info.state
-                .clone()
-                .unwrap_or_else(|| "connecting".to_string())
+            info.state.clone().unwrap_or_else(|| "connecting".to_string())
         } else {
             "paused".to_string()
         };
+        let errors = source.stats.errors.load(Ordering::Relaxed).max(info.errors);
         if let Some(existing) = cameras.iter_mut().find(|row| row.0 == camera_name) {
             if priority && !existing.2 {
-                *existing = (camera_name, info, priority, state);
+                *existing = (camera_name, info, priority, state, errors);
             }
         } else {
-            cameras.push((camera_name, info, priority, state));
+            cameras.push((camera_name, info, priority, state, errors));
         }
     }
     cameras.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
 
-    let show_status = cameras.iter().any(|row| row.3 != "active");
-    if show_status {
-        lines.push("CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS".to_string());
-    } else {
-        lines.push("CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS".to_string());
-    }
-    for (name, info, _wanted, state) in cameras {
+    lines.push("CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR".to_string());
+    for (name, info, _wanted, state, errors) in cameras {
         let decoder_type = match info.mode.as_deref() {
             Some("hardware") => "Hardware",
             Some("software") => "Software",
@@ -2453,20 +2447,9 @@ fn debug_overlay_lines(sources: &[Arc<Source>], fullscreen_camera: Option<&str>)
             (Some(width), Some(height)) => format!("{width}x{height}"),
             _ => "—".to_string(),
         };
-        let fps = info
-            .fps
-            .map(|value| format!("{value:.1}"))
-            .unwrap_or_else(|| "—".to_string());
-        let name = if fullscreen_camera == Some(name.as_str()) {
-            format!("*{name}")
-        } else {
-            name
-        };
-        let mut row = format!("{name}\t{decoder_type}\t{codec}\t{resolution}\t{fps}");
-        if show_status {
-            row.push_str(&format!("\t{state}"));
-        }
-        lines.push(row);
+        let fps = info.fps.map(|value| format!("{value:.1}")).unwrap_or_else(|| "—".to_string());
+        let name = if fullscreen_camera == Some(name.as_str()) { format!("*{name}") } else { name };
+        lines.push(format!("{name}\t{decoder_type}\t{codec}\t{resolution}\t{fps}\t{state}\t{errors}"));
     }
     lines
 }
@@ -3540,8 +3523,8 @@ mod tests {
         let source = Arc::new(Source::new("front_door", true));
         let lines = debug_overlay_lines(&[source], None);
         assert!(lines[0].starts_with("CPU: "));
-        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS");
-        assert!(lines[2].starts_with("front_door\t—\t—\t—\t—\tconnecting"));
+        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR");
+        assert!(lines[2].starts_with("front_door\t—\t—\t—\t—\tconnecting\t0"));
     }
 
     #[test]
@@ -4138,15 +4121,15 @@ displays:
         paused.set_wanted(false);
         let lines = debug_overlay_lines(&[active, paused], Some("front"));
         assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS");
-        assert!(lines[2].starts_with("*front\tHardware\tH.264\t1920x1080\t25.0\tactive"));
-        assert!(lines[3].starts_with("yard\t—\t—\t—\t—\tpaused"));
+        assert!(lines[2].starts_with("*front\tHardware\tH.264\t1920x1080\t25.0\tactive\t0"));
+        assert!(lines[3].starts_with("yard\t—\t—\t—\t—\tpaused\t0"));
     }
 
     #[test]
-    fn diagnostics_table_hides_status_when_all_cameras_are_active() {
+    fn diagnostics_table_always_shows_status_and_error_columns() {
         let camera = Arc::new(Source::new("front", true));
         camera.decoder_info.lock().unwrap().state = Some("active".into());
         let lines = debug_overlay_lines(&[camera], None);
-        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS");
+        assert_eq!(lines[1], "CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS\tERROR");
     }
 }
