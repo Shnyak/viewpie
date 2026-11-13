@@ -125,7 +125,7 @@ pub async fn fullscreen(
             let current = st.wall_state.read().await;
             let is_current = fullscreen_selection_is_current(
                 current.fullscreen_camera.as_deref(),
-                current.fullscreen_started,
+                current.fullscreen_started.clone(),
                 &cam,
                 selection_started,
             );
@@ -253,13 +253,13 @@ mod fullscreen_timeout_tests {
 
         assert!(fullscreen_selection_is_current(
             Some("camera_a"),
-            Some(first_selection),
+            Some(first_selection.clone()),
             "camera_a",
             Some(first_selection),
         ));
         assert!(!fullscreen_selection_is_current(
             Some("camera_a"),
-            Some(second_selection),
+            Some(second_selection.clone()),
             "camera_a",
             Some(first_selection),
         ));
@@ -271,7 +271,7 @@ mod fullscreen_timeout_tests {
 
         assert!(!fullscreen_selection_is_current(
             Some("camera_b"),
-            Some(selected_at),
+            Some(selected_at.clone()),
             "camera_a",
             Some(selected_at),
         ));
