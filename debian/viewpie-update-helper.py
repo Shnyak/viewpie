@@ -111,6 +111,7 @@ def read_deb_field(package, field):
 
 def install_latest_release(preserve_log=False):
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    reboot_required = False
     with LOCK_PATH.open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -231,14 +232,23 @@ def install_latest_release(preserve_log=False):
             event("install", "$ dpkg -i " + package.name + " — установка " + package_version)
             run_logged(["dpkg", "-i", str(package)], timeout_seconds=900, phase="dpkg")
             event("complete", "Обновление Viewpie завершено: " + version, "success",
-                  exit_code=0, finished_at=__import__("datetime").datetime.now(
+                  reboot_pending=True, exit_code=0,
+                  finished_at=__import__("datetime").datetime.now(
                       __import__("datetime").timezone.utc
                   ).isoformat())
+            reboot_required = True
         finally:
             try:
                 package.unlink()
             except FileNotFoundError:
                 pass
+    if reboot_required:
+        # Give Home Assistant a short window to read the successful update
+        # journal before the host goes down. Reboot only after dpkg completed.
+        import time
+        time.sleep(3)
+        log("[reboot] Requesting a full Raspberry Pi reboot after successful installation")
+        subprocess.run(["systemctl", "reboot"], check=True, timeout=10)
     return 0
 
 
