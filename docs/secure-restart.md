@@ -46,8 +46,9 @@ APT so dependencies are resolved as part of the transaction.
 
 The helper runs package operations noninteractively and enforces a real
 process/output deadline. It refreshes package metadata, installs runtime
-prerequisites only when absent, and uses `--no-upgrade`: an existing FFmpeg
-installation is not silently replaced as a side effect of a Viewpie update.
+prerequisites only when absent, and pins the exact installed FFmpeg package version in the APT transaction:
+Viewpie itself can be upgraded, but FFmpeg cannot be silently replaced as a
+side effect of that update.
 The FFmpeg package version is recorded in the update journal. If the new
 Viewpie package requires a dependency upgrade, the transaction fails rather
 than changing the existing FFmpeg/runtime stack without an explicit decision.
