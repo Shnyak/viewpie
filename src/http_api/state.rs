@@ -169,7 +169,7 @@ pub async fn set_fullscreen_state_with_timestamp(
     } else {
         None
     };
-    (prev, w.fullscreen_started)
+    (prev, w.fullscreen_started.clone())
 }
 
 /// Install a new fullscreen camera, returning the previous one (if any).
