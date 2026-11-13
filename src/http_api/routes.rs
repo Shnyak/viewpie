@@ -47,6 +47,7 @@ pub fn router(state: AppState) -> Router {
             put(cameras::update_camera).delete(cameras::delete_camera),
         )
         .route("/api/cameras/:name/test", post(cameras::test_camera))
+        .route("/api/cameras/:name/snapshot", get(cameras::snapshot_camera))
         // Status
         .route("/api/status", get(status::status))
         .route("/api/restart", post(restart::restart))
