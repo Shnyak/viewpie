@@ -648,9 +648,14 @@ impl Card {
         plane: plane::Handle,
         display_width: u32,
         display_height: u32,
+        camera_rows: usize,
     ) -> Result<DebugOverlay, String> {
         let width = display_width.saturating_sub(24).min(960);
-        let height = display_height.saturating_sub(24).min(520);
+        let line_height = 26u32;
+        let desired_height = 34u32
+            .saturating_add(line_height.saturating_mul(camera_rows.saturating_add(1) as u32))
+            .saturating_add(10);
+        let height = display_height.saturating_sub(24).min(desired_height);
         if width < 120 || height < 48 {
             return Err("display is too small for a readable diagnostics overlay".into());
         }
@@ -712,15 +717,28 @@ impl Card {
         );
 
         let font = diagnostics_font()?;
-        let font_size = if overlay.width >= 800 { 15.0 } else { 13.0 };
         let line_height = 26u32;
         let margin = 10u32;
-        let widths: &[u32] = if overlay.width >= 850 {
-            &[220, 120, 100, 150, 80, 120]
-        } else if overlay.width >= 700 {
-            &[180, 105, 85, 125, 65, 100]
-        } else {
-            &[150, 85, 70, 105, 55, 80]
+        let column_gap = 8u32;
+        let char_limits = [16usize, 10, 10, 15, 8, 12, 5];
+        let mut font_size = if overlay.width >= 900 { 10.0 } else { 9.0 };
+        let glyphs = "MW@ЖШЩФЫЮ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        let widths = loop {
+            let max_advance = glyphs
+                .chars()
+                .map(|ch| font.rasterize(ch, font_size).0.advance_width)
+                .fold(0.0f32, f32::max);
+            let widths: Vec<u32> = char_limits
+                .iter()
+                .map(|limit| (max_advance * *limit as f32).ceil() as u32 + 6)
+                .collect();
+            let total = widths.iter().sum::<u32>()
+                + column_gap * (widths.len().saturating_sub(1) as u32)
+                + margin * 2;
+            if total <= overlay.width || font_size <= 6.5 {
+                break widths;
+            }
+            font_size -= 0.5;
         };
 
         if let Some(cpu) = lines.first() {
@@ -757,13 +775,17 @@ impl Card {
         let mut x = margin;
         for (index, value) in headers.iter().enumerate() {
             let cell_width = widths.get(index).copied().unwrap_or(80);
+            let text: String = value
+                .chars()
+                .take(char_limits.get(index).copied().unwrap_or(5))
+                .collect();
             draw_overlay_text(
                 bytes,
                 pitch,
                 overlay.width,
                 overlay.height,
                 font,
-                value,
+                &text,
                 x as i32,
                 (table_y + 20) as i32,
                 font_size,
@@ -776,14 +798,14 @@ impl Card {
                     pitch,
                     overlay.width,
                     overlay.height,
-                    x.saturating_add(cell_width).saturating_sub(1),
+                    x.saturating_add(cell_width).saturating_add(column_gap / 2),
                     table_y,
                     1,
                     line_height,
                     0xff607080,
                 );
             }
-            x += cell_width;
+            x = x.saturating_add(cell_width).saturating_add(column_gap);
         }
 
         for (row_index, line) in lines.iter().skip(2).enumerate() {
@@ -799,7 +821,7 @@ impl Card {
                 }
             }
             let background = if selected {
-                0xffe8eef5
+                0xffffffff
             } else if row_index % 2 == 0 {
                 0xff202d3a
             } else {
@@ -816,21 +838,21 @@ impl Card {
                 line_height,
                 background,
             );
-            let foreground = if selected {
-                [20, 30, 40]
-            } else {
-                [238, 242, 246]
-            };
+            let foreground = if selected { [0, 0, 0] } else { [238, 242, 246] };
             let mut x = margin;
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
+                let text: String = value
+                    .chars()
+                    .take(char_limits.get(index).copied().unwrap_or(5))
+                    .collect();
                 draw_overlay_text(
                     bytes,
                     pitch,
                     overlay.width,
                     overlay.height,
                     font,
-                    value,
+                    &text,
                     x as i32,
                     (y + 20) as i32,
                     font_size,
@@ -843,14 +865,14 @@ impl Card {
                         pitch,
                         overlay.width,
                         overlay.height,
-                        x.saturating_add(cell_width).saturating_sub(1),
+                        x.saturating_add(cell_width).saturating_add(column_gap / 2),
                         y,
                         1,
                         line_height,
                         if selected { 0xffaab5c0 } else { 0xff3b4b5a },
                     );
                 }
-                x += cell_width;
+                x = x.saturating_add(cell_width).saturating_add(column_gap);
             }
         }
         Ok(())

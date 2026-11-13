@@ -1,3 +1,14 @@
+viewpie (0.2.34-fork-1) unstable; urgency=medium
+
+  * Keep the diagnostics table height proportional to the actual camera rows.
+  * Always show Status and Error; constrain seven columns to their requested
+    character limits and calculate their pixel widths from the antialiased font.
+  * Keep inter-column gaps compact and use a high-contrast inverted fullscreen row.
+  * Make the one-time legacy bootstrap install this release and automatically
+    reboot after successful package verification and installation.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 13 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.33-fork-1) unstable; urgency=medium
 
   * Render diagnostics as a camera table with decoder type, codec,
