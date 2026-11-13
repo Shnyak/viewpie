@@ -309,9 +309,10 @@ def install_latest_release(preserve_log=False):
             # never upgrade an already-installed FFmpeg as a side effect of a
             # Viewpie update: decoder behavior depends on the distro build.
             missing = missing_runtime_packages()
+            event("dependencies", "Refreshing apt metadata before resolving package dependencies")
+            run_logged(["apt-get", "update"], timeout_seconds=900, phase="apt-update")
             if missing:
                 event("dependencies", "Missing runtime packages: " + ", ".join(missing))
-                run_logged(["apt-get", "update"], timeout_seconds=900, phase="apt-update")
                 run_logged(
                     ["apt-get", "install", "-y", "--no-install-recommends", "--no-upgrade", *missing],
                     timeout_seconds=900,
