@@ -2395,10 +2395,7 @@ struct WallMark {
 
 /// Text shown on the optional KMS plane. Keep the overlay compact: it is
 /// deliberately a small status panel, not a copy of the full journal.
-fn debug_overlay_lines(
-    sources: &[Arc<Source>],
-    fullscreen_camera: Option<&str>,
-) -> Vec<String> {
+fn debug_overlay_lines(sources: &[Arc<Source>], fullscreen_camera: Option<&str>) -> Vec<String> {
     let mut lines = Vec::new();
     let cpu = debug_cpu_load_percent()
         .map(|value| format!("{value:.0}%"))
@@ -2423,7 +2420,9 @@ fn debug_overlay_lines(
             .to_string();
         let info = source.decoder_info.lock().unwrap().clone();
         let state = if wanted {
-            info.state.clone().unwrap_or_else(|| "connecting".to_string())
+            info.state
+                .clone()
+                .unwrap_or_else(|| "connecting".to_string())
         } else {
             "paused".to_string()
         };
@@ -2454,7 +2453,9 @@ fn debug_overlay_lines(
             (Some(width), Some(height)) => format!("{width}x{height}"),
             _ => "—".to_string(),
         };
-        let fps = info.fps.map(|value| format!("{value:.1}"))
+        let fps = info
+            .fps
+            .map(|value| format!("{value:.1}"))
             .unwrap_or_else(|| "—".to_string());
         let name = if fullscreen_camera == Some(name.as_str()) {
             format!("*{name}")
@@ -2462,7 +2463,9 @@ fn debug_overlay_lines(
             name
         };
         let mut row = format!("{name}\t{decoder_type}\t{codec}\t{resolution}\t{fps}");
-        if show_status { row.push_str(&format!("\t{state}")); }
+        if show_status {
+            row.push_str(&format!("\t{state}"));
+        }
         lines.push(row);
     }
     lines
