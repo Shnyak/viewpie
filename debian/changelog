@@ -1,3 +1,10 @@
+viewpie (0.2.37-fork-1) unstable; urgency=medium
+
+  * Increase diagnostics table column separation to approximately one
+    centimetre and reduce the overlay maximum width by half.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 13 Nov 2026 12:30:00 +0000
+
 viewpie (0.2.36-fork-1) unstable; urgency=medium
 
   * Tighten diagnostics overlay column spacing and calculate each column width
