@@ -579,6 +579,14 @@ enum Mode {
 /// showing a single camera would go on hiding all the others.
 const FULLSCREEN_FOR: Duration = Duration::from_secs(10 * 60);
 
+/// Refresh the inactivity deadline whenever a fullscreen camera is selected.
+/// API selections and remote-control selections share this path.
+fn refresh_fullscreen_timer(mode: Mode, pressed: &mut Instant, now: Instant) {
+    if mode != Mode::Grid {
+        *pressed = now;
+    }
+}
+
 /// What a key on the remote does.
 #[derive(PartialEq, Debug)]
 enum Move {
@@ -784,6 +792,7 @@ impl Wall {
     }
 
     fn show(&mut self, mode: Mode) {
+        refresh_fullscreen_timer(mode, &mut self.pressed, Instant::now());
         if (self.mode == Mode::Grid) != (mode == Mode::Grid) {
             self.turns += 1;
             // Nothing on the grid is on screen while a feed is fullscreen,
@@ -3519,6 +3528,23 @@ fn first_connected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fullscreen_selection_refreshes_the_inactivity_deadline() {
+        let selected_at = Instant::now();
+        let mut pressed = selected_at - FULLSCREEN_FOR - Duration::from_secs(30);
+
+        refresh_fullscreen_timer(Mode::Fullscreen(0), &mut pressed, selected_at);
+        assert_eq!(pressed, selected_at);
+        assert!(
+            selected_at.duration_since(pressed) < FULLSCREEN_FOR,
+            "a new API selection must not expire using the renderer's startup timer"
+        );
+
+        let before_grid = pressed;
+        refresh_fullscreen_timer(Mode::Grid, &mut pressed, selected_at + Duration::from_secs(1));
+        assert_eq!(pressed, before_grid, "returning to the grid needs no fullscreen deadline");
+    }
 
     #[test]
     fn panel_transition_never_attaches_before_the_old_plane_pool_is_detached() {
