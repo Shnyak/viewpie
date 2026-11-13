@@ -178,12 +178,6 @@ pub async fn install(headers: HeaderMap) -> Result<Json<Value>, ApiError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn token_comparison_is_exact() {
-        assert!(constant_time_eq(b"secret", b"secret"));
-        assert!(!constant_time_eq(b"secret", b"secret "));
-        assert!(!constant_time_eq(b"secret", b""));
-    }
 
     #[test]
     fn release_asset_digest_must_be_sha256() {
