@@ -1941,8 +1941,9 @@ fn run_walls(
                 // The diagnostics plane remains attached between refreshes.
                 // Do not re-submit its KMS properties with every camera frame:
                 // commit it only for a text refresh or an attach/detach transition.
-                let overlay_commit_needed = debug_overlay_refreshed
-                    || wall.debug_overlay_detached == wall.debug_overlay_active;
+                let overlay_commit_needed = !diagnostics_transitioning
+                    && (debug_overlay_refreshed
+                        || wall.debug_overlay_detached == wall.debug_overlay_active);
                 let overlay_for_commit = if overlay_commit_needed {
                     wall.debug_overlay
                         .as_ref()
@@ -1985,7 +1986,7 @@ fn run_walls(
                             // Do not attach the incoming scene until that flip.
                             wall.panel_detach_pending = true;
                         }
-                        if wall.debug_overlay.is_some() {
+                        if overlay_for_commit.is_some() {
                             wall.debug_overlay_detached = !wall.debug_overlay_active;
                         }
                         if let Mode::Fullscreen(at) = wall.mode {
@@ -2432,9 +2433,9 @@ fn debug_overlay_lines(
 
     let show_status = cameras.iter().any(|row| row.3 != "active");
     if show_status {
-        lines.push("CAMERA\tTYPE\tCODEC\tRESOLUTION\tFPS\tSTATUS".to_string());
+        lines.push("CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS\tSTATUS".to_string());
     } else {
-        lines.push("CAMERA\tTYPE\tCODEC\tRESOLUTION\tFPS".to_string());
+        lines.push("CAMERA\tDECODER\tCODEC\tRESOLUTION\tFPS".to_string());
     }
     for (name, info, _wanted, state) in cameras {
         let decoder_type = match info.mode.as_deref() {
