@@ -88,6 +88,11 @@ if [ "$PACKAGE_NAME" != "viewpie" ] \
 fi
 
 echo
+echo "=== Install runtime dependencies ==="
+apt-get update
+apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+
+echo
 echo "=== Install package ==="
 dpkg -i "${TMP_DIR}/${PACKAGE}"
 
