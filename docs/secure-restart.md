@@ -10,8 +10,8 @@ printing the secret.
 **The same Bearer token protects every Viewpie HTTP API route**, not only
 restart and update installation. This includes status, camera metadata,
 camera snapshots, panels, settings, display controls and update discovery.
-Requests without the token or with an incorrect token receive HTTP 401. CORS
-is not an authentication mechanism.
+Requests without the token or with an incorrect token receive HTTP 401 (or HTTP 503 if the service token itself is not configured). CORS
+is not an authentication mechanism. The API currently uses plain HTTP, so Bearer tokens are not encrypted in transit. Restrict port 8080 to a trusted LAN and do not expose it directly to the internet; use a TLS reverse proxy when clients cross an untrusted network.
 
 The Debian service runs as the unprivileged `viewpie` account and receives only
 `CAP_SYS_BOOT` through systemd. No sudoers entry or general-purpose privilege
