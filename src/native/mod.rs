@@ -1802,8 +1802,8 @@ fn run_walls(
                         // so no camera from the previous grid can survive.
                         let frame_timeout_elapsed =
                             incoming.started_at.elapsed() >= PANEL_FIRST_FRAME_TIMEOUT;
-                        let timed_out = frame_timeout_elapsed
-                            && !scene_frames_ready(&incoming.feeds, clock);
+                        let timed_out =
+                            frame_timeout_elapsed && !scene_frames_ready(&incoming.feeds, clock);
                         let incoming_frames = if timed_out {
                             let missing_viewports = incoming
                                 .feeds
@@ -1830,12 +1830,7 @@ fn run_walls(
                                 clock,
                             )
                         } else {
-                            collect_ready(
-                                &mut incoming.feeds,
-                                &incoming.viewports,
-                                |_| None,
-                                clock,
-                            )
+                            collect_ready(&mut incoming.feeds, &incoming.viewports, |_| None, clock)
                         };
                         if incoming_frames.len() == incoming_count {
                             wall.viewports = incoming.viewports;
