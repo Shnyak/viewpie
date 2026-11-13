@@ -11,6 +11,7 @@
 //!   timer and fullscreen timeout enforcement,
 //! * serve the router with CORS restricted to private network origins.
 
+pub mod auth;
 pub mod errors;
 pub mod handlers;
 pub mod models;

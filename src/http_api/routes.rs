@@ -4,6 +4,7 @@
 
 //! Axum route table for the REST API.
 
+use axum::middleware;
 use axum::routing::{get, post, put};
 use axum::Router;
 
@@ -54,5 +55,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/update/check", get(update::check))
         .route("/api/update/status", get(update::update_status))
         .route("/api/update/install", post(update::install))
+        // Every API endpoint is private: camera metadata and snapshots are sensitive too.
+        .layer(middleware::from_fn(
+            crate::http_api::auth::require_api_token,
+        ))
         .with_state(state)
 }
