@@ -4,9 +4,14 @@
 
 //! Camera (feed) CRUD + connectivity test endpoints.
 
-use std::time::Instant;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+use tokio::process::Command;
 
+use axum::body::Body;
 use axum::extract::Json;
+use axum::http::header;
+use axum::response::Response;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use tracing::{info, warn};
@@ -174,6 +179,56 @@ pub async fn delete_camera(
     Ok(Json(OkResponse::ok()))
 }
 
+/// GET /api/cameras/{name}/snapshot — decode one small JPEG and exit.
+///
+/// This is deliberately a one-shot process: the editor asks for a frame only
+/// when a camera is selected, so preview never creates a permanent RTSP
+/// session or adds a continuously running decoder to the Pi.
+pub async fn snapshot_camera(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Response, ApiError> {
+    let feed = state
+        .feeds_pool
+        .get(&name)
+        .await
+        .ok_or_else(|| ApiError::not_found(format!("camera {name:?} not found")))?;
+    let mut command = Command::new("ffmpeg");
+    command
+        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-timeout", "7000000", "-i"])
+        .arg(&feed.config.url)
+        .args(["-an", "-sn", "-dn", "-frames:v", "1", "-vf", "scale=w='min(640,iw)':h=-2", "-threads", "1", "-q:v", "5", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let output = tokio::time::timeout(Duration::from_secs(12), command.output())
+        .await
+        .map_err(|_| ApiError::Unavailable(format!("snapshot timed out for camera {name:?}")))?
+        .map_err(|error| ApiError::Unavailable(format!("could not start ffmpeg: {error}")))?;
+
+    if !output.status.success() || output.stdout.len() < 4 {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        let detail = if detail.len() > 400 { &detail[..400] } else { detail };
+        return Err(ApiError::Unavailable(if detail.is_empty() {
+            format!("camera {name:?} did not produce a frame")
+        } else {
+            format!("could not capture camera {name:?}: {detail}")
+        }));
+    }
+    if !output.stdout.starts_with(&[0xff, 0xd8]) || !output.stdout.ends_with(&[0xff, 0xd9]) {
+        return Err(ApiError::Unavailable(format!("ffmpeg returned an invalid JPEG for camera {name:?}")));
+    }
+
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/jpeg")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(output.stdout))
+        .map_err(|error| ApiError::Internal(format!("could not build snapshot response: {error}")))
+}
 /// `POST /api/cameras/{name}/test` — connect, grab one frame, measure
 /// latency, disconnect. Works both against real RTSP servers (via a TCP
 /// probe of the RTSP port plus DESCRIBE when available) and reports clean
