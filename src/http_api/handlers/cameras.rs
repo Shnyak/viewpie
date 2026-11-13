@@ -14,11 +14,14 @@ use axum::extract::{Path, State};
 use axum::http::header;
 use axum::http::StatusCode;
 use axum::response::Response;
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::http_api::errors::ApiError;
 use crate::http_api::models::{CameraDto, CameraTestResponse, OkResponse};
 use crate::http_api::state::{AppState, WallCommand};
+
+static SNAPSHOT_SEMAPHORE: Semaphore = Semaphore::const_new(1);
 
 /// `GET /api/cameras` — list all cameras with runtime info.
 pub async fn list_cameras(State(state): State<AppState>) -> Result<Json<Vec<CameraDto>>, ApiError> {
@@ -188,6 +191,9 @@ pub async fn snapshot_camera(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Response, ApiError> {
+    let _snapshot_permit = SNAPSHOT_SEMAPHORE.try_acquire().map_err(|_| {
+        ApiError::Unavailable("another camera snapshot is already running".to_string())
+    })?;
     let feed = state
         .feeds_pool
         .get(&name)
