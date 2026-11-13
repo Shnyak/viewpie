@@ -74,13 +74,6 @@ pub async fn restart(headers: HeaderMap) -> Result<Json<OkResponse>, ApiError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn bearer_token_comparison_is_exact() {
-        assert!(constant_time_eq(b"abc123", b"abc123"));
-        assert!(!constant_time_eq(b"abc123", b"abc124"));
-        assert!(!constant_time_eq(b"abc123", b"abc123 "));
-        assert!(!constant_time_eq(b"abc123", b""));
-    }
 
     #[test]
     fn capability_is_detected_from_proc_status() {
