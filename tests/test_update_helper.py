@@ -18,7 +18,7 @@ SPEC.loader.exec_module(helper)
 class UpdateHelperTests(unittest.TestCase):
     def test_run_logged_streams_output_and_returns_success(self):
         lines = []
-        with patch.object(helper, "log", side_effect=lines.append):
+        with patch.object(helper, "event"), patch.object(helper, "log", side_effect=lines.append):
             result = helper.run_logged(
                 [sys.executable, "-c", "print('installer output')"],
                 timeout_seconds=5,
@@ -29,7 +29,7 @@ class UpdateHelperTests(unittest.TestCase):
 
     def test_run_logged_enforces_deadline_while_process_is_running(self):
         started = time.monotonic()
-        with patch.object(helper, "log"):
+        with patch.object(helper, "event"), patch.object(helper, "log"):
             with self.assertRaises(TimeoutError):
                 helper.run_logged(
                     [sys.executable, "-c", "import time; time.sleep(5)"],
@@ -46,7 +46,7 @@ class UpdateHelperTests(unittest.TestCase):
             captured.update(kwargs.get("env", {}))
             return original(command, **kwargs)
 
-        with patch.object(helper, "log"), patch.object(helper.subprocess, "Popen", side_effect=capture):
+        with patch.object(helper, "event"), patch.object(helper, "log"), patch.object(helper.subprocess, "Popen", side_effect=capture):
             helper.run_logged(
                 [sys.executable, "-c", "pass"],
                 timeout_seconds=5,
