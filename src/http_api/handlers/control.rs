@@ -255,7 +255,7 @@ mod fullscreen_timeout_tests {
             Some("camera_a"),
             Some(first_selection.clone()),
             "camera_a",
-            Some(first_selection),
+            Some(first_selection.clone()),
         ));
         assert!(!fullscreen_selection_is_current(
             Some("camera_a"),
@@ -273,7 +273,7 @@ mod fullscreen_timeout_tests {
             Some("camera_b"),
             Some(selected_at.clone()),
             "camera_a",
-            Some(selected_at),
+            Some(selected_at.clone()),
         ));
         assert!(!fullscreen_selection_is_current(
             None,
