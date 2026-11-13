@@ -414,11 +414,22 @@ impl PanelManager {
     /// to the active panel. Home Assistant can request an individual camera
     /// independently of the currently displayed panel.
     pub async fn enter_fullscreen(&self, camera: &str) -> Result<(), PanelError> {
+        self.enter_fullscreen_with_timestamp(camera).await.map(|_| ())
+    }
+
+    /// Enter fullscreen and return the exact identity timestamp assigned to
+    /// this selection. Timeout tasks use it to distinguish repeated visits to
+    /// the same camera, even when requests overlap.
+    pub async fn enter_fullscreen_with_timestamp(
+        &self,
+        camera: &str,
+    ) -> Result<chrono::DateTime<chrono::Utc>, PanelError> {
         // The caller verifies that the camera exists in the shared feed pool.
         // Stop previous fullscreen stream if any.
-        if let Some(prev) =
-            crate::http_api::state::set_fullscreen_state(Some(camera.to_string())).await
-        {
+        let (previous, started_at) =
+            crate::http_api::state::set_fullscreen_state_with_timestamp(Some(camera.to_string()))
+                .await;
+        if let Some(prev) = previous {
             if prev != camera && self.manage_feeds {
                 self.pool.stop_fullscreen(&prev).await;
             }
@@ -431,7 +442,9 @@ impl PanelManager {
         let frame = wall::fullscreen_frame(camera, &bg, 0);
         self.backend.commit(&frame).await?;
         info!(camera, "entered fullscreen");
-        Ok(())
+        started_at.ok_or_else(|| {
+            PanelError::Validation("fullscreen selection timestamp was not set".into())
+        })
     }
 
     /// Leave fullscreen back to the grid of the active panel.
