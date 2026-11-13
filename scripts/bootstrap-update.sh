@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.34-fork"
+VERSION="0.2.35-fork"
 TAG="v${VERSION}"
 REPOSITORY="Shnyak/viewpie"
 BASE_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}"
