@@ -178,7 +178,6 @@ pub async fn install(headers: HeaderMap) -> Result<Json<Value>, ApiError> {
 mod tests {
     use super::*;
 
-
     #[test]
     fn release_asset_digest_must_be_sha256() {
         let valid = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
