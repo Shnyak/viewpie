@@ -682,6 +682,8 @@ impl Card {
             y: display_height.saturating_sub(height + 12) as i32,
             width,
             height,
+            buffer_height: height,
+            display_height,
         };
         self.draw_debug_overlay(&mut overlay, &["viewpie diagnostics".to_string()])?;
         Ok(overlay)
@@ -712,147 +714,78 @@ impl Card {
         );
 
         let font = diagnostics_font()?;
-        let font_size = if overlay.width >= 800 { 15.0 } else { 13.0 };
         let line_height = 26u32;
         let margin = 10u32;
-        let widths: &[u32] = if overlay.width >= 850 {
-            &[220, 120, 100, 150, 80, 120]
-        } else if overlay.width >= 700 {
-            &[180, 105, 85, 125, 65, 100]
-        } else {
-            &[150, 85, 70, 105, 55, 80]
-        };
+        let gap = 12u32; // 3.2 mm at 96 DPI; below the requested 5 mm maximum.
+        let max_chars = [16u32, 10, 10, 15, 8, 12, 5];
+        let total_chars: u32 = max_chars.iter().sum();
+        let available = overlay.width.saturating_sub(margin * 2 + gap * 6);
+        let widest_glyph = ["Ш", "W", "M"].iter()
+            .map(|glyph| font.rasterize(glyph.chars().next().unwrap(), 1.0).0.advance_width)
+            .fold(0.0f32, f32::max);
+        let font_size = ((available as f32) / (total_chars as f32 * widest_glyph.max(0.5)))
+            .clamp(8.0, 15.0);
+        let char_width = (widest_glyph * font_size).ceil() as u32;
+        let widths: Vec<u32> = max_chars.iter().map(|count| count * char_width).collect();
 
         if let Some(cpu) = lines.first() {
             draw_overlay_text(
-                bytes,
-                pitch,
-                overlay.width,
-                overlay.height,
-                font,
-                cpu,
-                margin as i32,
-                21,
-                font_size,
-                [245, 245, 245],
-                overlay.width.saturating_sub(8),
+                bytes, pitch, overlay.width, overlay.buffer_height, font, cpu,
+                margin as i32, 21, font_size, [245, 245, 245],
+                overlay.width.saturating_sub(margin),
             );
         }
         let Some(header) = lines.get(1) else {
+            overlay.height = 44;
+            overlay.y = overlay.display_height.saturating_sub(overlay.height + 12) as i32;
             return Ok(());
         };
         let headers: Vec<&str> = header.split('\t').collect();
         let table_y = 34u32;
         fill_overlay_rect(
-            bytes,
-            pitch,
-            overlay.width,
-            overlay.height,
-            0,
-            table_y,
-            overlay.width,
-            line_height,
-            0xff34495e,
+            bytes, pitch, overlay.width, overlay.buffer_height,
+            0, table_y, overlay.width, line_height, 0xff34495e,
         );
         let mut x = margin;
         for (index, value) in headers.iter().enumerate() {
-            let cell_width = widths.get(index).copied().unwrap_or(80);
+            let cell_width = widths.get(index).copied().unwrap_or(60);
             draw_overlay_text(
-                bytes,
-                pitch,
-                overlay.width,
-                overlay.height,
-                font,
-                value,
-                x as i32,
-                (table_y + 20) as i32,
-                font_size,
-                [255, 255, 255],
-                x.saturating_add(cell_width).min(overlay.width),
+                bytes, pitch, overlay.width, overlay.buffer_height, font, value,
+                x as i32, (table_y + 20) as i32, font_size, [255, 255, 255],
+                x.saturating_add(cell_width),
             );
-            if index + 1 < headers.len() {
-                fill_overlay_rect(
-                    bytes,
-                    pitch,
-                    overlay.width,
-                    overlay.height,
-                    x.saturating_add(cell_width).saturating_sub(1),
-                    table_y,
-                    1,
-                    line_height,
-                    0xff607080,
-                );
-            }
-            x += cell_width;
+            x = x.saturating_add(cell_width + gap);
         }
 
         for (row_index, line) in lines.iter().skip(2).enumerate() {
             let y = table_y + line_height * (row_index as u32 + 1);
-            if y + line_height > overlay.height {
-                break;
-            }
+            if y + line_height > overlay.buffer_height { break; }
             let mut cells: Vec<&str> = line.split('\t').collect();
             let selected = cells.first().is_some_and(|name| name.starts_with('*'));
             if selected {
-                if let Some(name) = cells.first_mut() {
-                    *name = name.trim_start_matches('*');
-                }
+                if let Some(name) = cells.first_mut() { *name = name.trim_start_matches('*'); }
             }
-            let background = if selected {
-                0xffe8eef5
-            } else if row_index % 2 == 0 {
-                0xff202d3a
-            } else {
-                0xff192430
-            };
+            let background = if selected { 0xffffffff } else if row_index % 2 == 0 { 0xff202d3a } else { 0xff192430 };
             fill_overlay_rect(
-                bytes,
-                pitch,
-                overlay.width,
-                overlay.height,
-                0,
-                y,
-                overlay.width,
-                line_height,
-                background,
+                bytes, pitch, overlay.width, overlay.buffer_height,
+                0, y, overlay.width, line_height, background,
             );
-            let foreground = if selected {
-                [20, 30, 40]
-            } else {
-                [238, 242, 246]
-            };
+            // Explicit high-contrast foreground/background pair for the selected row.
+            let foreground = if selected { [0, 0, 0] } else { [238, 242, 246] };
             let mut x = margin;
             for (index, value) in cells.iter().enumerate() {
-                let cell_width = widths.get(index).copied().unwrap_or(80);
+                let cell_width = widths.get(index).copied().unwrap_or(60);
                 draw_overlay_text(
-                    bytes,
-                    pitch,
-                    overlay.width,
-                    overlay.height,
-                    font,
-                    value,
-                    x as i32,
-                    (y + 20) as i32,
-                    font_size,
-                    foreground,
-                    x.saturating_add(cell_width).min(overlay.width),
+                    bytes, pitch, overlay.width, overlay.buffer_height, font, value,
+                    x as i32, (y + 20) as i32, font_size, foreground,
+                    x.saturating_add(cell_width),
                 );
-                if index + 1 < cells.len() {
-                    fill_overlay_rect(
-                        bytes,
-                        pitch,
-                        overlay.width,
-                        overlay.height,
-                        x.saturating_add(cell_width).saturating_sub(1),
-                        y,
-                        1,
-                        line_height,
-                        if selected { 0xffaab5c0 } else { 0xff3b4b5a },
-                    );
-                }
-                x += cell_width;
+                x = x.saturating_add(cell_width + gap);
             }
         }
+        let visible_rows = lines.len().saturating_sub(1) as u32;
+        overlay.height = (table_y + line_height * visible_rows + 4).min(overlay.buffer_height);
+        overlay.y = overlay.display_height.saturating_sub(overlay.height + 12) as i32;
         Ok(())
     }
     /// Detach the diagnostics plane and wait for its page flip before freeing
@@ -1050,6 +983,8 @@ pub struct DebugOverlay {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    buffer_height: u32,
+    display_height: u32,
 }
 
 impl Drop for DebugOverlay {
