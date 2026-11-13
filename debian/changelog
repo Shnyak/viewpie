@@ -1,3 +1,13 @@
+viewpie (0.3.1-1) unstable; urgency=medium
+
+  * Reset the fullscreen inactivity timer whenever a camera is selected through
+    the native renderer command path, including Home Assistant API requests.
+  * Prevent a fullscreen request made after the renderer has been running for
+    ten minutes from being immediately expired by the startup timer.
+  * Add a regression test for refreshing the fullscreen selection deadline.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Sat, 14 Nov 2026 00:00:00 +0000
+
 viewpie (0.3.0-1) unstable; urgency=medium
 
   * Keep fullscreen selection pending while the main stream reconnects after
