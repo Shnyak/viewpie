@@ -1,3 +1,12 @@
+viewpie (0.2.36-fork-1) unstable; urgency=medium
+
+  * Tighten diagnostics overlay column spacing and calculate each column width
+    from the actual displayed values, respecting the configured character limits.
+  * Improve selected-row text contrast with a dark foreground on the inverted
+    light background.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 13 Nov 2026 12:00:00 +0000
+
 viewpie (0.2.35-fork-1) unstable; urgency=medium
 
   * Add a bounded, one-shot JPEG snapshot endpoint for the camera layout editor.
