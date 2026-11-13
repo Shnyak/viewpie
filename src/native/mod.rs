@@ -3542,8 +3542,15 @@ mod tests {
         );
 
         let before_grid = pressed;
-        refresh_fullscreen_timer(Mode::Grid, &mut pressed, selected_at + Duration::from_secs(1));
-        assert_eq!(pressed, before_grid, "returning to the grid needs no fullscreen deadline");
+        refresh_fullscreen_timer(
+            Mode::Grid,
+            &mut pressed,
+            selected_at + Duration::from_secs(1),
+        );
+        assert_eq!(
+            pressed, before_grid,
+            "returning to the grid needs no fullscreen deadline"
+        );
     }
 
     #[test]
