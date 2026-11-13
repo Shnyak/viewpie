@@ -1,3 +1,15 @@
+viewpie (0.2.33-fork-1) unstable; urgency=medium
+
+  * Render diagnostics as a camera table with decoder type, codec,
+    resolution, FPS and a conditional status column; include every camera
+    and invert the currently selected fullscreen camera row.
+  * Keep CPU load and temperature on a separate line.
+  * Avoid refreshing diagnostics during panel/fullscreen transitions and keep
+    its KMS plane out of ordinary camera commits unless its buffer or state
+    actually changes.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Fri, 13 Nov 2026 00:00:00 +0000
+
 viewpie (0.2.32-fork-1) unstable; urgency=medium
 
   * Keep the currently visible grid or fullscreen camera attached until the
