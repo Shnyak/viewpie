@@ -121,15 +121,15 @@ fn request_with_token(method: &str, path: &str, body: Option<&str>, token: Optio
         .set_read_timeout(Some(Duration::from_secs(20)))
         .unwrap();
     let authorization = token
-        .map(|value| format!("Authorization: Bearer {value}\\r\\n"))
+        .map(|value| format!("Authorization: Bearer {value}\r\n"))
         .unwrap_or_default();
     let req = match body {
         Some(b) => format!(
-            "{method} {path} HTTP/1.1\\r\\nHost: {addr}\\r\\nContent-Type: application/json\\r\\n{authorization}Content-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{b}",
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{b}",
             b.len()
         ),
         None => format!(
-            "{method} {path} HTTP/1.1\\r\\nHost: {addr}\\r\\n{authorization}Connection: close\\r\\n\\r\\n"
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\n{authorization}Connection: close\r\n\r\n"
         ),
     };
     stream.write_all(req.as_bytes()).expect("write request");
