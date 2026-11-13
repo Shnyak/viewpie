@@ -211,7 +211,7 @@ pub async fn snapshot_camera(
     if !output.status.success() || output.stdout.len() < 4 {
         let detail = String::from_utf8_lossy(&output.stderr);
         let detail = detail.trim();
-        let detail = if detail.len() > 400 { &detail[..400] } else { detail };
+        let detail = detail.chars().take(400).collect::<String>();
         return Err(ApiError::Unavailable(if detail.is_empty() {
             format!("camera {name:?} did not produce a frame")
         } else {
