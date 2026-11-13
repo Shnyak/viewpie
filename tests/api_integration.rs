@@ -276,8 +276,18 @@ fn start_server() {
 #[test]
 fn t00_api_requires_bearer_token_for_status_and_camera_routes() {
     start_server();
-    assert_eq!(request_without_token("GET", "/api/status", None).status, 401);
-    assert_eq!(request_with_token("GET", "/api/cameras", None, Some("wrong-token")).status, 401);
+    assert_eq!(
+        request_without_token("GET", "/api/status", None).status,
+        401
+    );
+    assert_eq!(
+        request_with_token("GET", "/api/cameras", None, Some("wrong-token")).status,
+        401
+    );
+    assert_eq!(
+        request_without_token("GET", "/api/cameras/yard/snapshot", None).status,
+        401
+    );
     assert_eq!(request("GET", "/api/status", None).status, 200);
 }
 
