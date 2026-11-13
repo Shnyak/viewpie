@@ -719,18 +719,54 @@ impl Card {
         let font = diagnostics_font()?;
         let line_height = 26u32;
         let margin = 10u32;
-        let column_gap = 8u32;
+        // Keep separators close to the text; the old 8 px gap amplified
+        // already oversized columns on the compact diagnostics overlay.
+        let column_gap = 3u32;
         let char_limits = [16usize, 10, 10, 15, 8, 12, 5];
+        let headers: Vec<&str> = lines
+            .get(1)
+            .map(|line| line.split('\t').collect())
+            .unwrap_or_default();
+        // Size each column for the longest value actually displayed, capped
+        // by its per-column character limit. Do not reserve the full limit
+        // when every camera currently has a much shorter value.
+        let mut column_texts: Vec<Vec<String>> = vec![Vec::new(); char_limits.len()];
+        for (index, value) in headers.iter().enumerate() {
+            if let Some(column) = column_texts.get_mut(index) {
+                column.push(value.chars().take(char_limits[index]).collect());
+            }
+        }
+        for line in lines.iter().skip(2) {
+            for (index, value) in line.split('\t').enumerate() {
+                if let Some(column) = column_texts.get_mut(index) {
+                    column.push(
+                        value
+                            .chars()
+                            .take(char_limits.get(index).copied().unwrap_or(5))
+                            .collect(),
+                    );
+                }
+            }
+        }
         let mut font_size = if overlay.width >= 900 { 10.0 } else { 9.0 };
-        let glyphs = "MW@ЖШЩФЫЮ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
         let widths = loop {
-            let max_advance = glyphs
-                .chars()
-                .map(|ch| font.rasterize(ch, font_size).0.advance_width)
-                .fold(0.0f32, f32::max);
-            let widths: Vec<u32> = char_limits
+            let widths: Vec<u32> = column_texts
                 .iter()
-                .map(|limit| (max_advance * *limit as f32).ceil() as u32 + 6)
+                .enumerate()
+                .map(|(index, values)| {
+                    let limit = char_limits.get(index).copied().unwrap_or(5);
+                    let max_width = values
+                        .iter()
+                        .map(|value| {
+                            value
+                                .chars()
+                                .take(limit)
+                                .map(|ch| font.rasterize(ch, font_size).0.advance_width)
+                                .sum::<f32>()
+                        })
+                        .fold(0.0f32, f32::max);
+                    max_width.ceil() as u32 + 8
+                })
                 .collect();
             let total = widths.iter().sum::<u32>()
                 + column_gap * (widths.len().saturating_sub(1) as u32)
@@ -759,7 +795,6 @@ impl Card {
         let Some(header) = lines.get(1) else {
             return Ok(());
         };
-        let headers: Vec<&str> = header.split('\t').collect();
         let table_y = 34u32;
         fill_overlay_rect(
             bytes,
@@ -838,7 +873,7 @@ impl Card {
                 line_height,
                 background,
             );
-            let foreground = if selected { [0, 0, 0] } else { [238, 242, 246] };
+            let foreground = if selected { [16, 24, 32] } else { [238, 242, 246] };
             let mut x = margin;
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
