@@ -223,9 +223,9 @@ def install_latest_release(preserve_log=False):
             _write_status(progress_percent=None)
             # The updater uses dpkg directly rather than apt resolving
             # dependencies. Ensure the diagnostics font is present first.
-            event("install", "$ apt-get install -y --no-install-recommends fonts-dejavu-core")
+            event("install", "$ apt-get install -y --no-install-recommends fonts-dejavu-core ffmpeg")
             run_logged(
-                ["apt-get", "install", "-y", "--no-install-recommends", "fonts-dejavu-core"],
+                ["apt-get", "install", "-y", "--no-install-recommends", "fonts-dejavu-core", "ffmpeg"],
                 timeout_seconds=900,
                 phase="install",
             )
