@@ -779,9 +779,6 @@ impl Card {
                 .chars()
                 .take(char_limits.get(index).copied().unwrap_or(5))
                 .collect();
-            .chars()
-            .take(char_limits.get(index).copied().unwrap_or(5))
-            .collect();
             draw_overlay_text(
                 bytes,
                 pitch,
@@ -846,9 +843,6 @@ impl Card {
             for (index, value) in cells.iter().enumerate() {
                 let cell_width = widths.get(index).copied().unwrap_or(80);
                 let text: String = value
-                    .chars()
-                    .take(char_limits.get(index).copied().unwrap_or(5))
-                    .collect();
                     .chars()
                     .take(char_limits.get(index).copied().unwrap_or(5))
                     .collect();
