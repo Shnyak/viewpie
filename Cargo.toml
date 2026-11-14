@@ -1,6 +1,6 @@
 [package]
 name = "viewpie"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 description = "Fork of snoack/viewpie with HTTP REST API, panels and dynamic configuration (AI-generated modifications)"
 license = "GPL-3.0-or-later"
