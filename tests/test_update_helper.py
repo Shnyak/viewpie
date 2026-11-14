@@ -72,10 +72,15 @@ class UpdateHelperTests(unittest.TestCase):
             for node in ast.walk(tree)
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
         }
-        self.assertNotIn("installed_package_version", assigned_names)
+        helper_names = {
+            node.name for node in ast.walk(ast.parse(inspect.getsource(helper)))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.assertTrue(helper_names.isdisjoint(assigned_names),
+                        "install_latest_release shadows a module-level helper")
 
     def test_only_missing_runtime_packages_are_requested(self):
-        with patch.object(helper, "package_is_installed", side_effect=lambda name: name == "ffmpeg"):
+        with patch.object(helper, "is_package_installed", side_effect=lambda name: name == "ffmpeg"):
             self.assertEqual(helper.missing_runtime_packages(), ["fonts-dejavu-core"])
 
 

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import urllib.request
 import uuid
 from pathlib import Path
@@ -135,7 +136,7 @@ def run_logged(command, *, timeout_seconds, phase):
     return code
 
 
-def package_is_installed(name):
+def is_package_installed(name):
     """Return true only when dpkg reports the package fully installed."""
     try:
         status = subprocess.check_output(
@@ -150,11 +151,11 @@ def package_is_installed(name):
 
 def missing_runtime_packages():
     """Only request runtime packages that are genuinely absent."""
-    return [name for name in ("fonts-dejavu-core", "ffmpeg") if not package_is_installed(name)]
+    return [name for name in ("fonts-dejavu-core", "ffmpeg") if not is_package_installed(name)]
 
 
-def installed_package_version(name):
-    if not package_is_installed(name):
+def get_installed_package_version(name):
+    if not is_package_installed(name):
         return "not installed"
     return subprocess.check_output(
         ["dpkg-query", "-W", "-f=${Version}", name],
@@ -333,7 +334,7 @@ def install_latest_release(preserve_log=False):
                 )
             else:
                 event("dependencies", "FFmpeg and diagnostics fonts are already installed; leaving their versions unchanged")
-            ffmpeg_version = installed_package_version("ffmpeg")
+            ffmpeg_version = get_installed_package_version("ffmpeg")
             _write_status(ffmpeg_version=ffmpeg_version)
             event("dependencies", "Using FFmpeg " + ffmpeg_version + "; no FFmpeg upgrade requested")
 
@@ -439,8 +440,11 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         message = "Viewpie update failed: " + str(exc)
+        diagnostic_traceback = traceback.format_exc()
         try:
-            event("failed", message, "failed", error=str(exc), exit_code=1,
+            log("[traceback] " + diagnostic_traceback.rstrip())
+            event("failed", message, "failed", error=str(exc),
+                  traceback=diagnostic_traceback, exit_code=1,
                   finished_at=__import__("datetime").datetime.now(
                       __import__("datetime").timezone.utc
                   ).isoformat())
