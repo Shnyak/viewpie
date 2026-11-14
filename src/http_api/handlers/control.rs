@@ -74,9 +74,9 @@ pub async fn fullscreen(
     // Preserve the previous selection so a failed physical KMS transition
     // cannot leave HA showing a fullscreen state that is not on the screen.
     let previous = state.manager.fullscreen_camera().await;
-    state
+    let selection_started = state
         .manager
-        .enter_fullscreen(&req.camera)
+        .enter_fullscreen_with_timestamp(&req.camera)
         .await
         .map_err(ApiError::Panel)?;
 
@@ -122,11 +122,16 @@ pub async fn fullscreen(
         let cam = req.camera.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(seconds)).await;
-            if crate::http_api::state::current_fullscreen()
-                .await
-                .as_deref()
-                == Some(cam.as_str())
-            {
+            let current = st.wall_state.read().await;
+            let is_current = fullscreen_selection_is_current(
+                current.fullscreen_camera.as_deref(),
+                current.fullscreen_started.clone(),
+                &cam,
+                Some(selection_started),
+            );
+            drop(current);
+
+            if is_current {
                 info!(camera = %cam, secs = seconds, "fullscreen timeout — returning to grid");
                 if let Err(error) = st.manager.leave_fullscreen().await {
                     error!("auto grid failed: {error}");
@@ -138,6 +143,20 @@ pub async fn fullscreen(
     }
 
     Ok((StatusCode::OK, Json(OkResponse::ok())))
+}
+
+/// A timeout is valid only for the exact fullscreen selection that created it.
+/// Comparing the camera alone is insufficient when the same camera is selected
+/// again after visiting another one.
+fn fullscreen_selection_is_current(
+    current_camera: Option<&str>,
+    current_started: Option<chrono::DateTime<chrono::Utc>>,
+    requested_camera: &str,
+    requested_started: Option<chrono::DateTime<chrono::Utc>>,
+) -> bool {
+    requested_started.is_some()
+        && current_camera == Some(requested_camera)
+        && current_started == requested_started
 }
 
 async fn restore_fullscreen_selection(state: &AppState, previous: Option<String>) {
@@ -220,4 +239,47 @@ async fn load_config_async(path: &str) -> Result<Config, crate::config::ConfigEr
                 source: std::io::Error::other(e.to_string()),
             }
         })?
+}
+
+#[cfg(test)]
+mod fullscreen_timeout_tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn old_timeout_does_not_match_a_later_selection_of_the_same_camera() {
+        let first_selection = Utc::now();
+        let second_selection = first_selection + chrono::Duration::milliseconds(1);
+
+        assert!(fullscreen_selection_is_current(
+            Some("camera_a"),
+            Some(first_selection.clone()),
+            "camera_a",
+            Some(first_selection.clone()),
+        ));
+        assert!(!fullscreen_selection_is_current(
+            Some("camera_a"),
+            Some(second_selection.clone()),
+            "camera_a",
+            Some(first_selection),
+        ));
+    }
+
+    #[test]
+    fn timeout_does_not_match_a_different_camera_or_grid() {
+        let selected_at = Utc::now();
+
+        assert!(!fullscreen_selection_is_current(
+            Some("camera_b"),
+            Some(selected_at.clone()),
+            "camera_a",
+            Some(selected_at.clone()),
+        ));
+        assert!(!fullscreen_selection_is_current(
+            None,
+            None,
+            "camera_a",
+            Some(selected_at),
+        ));
+    }
 }

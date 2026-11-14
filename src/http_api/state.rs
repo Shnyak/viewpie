@@ -153,9 +153,13 @@ pub async fn current_fullscreen() -> Option<String> {
     wall_arc().await.read().await.fullscreen_camera.clone()
 }
 
-/// Install a new fullscreen camera, returning the previous one (if any)
-/// and stamping `fullscreen_started`.
-pub async fn set_fullscreen_state(cam: Option<String>) -> Option<String> {
+/// Install a new fullscreen camera, returning the previous selection and
+/// the exact timestamp assigned to this selection. The timestamp is used as
+/// an identity token by its timeout task, so an older visit to the same
+/// camera cannot expire a newer one.
+pub async fn set_fullscreen_state_with_timestamp(
+    cam: Option<String>,
+) -> (Option<String>, Option<DateTime<Utc>>) {
     let arc = wall_arc().await;
     let mut w = arc.write().await;
     let prev = w.fullscreen_camera.take();
@@ -165,7 +169,12 @@ pub async fn set_fullscreen_state(cam: Option<String>) -> Option<String> {
     } else {
         None
     };
-    prev
+    (prev, w.fullscreen_started.clone())
+}
+
+/// Install a new fullscreen camera, returning the previous one (if any).
+pub async fn set_fullscreen_state(cam: Option<String>) -> Option<String> {
+    set_fullscreen_state_with_timestamp(cam).await.0
 }
 
 /// Clear fullscreen state, returning the previously shown camera.
