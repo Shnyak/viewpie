@@ -1,3 +1,10 @@
+viewpie (0.3.3-1) unstable; urgency=medium
+
+  * Prevent stale fullscreen auto-return timers from ending a newer fullscreen
+    selection of the same camera after rapid camera reselection.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Sat, 14 Nov 2026 00:00:00 +0000
+
 viewpie (0.3.2-1) unstable; urgency=medium
 
   * Require Bearer authentication for every HTTP API endpoint, reusing the
