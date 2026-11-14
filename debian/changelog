@@ -1,3 +1,11 @@
+viewpie (0.3.4-1) unstable; urgency=medium
+
+  * Fix updater package-version lookup shadowing that caused verified updates
+    to fail before package installation.
+  * Add a regression test preventing the helper function from being shadowed.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Sat, 14 Nov 2026 00:00:00 +0000
+
 viewpie (0.3.3-1) unstable; urgency=medium
 
   * Prevent stale fullscreen auto-return timers from ending a newer fullscreen
