@@ -1,3 +1,12 @@
+viewpie (0.3.5-1) unstable; urgency=medium
+
+  * Fix updater helper name collisions that caused the v0.3.4 update
+    transaction to fail before package installation.
+  * Add regression coverage for assignments shadowing module-level helpers.
+  * Preserve full Python tracebacks in the updater diagnostic journal.
+
+ -- Shnyak <95693971+Shnyak@users.noreply.github.com>  Sat, 14 Nov 2026 00:00:00 +0000
+
 viewpie (0.3.4-1) unstable; urgency=medium
 
   * Fix updater package-version lookup shadowing that caused verified updates
