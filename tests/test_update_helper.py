@@ -1,5 +1,7 @@
 """Regression tests for the privileged self-update helper."""
+import ast
 import importlib.util
+import inspect
 import subprocess
 import sys
 import time
@@ -62,6 +64,15 @@ class UpdateHelperTests(unittest.TestCase):
         self.assertIn("/tmp/viewpie-new.deb", command)
         self.assertEqual(command[-1], "ffmpeg=7:5.1.8-0+deb12u1+rpt1")
         self.assertNotIn("--no-upgrade", command)
+
+    def test_install_latest_release_does_not_shadow_package_version_helper(self):
+        tree = ast.parse(inspect.getsource(helper.install_latest_release))
+        assigned_names = {
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+        }
+        self.assertNotIn("installed_package_version", assigned_names)
 
     def test_only_missing_runtime_packages_are_requested(self):
         with patch.object(helper, "package_is_installed", side_effect=lambda name: name == "ffmpeg"):

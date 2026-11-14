@@ -241,12 +241,12 @@ def install_latest_release(preserve_log=False):
         _write_status(version=version, architecture=arch)
         event("prepare", f"Выбран релиз {version}, архитектура {arch}")
         event("prepare", "$ dpkg-query -W -f=${Version} viewpie")
-        installed_package_version = subprocess.check_output(
+        current_viewpie_version = subprocess.check_output(
             ["dpkg-query", "-W", "-f=${Version}", "viewpie"],
             text=True,
             timeout=10,
         ).strip()
-        installed_release_version = installed_package_version.rsplit("-", 1)[0]
+        installed_release_version = current_viewpie_version.rsplit("-", 1)[0]
         if installed_release_version == version:
             event("complete", "Уже установлена последняя версия " + version, "success",
                   exit_code=0, finished_at=__import__("datetime").datetime.now(
