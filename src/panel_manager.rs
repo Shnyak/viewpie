@@ -414,7 +414,9 @@ impl PanelManager {
     /// to the active panel. Home Assistant can request an individual camera
     /// independently of the currently displayed panel.
     pub async fn enter_fullscreen(&self, camera: &str) -> Result<(), PanelError> {
-        self.enter_fullscreen_with_timestamp(camera).await.map(|_| ())
+        self.enter_fullscreen_with_timestamp(camera)
+            .await
+            .map(|_| ())
     }
 
     /// Enter fullscreen and return the exact identity timestamp assigned to
