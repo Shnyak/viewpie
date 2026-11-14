@@ -155,7 +155,7 @@ def missing_runtime_packages():
 
 
 def get_installed_package_version(name):
-    if not package_is_installed(name):
+    if not is_package_installed(name):
         return "not installed"
     return subprocess.check_output(
         ["dpkg-query", "-W", "-f=${Version}", name],
